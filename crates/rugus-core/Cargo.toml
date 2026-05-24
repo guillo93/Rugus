@@ -1,0 +1,22 @@
+[package]
+name        = "rugus-core"
+description = "Rugus kernel core: arch-agnostic scheduler, IPC, syscall ABI, MPU/MMU abstraction trait."
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+authors.workspace      = true
+repository.workspace   = true
+
+[lib]
+test = false
+bench = false
+
+[dependencies]
+defmt            = { workspace = true, optional = true }
+heapless         = { workspace = true }
+
+[features]
+default = []
+# Activa logs `defmt` desde el core. Costo en footprint; útil en bring-up.
+log = ["dep:defmt"]
