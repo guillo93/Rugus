@@ -1,5 +1,48 @@
 # Architecture
 
+## Posicionamiento — RTOS y OS en un solo codebase
+
+Rugus **es un sistema operativo**. La pregunta interesante no es *"¿es OS
+o RTOS?"* — RTOS es una subcategoría de OS, no algo distinto — sino *"¿qué
+forma adopta en cada chip donde corre?"*
+
+```
+                    Sistemas Operativos (OS)
+                            |
+       ┌────────────────────┼────────────────────┐
+       |                    |                    |
+  General-purpose         RTOS              Especializados
+   (Linux, BSD,       (FreeRTOS, Zephyr,    (TempleOS,
+    Windows, macOS)    Tock, VxWorks)        exokernels)
+       ▲                    ▲
+       └─── Rugus en ───────┴── Rugus en ────
+            Cortex-A,           Cortex-M, AVR,
+            RISC-V64 con S      RISC-V32 sin paging
+```
+
+| Backend de Rugus | Personalidad | Por qué |
+|---|---|---|
+| `rugus-arch-cortex-m` | **RTOS** | Sin MMU paginada; single AS; *tasks* en pool estático |
+| `rugus-arch-avr` (futuro) | **RTOS minimalista** | Sin alloc dinámico, sin MPU; cooperativo a secas |
+| `rugus-arch-riscv32` (futuro, ESP32-C3) | **RTOS** | RV32 sin paginación |
+| `rugus-arch-cortex-a` (futuro, RPi 4) | **OS general-purpose** | MMU + EL0/EL1 → procesos aislados, page tables, kernel/user real |
+| `rugus-arch-riscv64` (futuro) | **OS general-purpose** | S-mode + paginación SV39/SV48 |
+
+**No es exclusivo de Rugus.** Zephyr y seL4 navegan terreno parecido. Lo
+distintivo es que Rugus lo abraza **desde el diseño**, no como evolución
+tardía: el trait `Arch` define la mínima superficie común; cada backend
+aporta lo específico de su ISA sin contaminar al `core`. No hay
+`if cfg!(target_arch)` esparcido en cada función — el aislamiento vive
+en el trait.
+
+> Llamar "RTOS" a Rugus en Cortex-M no le quita ser OS. Es como llamar
+> "kart" a un kart: sigue siendo vehículo.
+
+Implicación práctica para contribuidores: cuando trabajes en `rugus-core`,
+pregunta *"¿esta lógica vale para todos los backends?"*. Si la respuesta
+es no, va al `rugus-arch-<isa>` correspondiente — no al `core` con un
+`cfg`.
+
 ## Principios fundacionales
 
 1. **Capas con dependencias unidireccionales**, sin ciclos vía
@@ -109,6 +152,36 @@ CI rechaza `unsafe` añadido fuera de la política.
 
 `rugus-core` se compila también para `--target x86_64-*` en CI para correr
 tests host puros. La parte arch-dependiente queda detrás de `cfg`.
+
+### QEMU como red de seguridad
+
+Cada arch backend incluye un ejemplo `qemu-<arch>` que arranca en QEMU sin
+necesidad de placa física. Permite:
+
+- **Validar el scheduler** sin quemar tiempo de flash + reset on HW.
+- **Iterar en CI** sin runners con hardware conectado.
+- **Reproducir bugs reportados** con un comando, no con una placa prestada.
+
+Comandos típicos (post G1):
+
+```bash
+# Cortex-M7 sintético — la MPS2 AN500 emula un M7 base
+qemu-system-arm -machine mps2-an500 -cpu cortex-m7 \
+                -nographic -semihosting-config enable=on,target=native \
+                -kernel target/thumbv7em-none-eabihf/release/examples/qemu-cortex-m
+
+# Cortex-A53 (Raspberry Pi 4, futuro)
+qemu-system-aarch64 -machine raspi4b -nographic \
+                    -kernel target/aarch64-unknown-none/release/examples/qemu-cortex-a
+
+# RISC-V32 (futuro)
+qemu-system-riscv32 -machine virt -nographic \
+                    -bios none -kernel ...
+```
+
+QEMU **no sustituye** las pruebas on-target — diferencias en cache,
+timings de IRQ y peripheral models son reales. Pero el 80 % de los bugs
+de lógica se cazan en QEMU antes de tocar la placa.
 
 ## Versionado y estabilidad
 
