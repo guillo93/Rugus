@@ -1,0 +1,13 @@
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy", "llvm-tools-preview"]
+# A medida que se añadan arquitecturas, sumarlas aquí:
+# - thumbv6m-none-eabi      (Cortex-M0/M0+: RP2040)
+# - thumbv7m-none-eabi      (Cortex-M3)
+# - thumbv7em-none-eabihf   (Cortex-M4F/M7F: STM32F4, STM32F7)
+# - thumbv8m.main-none-eabihf (Cortex-M33: nRF5340, STM32L5)
+# - riscv32imac-unknown-none-elf (ESP32-C3)
+# - aarch64-unknown-none    (Cortex-A: Raspberry Pi)
+# - avr-unknown-gnu-atmega328 (AVR; requiere nightly + avr-gcc)
+targets = ["thumbv7em-none-eabihf"]
+profile = "minimal"

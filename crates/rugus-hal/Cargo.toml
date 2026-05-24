@@ -1,0 +1,17 @@
+[package]
+name        = "rugus-hal"
+description = "Rugus HAL traits (GpioPin, SerialPort, ...) — arch- and chip-agnostic."
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+authors.workspace      = true
+repository.workspace   = true
+
+[lib]
+test = false
+bench = false
+
+# `rugus-hal` es **solo traits**: sin unsafe, sin deps externas no triviales.
+# Esto lo hace usable sin arrastrar el kernel completo.
+[dependencies]

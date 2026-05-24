@@ -1,0 +1,18 @@
+[package]
+name        = "rugus-arch-cortex-m"
+description = "Rugus Arch backend for ARM Cortex-M (v7-M / v7E-M / v8-M)."
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+authors.workspace      = true
+repository.workspace   = true
+
+[lib]
+test = false
+bench = false
+
+[dependencies]
+cortex-m         = { workspace = true }
+critical-section = { workspace = true }
+rugus-core       = { workspace = true }

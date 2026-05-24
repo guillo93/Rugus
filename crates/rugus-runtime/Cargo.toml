@@ -1,0 +1,22 @@
+[package]
+name        = "rugus-runtime"
+description = "Rugus runtime: panic handler, defmt-rtt transport, entry macro re-export — per ARM Cortex-M target."
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+authors.workspace      = true
+repository.workspace   = true
+
+[lib]
+test = false
+bench = false
+
+# Por ahora solo soporta targets ARM Cortex-M. Para AVR/RISC-V/Cortex-A habrá
+# crates `rugus-runtime-<arch>` separados, o features cfg-gated aquí.
+[dependencies]
+cortex-m         = { workspace = true }
+cortex-m-rt      = { workspace = true }
+defmt            = { workspace = true }
+defmt-rtt        = { workspace = true }
+panic-probe      = { workspace = true }
