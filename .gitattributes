@@ -1,0 +1,29 @@
+# Normalizar EOL a LF para todo lo textual; Windows ve CRLF en checkout
+# si autocrlf=true, pero el repo siempre guarda LF. Evita warnings en cada
+# git add en OneDrive/Windows.
+
+* text=auto eol=lf
+
+# Fuentes y configuración — siempre LF
+*.rs       text eol=lf
+*.toml     text eol=lf
+*.md       text eol=lf
+*.x        text eol=lf
+*.ld       text eol=lf
+*.yml      text eol=lf
+*.yaml     text eol=lf
+*.json     text eol=lf
+*.sh       text eol=lf
+
+# Scripts Windows nativos — CRLF obligatorio
+*.ps1      text eol=crlf
+*.bat      text eol=crlf
+*.cmd      text eol=crlf
+
+# Binarios — git no toca
+*.png      binary
+*.jpg      binary
+*.jpeg     binary
+*.ico      binary
+*.bin      binary
+*.elf      binary
