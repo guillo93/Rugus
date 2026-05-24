@@ -1,8 +1,33 @@
 # Rugus
 
-> Kernel / OS Rust puro `no_std` multi-arquitectura, escalable de MCU a SoC.
-> Diseñado para crecer poco a poco hasta convertirse en un sistema operativo
-> sofisticado, sin perder de vista el control total sobre el hardware.
+> **OS Rust puro multi-arquitectura que se comporta como RTOS en MCUs y
+> como OS general-purpose en SoCs, usando un único codebase.**
+>
+> Diseñado para crecer poco a poco hasta convertirse en un sistema
+> operativo sofisticado, sin perder de vista el control total sobre el
+> hardware.
+
+## Qué es Rugus (y qué no)
+
+**Rugus no es una categoría nueva. Es un kernel que cambia de
+personalidad según el chip donde corre.**
+
+| Chip / Arch | Rugus se comporta como | Por qué |
+|---|---|---|
+| Cortex-M0+/M4/M7/M33, RISC-V32 sin paginación | **RTOS** | Sin MMU paginada → single address space, *tasks* en vez de procesos POSIX |
+| AVR (ATmega) | **RTOS minimalista** | Aún más pequeño, sin allocator dinámico, sin MPU |
+| Cortex-A53 (Raspberry Pi 4, EL1, MMU), RISC-V64 con S-mode | **OS general-purpose** | MMU presente → procesos aislados, page tables, kernel/user split real |
+
+Esto no es exclusivo nuestro — Zephyr y seL4 navegan terreno parecido —
+pero Rugus lo abraza **desde el diseño, no como evolución tardía**:
+`rugus-core` define el trait `Arch` con la mínima superficie común; cada
+backend (`rugus-arch-cortex-m`, futuros `rugus-arch-cortex-a`,
+`rugus-arch-riscv`, `rugus-arch-avr`) aporta lo específico de su ISA.
+
+Llamar "RTOS" a Rugus en Cortex-M no le quita ser OS; igual que llamar
+"kart" a un kart no le quita ser vehículo. Lo que sí evitamos es la
+trampa común de meter `if cfg!(target_arch)` en cada función — el aislamiento
+vive en el trait, no en el código.
 
 ## Estado
 
@@ -103,6 +128,20 @@ Ver [`docs/ROADMAP.md`](docs/ROADMAP.md) para el plan completo. Hitos:
 - **G5:** primer ejemplo Cortex-A (Raspberry Pi 4 EL1).
 - **G∞:** OS sofisticado (apps nativas, IPC rich, sistema de paquetes, IA
   embebida opcional).
+
+## Referencias canónicas
+
+Lecturas y proyectos sobre los que Rugus se apoya o de los que aprende:
+
+- **[xv6 (MIT)](https://github.com/mit-pdos/xv6-riscv)** — Unix didáctico ~10K líneas, código limpio y comentado. Lectura obligatoria para entender un kernel completo de cabo a rabo.
+- **[Writing an OS in Rust](https://os.phil-opp.com/)** (Philipp Oppermann) — tutorial moderno x86_64; ideas portables al modelo Rugus aunque el target sea distinto.
+- **[OSDev Wiki](https://wiki.osdev.org/)** — referencia diaria; cubre x86, ARM, RISC-V con nivel desigual pero útil.
+- **[Operating Systems: Three Easy Pieces](https://pages.cs.wisc.edu/~remzi/OSTEP/)** (OSTEP) — teoría sin la cual no entiendes lo que estás programando.
+- **[Tock OS](https://github.com/tock/tock)** — RTOS Rust para Cortex-M con foco en seguridad por dominios; inspiración directa para el modelo MPU+capacidades de Rugus.
+- **[Hubris (Oxide)](https://github.com/oxidecomputer/hubris)** — microkernel Rust para Cortex-M en producción; referencia de cómo se hace IPC riguroso en embedded.
+- **[Embassy](https://github.com/embassy-rs/embassy)** — runtime async Rust embedded; no es nuestro modelo (Rugus es preemptivo, no async-first), pero su HAL es excelente referencia.
+- **[seL4](https://sel4.systems/)** — microkernel formalmente verificado; aspiración a largo plazo en el modelo de seguridad.
+- **ARMv7-M Architecture Reference Manual**, **ARMv8-A ARM**, **RISC-V Privileged Spec** — los manuales del hardware son no-negociables.
 
 ## Licencia
 

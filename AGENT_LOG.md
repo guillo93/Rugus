@@ -90,3 +90,49 @@ hasta workspace funcional con primer ejemplo blink.
 5. **Coordinar con `guillo93/Panel-smartH`**: ese repo se va a refactorizar
    como consumidor delgado de Rugus en un PR aparte. Cualquier cambio
    breaking en `rugus-hal-stm32f7` antes de G2 implica avisar.
+
+---
+
+## 2026-05-24 — Claude Opus 4.7 — Posicionamiento RTOS↔OS + referencias + QEMU
+
+**Contexto:** El owner consultó la opinión de otro agente IA sobre cómo
+construir un OS desde cero (mapa genérico tipo RISC-V + QEMU + C + xv6).
+La comparación con Rugus llevó a clarificar dos puntos importantes que
+no estaban explícitos en los docs:
+
+1. **Rugus es un OS, no algo distinto a un OS.** "RTOS" es una
+   subcategoría de OS, no una alternativa. Decir "Rugus en Cortex-M es
+   técnicamente un RTOS" no le quita ser OS.
+2. **Rugus = un solo codebase, dos personalidades según el chip.** RTOS
+   en MCUs (sin MMU paginada), OS general-purpose en SoCs (con MMU).
+   Este es el ángulo diferenciador frente a Zephyr (RTOS que añade
+   features de OS) y seL4 (microkernel para ambos pero como kernel
+   distinto). Rugus lo abraza desde el día 1 via trait `Arch`.
+
+**Scope:**
+
+- `README.md`: nueva sección "Qué es Rugus (y qué no)" con tabla
+  RTOS↔OS por arch + frase de posicionamiento como tagline. Añadida
+  sección "Referencias canónicas" con xv6, Phil Opp, OSDev, OSTEP,
+  Tock, Hubris, Embassy, seL4 + manuales ARM/RISC-V.
+- `docs/ARCHITECTURE.md`: nueva sección "Posicionamiento — RTOS y OS en
+  un solo codebase" con diagrama de taxonomía y tabla de personalidades
+  por backend. Ampliada "Estrategia de testing" con subsección "QEMU
+  como red de seguridad" explicando cómo cada arch backend incluirá un
+  ejemplo `qemu-<arch>` para CI sin HW.
+
+**Decisiones clave:**
+
+1. **No declarar QEMU como sustituto de HW.** El doc lo dice explícito:
+   "QEMU no sustituye pruebas on-target". El 80 % de bugs de lógica se
+   cazan ahí; el 20 % restante (cache, timings IRQ, peripheral models)
+   requiere placa real.
+2. **No editar `docs/agent-memory/preferences.md`** para añadir esto. Es
+   un punto de posicionamiento del producto, no una preferencia del owner
+   sobre el agente. Va en los docs públicos.
+3. **Referencias en README, no en doc aparte.** Si alguien llega al repo
+   por primera vez, ver xv6, Phil Opp y Tock en el README le da contexto
+   inmediato de qué cultura técnica está mirando.
+
+**Estado al cerrar:** PR #1 de Rugus actualizada con el commit de
+posicionamiento. La PR queda más fuerte como mensaje al lector externo.
