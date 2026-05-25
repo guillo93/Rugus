@@ -3,6 +3,19 @@
 version = 3
 
 [[package]]
+name = "app-sandbox-stm32f769-disco"
+version = "0.1.0"
+dependencies = [
+ "cortex-m",
+ "defmt",
+ "rugus-arch-cortex-m",
+ "rugus-core",
+ "rugus-hal",
+ "rugus-hal-stm32f7",
+ "rugus-runtime",
+]
+
+[[package]]
 name = "bare-metal"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -257,6 +270,8 @@ name = "rugus-arch-cortex-m"
 version = "0.1.0"
 dependencies = [
  "cortex-m",
+ "cortex-m-rt",
+ "defmt",
  "rugus-core",
 ]
 

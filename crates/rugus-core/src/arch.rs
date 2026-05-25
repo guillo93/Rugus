@@ -10,6 +10,8 @@
 //! Cortex-M, MMU page tables de ARMv8-A, PMP de RISC-V) se exponen en el
 //! crate arch correspondiente como API propia.
 
+use crate::sched::TaskMode;
+
 /// Estado opaco de una región crítica que enmascara IRQs.
 ///
 /// `enter_critical` lo crea; `exit_critical` lo consume para restaurar.
@@ -44,10 +46,20 @@ pub trait Arch: 'static {
     unsafe fn switch_context(prev: *mut Self::Context, next: *const Self::Context);
 
     /// Construye el contexto inicial sobre `stack` para `entry`.
-    fn init_task_stack(stack: &mut [u8], entry: fn() -> !) -> Self::Context;
+    fn init_task_stack(stack: &mut [u8], entry: fn() -> !, privileged: bool) -> Self::Context;
 
     /// Salta a la primera tarea; no retorna.
     fn start_first(ctx: *const Self::Context) -> !;
+
+    /// Restaura una tarea tras matar la faultante; no retorna.
+    ///
+    /// # Safety
+    ///
+    /// `ctx` debe apuntar a un contexto válido del scheduler.
+    unsafe fn resume_after_fault(ctx: *const Self::Context) -> !;
+
+    /// Hook antes de ejecutar una tarea (MPU / privilegio).
+    fn on_task_switch(mode: TaskMode, stack_base: u32, stack_len: u32);
 
     /// Enmascara IRQs y devuelve handle para restaurar.
     fn enter_critical() -> Self::SavedIrq;
