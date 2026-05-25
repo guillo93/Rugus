@@ -20,14 +20,10 @@ use defmt_rtt as _;
 #[allow(unused_imports)]
 use panic_probe as _;
 
-#[defmt::timestamp]
-fn timestamp() -> u64 {
-    // SAFETY: lectura 32-bit alineada de CYCCNT, atómica intrínsecamente
-    // en Cortex-M. CYCCNT debe estar habilitado por el firmware antes del
-    // primer log; ver [`enable_cycle_counter`].
-    let cyccnt = cortex_m::peripheral::DWT::cycle_count();
-    cyccnt as u64
-}
+// `defmt::timestamp!` registra una expresión que produce el timestamp.
+// CYCCNT debe estar habilitado por el firmware (ver `enable_cycle_counter`)
+// antes del primer log si te importan timestamps correctos.
+defmt::timestamp!("{=u32}", cortex_m::peripheral::DWT::cycle_count());
 
 /// Habilita el cycle counter (DWT.CYCCNT) usado para timestamps de `defmt`.
 ///

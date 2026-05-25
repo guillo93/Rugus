@@ -22,19 +22,19 @@ pub use arch::Arch;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Errno {
     /// Invalid argument.
-    Einval       = -1,
+    Einval = -1,
     /// Resource busy.
-    Ebusy        = -2,
+    Ebusy = -2,
     /// Operation timed out.
-    Etimedout    = -3,
+    Etimedout = -3,
     /// Host unreachable.
     Ehostunreach = -4,
     /// Permission denied.
-    Edenied      = -5,
+    Edenied = -5,
     /// Overflow.
-    Eoverflow    = -6,
+    Eoverflow = -6,
     /// Out of memory.
-    Enomem       = -7,
+    Enomem = -7,
     /// Bad user pointer (rejected by MPU/MMU).
-    Efault       = -8,
+    Efault = -8,
 }

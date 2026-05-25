@@ -14,5 +14,4 @@ bench = false
 
 [dependencies]
 cortex-m         = { workspace = true }
-critical-section = { workspace = true }
 rugus-core       = { workspace = true }

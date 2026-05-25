@@ -136,3 +136,66 @@ no estaban explícitos en los docs:
 
 **Estado al cerrar:** PR #1 de Rugus actualizada con el commit de
 posicionamiento. La PR queda más fuerte como mensaje al lector externo.
+
+---
+
+## 2026-05-24 — Claude Opus 4.7 — Fix CI rota + higiene open source
+
+**Contexto:** Tras los pushes anteriores, las 5 checks de CI fallaron.
+El owner preguntó qué hacer. Diagnóstico local revela bugs reales (no
+solo warnings de stubs como prediqué).
+
+**Bugs encontrados y arreglados:**
+
+1. **`stm32f7 = 0.15.1` no tiene feature `critical-section`**. Asumido
+   por error; el PAC no expone esa feature en la 0.15.x. Removido de
+   `Cargo.toml` workspace y de `rugus-arch-cortex-m/Cargo.toml`.
+2. **`#[defmt::timestamp]` no es atributo, es macro**. El API de defmt
+   0.3+ cambió respecto a versiones antiguas: `defmt::timestamp!(...)`
+   con expresión, no atributo sobre función. Corregido en
+   `rugus-runtime/src/lib.rs`.
+3. **Features per-part en `rugus-hal-stm32f7`** (`stm32f767`, `stm32f769`,
+   `stm32f779`) eran alias informativos sin efecto. Renombradas/
+   documentadas: el PAC agrupa por die (`stm32f7x9` cubre F769/F779),
+   no por part-number. Removida `stm32f767` que no encaja en ese die.
+4. **Formato `cargo fmt`**: tres líneas en `gpio.rs` excedían 100 cols
+   (BSRR writes) y fueron reformateadas automáticamente.
+
+**Validación local (todos pasan):**
+
+- `cargo build --workspace --target thumbv7em-none-eabihf` ✅
+- `cargo build --workspace --release --target thumbv7em-none-eabihf` ✅
+- `cargo fmt --all -- --check` ✅
+- `cargo clippy --workspace --all-targets --target thumbv7em-none-eabihf -- -D warnings` ✅
+- `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --target thumbv7em-none-eabihf` ✅
+
+**Higiene open source añadida (en el mismo commit):**
+
+- `SECURITY.md` — política de vulnerabilidades (GitHub Security
+  Advisories como canal preferido, email fallback, SLAs por severidad,
+  scope in/out claramente listado).
+- `CODE_OF_CONDUCT.md` — Contributor Covenant 2.1 (estándar de facto
+  en proyectos open source serios).
+- `CHANGELOG.md` — formato Keep a Changelog con entrada `[0.1.0]`
+  documentando G0.
+
+**Discusión paralela con el owner sobre licenciamiento:** confirmamos
+que el dual MIT/Apache-2.0 actual es el correcto para un kernel embedded
+en 2026 (estándar Rust ecosystem, máxima adopción). Linux es GPL por
+razones históricas de 1991; replicarlo hoy sería contraproductivo. No
+hubo cambio de licencia.
+
+**Estado al cerrar:**
+
+- CI debería ir verde tras este push.
+- PR #1 sigue bloqueada por **el ruleset del owner que exige
+  `require_signed_commits`**. Yo no configuré esa regla; viene del
+  ruleset que él añadió por separado. Soluciones documentadas para él:
+  desactivar la regla (rápido), o configurar firma GPG/SSH y reescribir
+  los commits (correcto a largo plazo).
+
+**Próximo agente que toque esto:**
+
+1. Verificar que CI quedó verde tras el push.
+2. Esperar a que el owner decida la cuestión de firmas.
+3. Si CI pasa y firmas se resuelven, PR mergeable.
