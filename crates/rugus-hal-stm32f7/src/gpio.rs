@@ -112,22 +112,26 @@ fn configure_output(led: DiscoLed) {
         match led {
             DiscoLed::Red => {
                 let g = &*pac::GPIOJ::ptr();
-                g.moder.modify(|r, w| w.bits((r.bits() & !(0b11 << 26)) | (0b01 << 26)));
+                g.moder
+                    .modify(|r, w| w.bits((r.bits() & !(0b11 << 26)) | (0b01 << 26)));
                 g.otyper.modify(|r, w| w.bits(r.bits() & !(1 << 13)));
             }
             DiscoLed::Green => {
                 let g = &*pac::GPIOJ::ptr();
-                g.moder.modify(|r, w| w.bits((r.bits() & !(0b11 << 10)) | (0b01 << 10)));
+                g.moder
+                    .modify(|r, w| w.bits((r.bits() & !(0b11 << 10)) | (0b01 << 10)));
                 g.otyper.modify(|r, w| w.bits(r.bits() & !(1 << 5)));
             }
             DiscoLed::Red2 => {
                 let g = &*pac::GPIOA::ptr();
-                g.moder.modify(|r, w| w.bits((r.bits() & !(0b11 << 24)) | (0b01 << 24)));
+                g.moder
+                    .modify(|r, w| w.bits((r.bits() & !(0b11 << 24)) | (0b01 << 24)));
                 g.otyper.modify(|r, w| w.bits(r.bits() & !(1 << 12)));
             }
             DiscoLed::Green2 => {
                 let g = &*pac::GPIOD::ptr();
-                g.moder.modify(|r, w| w.bits((r.bits() & !(0b11 << 8)) | (0b01 << 8)));
+                g.moder
+                    .modify(|r, w| w.bits((r.bits() & !(0b11 << 8)) | (0b01 << 8)));
                 g.otyper.modify(|r, w| w.bits(r.bits() & !(1 << 4)));
             }
         }
@@ -140,19 +144,23 @@ fn write_bsrr(led: DiscoLed, high: bool) {
         match led {
             DiscoLed::Red => {
                 let g = &*pac::GPIOJ::ptr();
-                g.bsrr.write(|w| w.bits(if high { 1 << 13 } else { 1 << (13 + 16) }));
+                g.bsrr
+                    .write(|w| w.bits(if high { 1 << 13 } else { 1 << (13 + 16) }));
             }
             DiscoLed::Green => {
                 let g = &*pac::GPIOJ::ptr();
-                g.bsrr.write(|w| w.bits(if high { 1 << 5 } else { 1 << (5 + 16) }));
+                g.bsrr
+                    .write(|w| w.bits(if high { 1 << 5 } else { 1 << (5 + 16) }));
             }
             DiscoLed::Red2 => {
                 let g = &*pac::GPIOA::ptr();
-                g.bsrr.write(|w| w.bits(if high { 1 << 12 } else { 1 << (12 + 16) }));
+                g.bsrr
+                    .write(|w| w.bits(if high { 1 << 12 } else { 1 << (12 + 16) }));
             }
             DiscoLed::Green2 => {
                 let g = &*pac::GPIOD::ptr();
-                g.bsrr.write(|w| w.bits(if high { 1 << 4 } else { 1 << (4 + 16) }));
+                g.bsrr
+                    .write(|w| w.bits(if high { 1 << 4 } else { 1 << (4 + 16) }));
             }
         }
     }

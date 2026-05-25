@@ -22,8 +22,9 @@ repository   = "https://github.com/guillo93/Rugus"
 cortex-m          = { version = "0.7.7", features = ["critical-section-single-core", "inline-asm"] }
 cortex-m-rt       = "0.7.5"
 
-# Vendor PAC (svd2rust) — sólo para los crates rugus-hal-stm32f7 y consumidores
-stm32f7           = { version = "0.15.1", features = ["stm32f7x9", "rt", "critical-section"] }
+# Vendor PAC (svd2rust) — sólo para los crates rugus-hal-stm32f7 y consumidores.
+# Feature `stm32f7x9` cubre las variantes F769/F779 (mismo die).
+stm32f7           = { version = "0.15.1", features = ["stm32f7x9", "rt"] }
 
 # Logging por SWD/RTT (target-side); el host usa `probe-rs`
 defmt             = "0.3.10"
