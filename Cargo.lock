@@ -34,7 +34,7 @@ name = "blink-stm32f769-disco"
 version = "0.1.0"
 dependencies = [
  "cortex-m",
- "defmt 0.3.100",
+ "defmt 1.1.0",
  "rugus-hal",
  "rugus-hal-stm32f7",
  "rugus-runtime",
@@ -242,7 +242,7 @@ dependencies = [
 name = "rugus-core"
 version = "0.1.0"
 dependencies = [
- "defmt 0.3.100",
+ "defmt 1.1.0",
  "heapless",
 ]
 
@@ -265,7 +265,7 @@ version = "0.1.0"
 dependencies = [
  "cortex-m",
  "cortex-m-rt",
- "defmt 0.3.100",
+ "defmt 1.1.0",
  "defmt-rtt",
  "panic-probe",
 ]
