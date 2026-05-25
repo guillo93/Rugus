@@ -1,0 +1,81 @@
+name: 🔌 Port request (arch o chip nuevo)
+description: Propón añadir soporte para una arquitectura o un chip nuevo.
+title: "port: "
+labels: ["kind:port"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Antes de abrir esto, lee [docs/PORTING.md](https://github.com/guillo93/Rugus/blob/main/docs/PORTING.md).
+        Regla dura: **no se anuncia soporte para una arch/chip hasta que un `examples/blink-<board>`
+        parpadee en HW real**. Si vas a portar tú, perfecto. Si propones que lo haga otro, sé honesto
+        sobre disponibilidad de HW para testing.
+
+  - type: dropdown
+    id: type
+    attributes:
+      label: Tipo de port
+      options:
+        - Arquitectura nueva (nueva ISA, ej. AVR, RISC-V64, Xtensa)
+        - Chip nuevo de arquitectura ya soportada (ej. otro STM32, RP2040, nRF)
+        - Nueva placa de un chip ya soportado (ej. otra placa STM32F7)
+    validations:
+      required: true
+
+  - type: input
+    id: target
+    attributes:
+      label: Target Rust
+      placeholder: "thumbv6m-none-eabi / riscv32imac-unknown-none-elf / avr-unknown-gnu-atmega328"
+    validations:
+      required: true
+
+  - type: input
+    id: chip
+    attributes:
+      label: Chip / SoC
+      placeholder: "RP2040 / STM32F411CEU6 / ESP32-C3 / ATmega328P / BCM2711"
+    validations:
+      required: true
+
+  - type: input
+    id: board
+    attributes:
+      label: Placa de referencia para el ejemplo
+      description: La placa concreta donde se va a verificar (no abstracto)
+      placeholder: "Raspberry Pi Pico / Blackpill F411 / ESP32-C3-DevKitM-1"
+    validations:
+      required: true
+
+  - type: textarea
+    id: features
+    attributes:
+      label: Features del chip relevantes
+      description: MPU? MMU? Crypto HW? PIO? Cuanto tenga, más fácil priorizar.
+      placeholder: |
+        - Cortex-M0+, no MPU configurable
+        - 264 KB SRAM, 2 MB flash externa via XIP
+        - 2× PIO (state machines)
+        - HSTX, USB host/device
+        - HW divider
+
+  - type: dropdown
+    id: who-ports
+    attributes:
+      label: ¿Quién hace el port?
+      options:
+        - Yo, tengo HW
+        - Yo, pero busco mentor / revisión
+        - Propongo, pero no tengo HW ni tiempo (puede quedar abierto)
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Antes de enviar
+      options:
+        - label: He leído docs/PORTING.md y entiendo el checklist pre-merge.
+          required: true
+        - label: Acepto el [Code of Conduct](https://github.com/guillo93/Rugus/blob/main/CODE_OF_CONDUCT.md).
+          required: true

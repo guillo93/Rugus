@@ -1,0 +1,82 @@
+name: ✨ Feature request
+description: Proponer una capacidad nueva en Rugus.
+title: "feat: "
+labels: ["kind:feature"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Las features grandes (nuevo driver crítico, nuevo trait HAL, cambios al syscall ABI)
+        suelen necesitar discusión arquitectónica primero — considera abrir una
+        [Discussion](https://github.com/guillo93/Rugus/discussions) en lugar de issue.
+
+        Las features pequeñas y bien acotadas, vienen aquí.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Área afectada
+      multiple: true
+      options:
+        - rugus-core (scheduler, syscall ABI, errno, IPC)
+        - rugus-arch-cortex-m
+        - rugus-arch-* (otra arch)
+        - rugus-hal (traits)
+        - rugus-hal-stm32f7
+        - rugus-hal-* (otro chip)
+        - rugus-runtime
+        - examples/
+        - docs/
+        - ci / tooling
+        - otra (especifica)
+    validations:
+      required: true
+
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivación
+      description: ¿Qué problema resuelve? ¿Quién se beneficia?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Propuesta
+      description: Cómo se vería el cambio. Idealmente con signature de API si aplica.
+      render: rust
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternativas consideradas
+      description: ¿Hay otras maneras de resolver esto? ¿Por qué no son mejores?
+
+  - type: dropdown
+    id: phase
+    attributes:
+      label: ¿En qué hito encaja?
+      description: Ver docs/ROADMAP.md
+      options:
+        - G0 (actual)
+        - G1 (clocks + sched)
+        - G2 (MPU + syscalls)
+        - G3 (segundo chip Cortex-M)
+        - G4 (red + TLS + crypto)
+        - G5 (Cortex-A o RISC-V)
+        - G6 (boot + OTA)
+        - G7 (IA embebida)
+        - G∞ (sin fase concreta)
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Antes de enviar
+      options:
+        - label: He revisado docs/ROADMAP.md y este request no contradice el plan actual.
+          required: true
+        - label: Acepto el [Code of Conduct](https://github.com/guillo93/Rugus/blob/main/CODE_OF_CONDUCT.md).
+          required: true

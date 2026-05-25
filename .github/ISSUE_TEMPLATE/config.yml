@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 💬 Pregunta general / discusión de diseño
+    url: https://github.com/guillo93/Rugus/discussions
+    about: Para preguntas, ideas o discusión arquitectónica usa Discussions, no Issues.
+  - name: 🔐 Reportar vulnerabilidad de seguridad
+    url: https://github.com/guillo93/Rugus/security/advisories/new
+    about: NO abras un issue público. Usa GitHub Security Advisories. Detalles en SECURITY.md.

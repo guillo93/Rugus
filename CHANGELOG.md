@@ -13,7 +13,16 @@ SemVer estricto.
 
 ### Added
 
-- Espacio para próximos cambios en `main` antes de release.
+- Issue templates (`bug_report`, `feature_request`, `port_request`) con
+  campos estructurados YAML; `config.yml` redirige preguntas a Discussions
+  y reportes de seguridad a GitHub Security Advisories.
+- `PULL_REQUEST_TEMPLATE.md` con checklist y test plan.
+- `.github/dependabot.yml` para auto-update semanal de Cargo deps y
+  mensual de GitHub Actions (con grouping de patches/minors).
+- Badges en README: CI status, licenses, MSRV, no_std, Discussions count.
+- GitHub Discussions habilitadas para preguntas y diseño no-issue.
+- Branch protection en `main` con `enforce_admins` activo (owner incluido
+  en las reglas, sin bypass).
 
 ---
 

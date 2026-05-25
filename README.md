@@ -1,5 +1,12 @@
 # Rugus
 
+[![CI](https://github.com/guillo93/Rugus/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/guillo93/Rugus/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE-MIT)
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache_2.0-blue.svg)](LICENSE-APACHE)
+[![MSRV](https://img.shields.io/badge/MSRV-1.75-orange.svg)](https://blog.rust-lang.org/2023/12/28/Rust-1.75.0.html)
+[![no_std](https://img.shields.io/badge/rust-no__std-orange.svg)](https://docs.rust-embedded.org/book/intro/no-std.html)
+[![Discussions](https://img.shields.io/github/discussions/guillo93/Rugus)](https://github.com/guillo93/Rugus/discussions)
+
 > **OS Rust puro multi-arquitectura que se comporta como RTOS en MCUs y
 > como OS general-purpose en SoCs, usando un único codebase.**
 >

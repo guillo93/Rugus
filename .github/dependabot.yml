@@ -1,0 +1,36 @@
+version: 2
+
+updates:
+  # Crates de Cargo (workspace completo)
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Europe/Madrid"
+    open-pull-requests-limit: 10
+    labels:
+      - "kind:dependency"
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+    groups:
+      # Bumps menores y patches agrupados en un solo PR semanal
+      patch-updates:
+        update-types:
+          - "patch"
+      minor-updates:
+        update-types:
+          - "minor"
+
+  # GitHub Actions usadas en .github/workflows/
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    labels:
+      - "kind:dependency"
+      - "kind:ci"
+    commit-message:
+      prefix: "chore(ci)"
