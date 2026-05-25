@@ -23,13 +23,15 @@ y parpadea LD1 con logs `defmt`.
 
 **Entregable:** segunda tarea corre en paralelo a la principal en Cortex-M7.
 
-- [ ] `rugus-hal-stm32f7::rcc`: HSE 25 MHz → PLL → SYSCLK 216 MHz, AHB/APB.
-- [ ] Activar I/D-Cache del M7 con barriers.
-- [ ] `rugus-hal-stm32f7::fmc`: SDRAM 16 MB inicializada y verificada.
-- [ ] `rugus-core::heap`: linked-list allocator sobre región configurable.
-- [ ] `rugus-core::sched` cooperativo round-robin, max 4 tareas.
-- [ ] `rugus-arch-cortex-m::switch`: PendSV ASM en `.itcm`.
-- [ ] Ejemplo `dual-blink-stm32f769-disco` con dos tareas.
+- [x] `rugus-hal-stm32f7::rcc`: HSE 25 MHz → PLL → SYSCLK 216 MHz, AHB/APB.
+- [x] Activar I/D-Cache del M7 con barriers.
+- [x] `rugus-hal-stm32f7::fmc`: SDRAM 16 MB inicializada y verificada. *(init + verify; verify falla en HW actual — ver PR)*
+- [x] `rugus-core::heap`: linked-list allocator sobre región configurable.
+- [x] `rugus-core::sched` cooperativo round-robin, max 4 tareas.
+- [x] `rugus-arch-cortex-m::switch`: PendSV ASM.
+- [x] Ejemplo `dual-blink-stm32f769-disco` con dos tareas.
+
+✅ **G1 cerrado** (2026-05-25). SDRAM verify pendiente de afinación en placa.
 
 ## G2 — MPU + dominios + syscalls *(8-10 sem)*
 

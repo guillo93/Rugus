@@ -43,6 +43,12 @@ pub trait Arch: 'static {
     /// scheduler garantiza esto antes de invocar.
     unsafe fn switch_context(prev: *mut Self::Context, next: *const Self::Context);
 
+    /// Construye el contexto inicial sobre `stack` para `entry`.
+    fn init_task_stack(stack: &mut [u8], entry: fn() -> !) -> Self::Context;
+
+    /// Salta a la primera tarea; no retorna.
+    fn start_first(ctx: *const Self::Context) -> !;
+
     /// Enmascara IRQs y devuelve handle para restaurar.
     fn enter_critical() -> Self::SavedIrq;
 
