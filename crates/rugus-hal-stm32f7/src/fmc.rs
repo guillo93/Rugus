@@ -54,28 +54,28 @@ fn enable_clocks_and_pins(dp: &pac::Peripherals) {
     });
     let _ = rcc.ahb1enr.read().bits();
 
+    // Evita accesos especulativos del CPU a NOR bank1 que bloquean el bus FMC
+    // compartido con SDRAM (recomendación ST en BSP / community).
+    dp.FMC.bcr1.modify(|_, w| w.mbken().disabled());
+
     configure_fmc_pins(dp);
 }
 
-macro_rules! af_port {
-    ($port:ty, $dp:expr, $field:ident, $pins:expr, $af:expr) => {{
-        let port: &$port = &$dp.$field;
-        let port: &pac::GPIOD = unsafe { &*(port as *const $port as *const pac::GPIOD) };
-        af_push_pull_regs(port, $pins, $af);
-    }};
-}
-
-fn configure_fmc_pins(dp: &pac::Peripherals) {
+fn configure_fmc_pins(_dp: &pac::Peripherals) {
     const AF12: u32 = 0b1100;
-    af_port!(pac::GPIOD, dp, GPIOD, &[0, 1, 8, 9, 10, 14, 15], AF12);
-    af_port!(pac::GPIOE, dp, GPIOE, &[0, 1, 7, 8, 9, 10, 11, 12, 13, 14, 15], AF12);
-    af_port!(pac::GPIOF, dp, GPIOF, &[0, 1, 2, 3, 4, 5, 11, 12, 13, 14, 15], AF12);
-    af_port!(pac::GPIOG, dp, GPIOG, &[0, 1, 2, 4, 5, 8, 15], AF12);
-    af_port!(pac::GPIOH, dp, GPIOH, &[2, 3, 5, 8, 9, 10, 11, 12, 13, 14, 15], AF12);
-    af_port!(pac::GPIOI, dp, GPIOI, &[0, 1, 2, 3, 4, 5, 6, 7, 9, 10], AF12);
+    af_push_pull_port(unsafe { &*pac::GPIOD::ptr() }, &[0, 1, 8, 9, 10, 14, 15], AF12);
+    af_push_pull_port(unsafe { &*pac::GPIOE::ptr() }, &[0, 1, 7, 8, 9, 10, 11, 12, 13, 14, 15], AF12);
+    af_push_pull_port(unsafe { &*pac::GPIOF::ptr() }, &[0, 1, 2, 3, 4, 5, 11, 12, 13, 14, 15], AF12);
+    af_push_pull_port(unsafe { &*pac::GPIOG::ptr() }, &[0, 1, 2, 4, 5, 8, 15], AF12);
+    af_push_pull_port(unsafe { &*pac::GPIOH::ptr() }, &[2, 3, 5, 8, 9, 10, 11, 12, 13, 14, 15], AF12);
+    af_push_pull_port(unsafe { &*pac::GPIOI::ptr() }, &[0, 1, 2, 3, 4, 5, 6, 7, 9, 10], AF12);
 }
 
-fn af_push_pull_regs(port: &pac::GPIOD, pins: &[u8], af: u32) {
+fn af_push_pull_port(port: &pac::gpiod::RegisterBlock, pins: &[u8], af: u32) {
+    // BSP ST: AF push-pull, pull-up, very-high speed (108 MHz SDCLK).
+    const OSPEED_VERY_HIGH: u32 = 0b11;
+    const PULL_UP: u32 = 0b01;
+
     for pin in pins {
         let bit = *pin as u32;
         let shift = bit * 2;
@@ -83,6 +83,12 @@ fn af_push_pull_regs(port: &pac::GPIOD, pins: &[u8], af: u32) {
             w.bits((r.bits() & !(0b11 << shift)) | (0b10 << shift))
         });
         port.otyper.modify(|r, w| unsafe { w.bits(r.bits() & !(1 << bit)) });
+        port.ospeedr.modify(|r, w| unsafe {
+            w.bits((r.bits() & !(0b11 << shift)) | (OSPEED_VERY_HIGH << shift))
+        });
+        port.pupdr.modify(|r, w| unsafe {
+            w.bits((r.bits() & !(0b11 << shift)) | (PULL_UP << shift))
+        });
         let afr_shift = (bit % 8) * 4;
         if bit < 8 {
             port.afrl.modify(|r, w| unsafe {
@@ -98,6 +104,7 @@ fn af_push_pull_regs(port: &pac::GPIOD, pins: &[u8], af: u32) {
 
 fn configure_controller(fmc: &pac::FMC) {
     // SDCLK = HCLK/2 → 108 MHz @ SYSCLK 216 MHz.
+    // RBURST/RPIPE pertenecen a SDCR1 (bank 1), no SDCR2.
     fmc.sdcr1().modify(|_, w| {
         w.nc().bits8();
         w.nr().bits12();
@@ -105,9 +112,7 @@ fn configure_controller(fmc: &pac::FMC) {
         w.nb().nb4();
         w.cas().clocks3();
         w.wp().disabled();
-        w.sdclk().div2()
-    });
-    fmc.sdcr2().modify(|_, w| {
+        w.sdclk().div2();
         w.rburst().enabled();
         w.rpipe().no_delay()
     });
@@ -124,7 +129,8 @@ fn configure_controller(fmc: &pac::FMC) {
 
 fn run_init_sequence(fmc: &pac::FMC) -> Result<(), SdramError> {
     send_command(fmc, sdcmr_mode::CLK_ENABLE, 0, 0)?;
-    delay_us(200);
+    // BSP ST: ≥100 µs tras clock enable; usamos 1 ms (HAL_Delay(1)).
+    delay_us(1000);
 
     send_command(fmc, sdcmr_mode::PALL, 0, 0)?;
     send_command(fmc, sdcmr_mode::AUTO_REFRESH, 8, 0)?;
@@ -137,8 +143,9 @@ fn run_init_sequence(fmc: &pac::FMC) -> Result<(), SdramError> {
     send_command(fmc, sdcmr_mode::LOAD_MODE, 1, mode_reg)?;
 
     let sdclk_mhz = (SYSCLK_HZ / 2) / 1_000_000;
-    // BSP REFRESH_COUNT 0x0603 @ 100 MHz SDCLK, escalado lineal.
-    let refresh = (1539u32 * sdclk_mhz / 100).saturating_sub(20);
+    // BSP REFRESH_COUNT 0x0603 @ 100 MHz SDCLK; escalar a SDCLK real (108 MHz).
+    const REFRESH_COUNT_100MHZ: u32 = 0x0603;
+    let refresh = (REFRESH_COUNT_100MHZ * sdclk_mhz / 100).saturating_sub(20);
     fmc.sdrtr.write(|w| w.count().bits(refresh as u16));
     Ok(())
 }
@@ -179,7 +186,13 @@ fn send_command(
             _ => {}
         }
         w.ctb1().issued();
-        w.nrfs().bits(auto_refresh);
+        // NRFS solo aplica al comando AUTO_REFRESH; resto = 0 (valores raw ST).
+        let nrfs = if mode == sdcmr_mode::AUTO_REFRESH {
+            auto_refresh
+        } else {
+            0
+        };
+        w.nrfs().bits(nrfs);
         w.mrd().bits(mode_reg)
     });
     wait_command(fmc)
@@ -206,24 +219,33 @@ fn configure_mpu(_scb: &mut cortex_m::peripheral::SCB) {
 
 fn verify(scb: &mut cortex_m::peripheral::SCB, cpuid: &mut cortex_m::peripheral::CPUID) -> Result<(), SdramError> {
     // SAFETY: SDRAM init completada.
+    let dcache_was_on = cortex_m::peripheral::SCB::dcache_enabled();
     unsafe {
-        scb.disable_dcache(cpuid);
+        if dcache_was_on {
+            scb.disable_dcache(cpuid);
+        }
         let base = SDRAM_BASE as *mut u32;
         let pattern: u32 = 0xA5A5_1234;
         ptr::write_volatile(base, pattern);
         cortex_m::asm::dmb();
         if ptr::read_volatile(base) != pattern {
-            scb.enable_dcache(cpuid);
+            if dcache_was_on {
+                scb.enable_dcache(cpuid);
+            }
             return Err(SdramError::VerifyFailed);
         }
         let pattern2: u32 = 0xDEAD_BEEF;
         ptr::write_volatile(base.add(1024), pattern2);
         cortex_m::asm::dmb();
         if ptr::read_volatile(base.add(1024)) != pattern2 {
-            scb.enable_dcache(cpuid);
+            if dcache_was_on {
+                scb.enable_dcache(cpuid);
+            }
             return Err(SdramError::VerifyFailed);
         }
-        scb.enable_dcache(cpuid);
+        if dcache_was_on {
+            scb.enable_dcache(cpuid);
+        }
     }
     Ok(())
 }

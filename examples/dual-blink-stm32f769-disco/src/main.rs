@@ -53,7 +53,6 @@ fn main() -> ! {
     let dp = pac::Peripherals::take().expect("device peripherals");
 
     let clocks = rcc::init(&dp);
-    cache::enable(&mut cp.SCB, &mut cp.CPUID);
     rugus_runtime::enable_cycle_counter(&mut cp);
 
     defmt::info!(
@@ -62,7 +61,9 @@ fn main() -> ! {
     );
 
     static mut HEAP_FALLBACK: [u8; 64 * 1024] = [0; 64 * 1024];
+    const HEAP_FALLBACK_SIZE: usize = 64 * 1024;
 
+    // SDRAM antes de D-cache: verify accede sin cache; MPU completa en G2.
     match fmc::init(&dp, &mut cp.SCB, &mut cp.CPUID) {
         Ok(()) => {
             defmt::info!("SDRAM OK @ {=u32}", SDRAM_BASE as u32);
@@ -77,7 +78,7 @@ fn main() -> ! {
             unsafe {
                 heap::init(
                     core::ptr::addr_of_mut!(HEAP_FALLBACK).cast(),
-                    core::mem::size_of_val(&HEAP_FALLBACK),
+                    HEAP_FALLBACK_SIZE,
                 );
             }
         }
@@ -86,11 +87,13 @@ fn main() -> ! {
             unsafe {
                 heap::init(
                     core::ptr::addr_of_mut!(HEAP_FALLBACK).cast(),
-                    core::mem::size_of_val(&HEAP_FALLBACK),
+                    HEAP_FALLBACK_SIZE,
                 );
             }
         }
     }
+    cache::enable(&mut cp.SCB, &mut cp.CPUID);
+
     let _box: alloc::boxed::Box<u32> = alloc::boxed::Box::new(0);
     defmt::info!("heap alloc smoke test OK");
 
