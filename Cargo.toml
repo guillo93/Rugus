@@ -33,7 +33,7 @@ panic-probe       = { version = "0.3.2", features = ["print-defmt"] }
 
 # Primitivas no_std
 critical-section  = "1.2"
-heapless          = { version = "0.8", default-features = false }
+heapless          = { version = "0.9", default-features = false }
 bitflags          = { version = "2.6", default-features = false }
 
 # Crates internos del workspace
