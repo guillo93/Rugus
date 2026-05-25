@@ -25,15 +25,17 @@ y parpadea LD1 con logs `defmt`.
 
 - [x] `rugus-hal-stm32f7::rcc`: HSE 25 MHz → PLL → SYSCLK 216 MHz, AHB/APB.
 - [x] Activar I/D-Cache del M7 con barriers.
-- [x] `rugus-hal-stm32f7::fmc`: SDRAM 16 MB inicializada y verificada. *(init + verify; verify falla en HW actual — ver PR)*
+- [x] `rugus-hal-stm32f7::fmc`: SDRAM 16 MB inicializada y verificada. *(PR #16: GPIO via `GPIOx::ptr()`, 10/10 verify dual-blink)*
 - [x] `rugus-core::heap`: linked-list allocator sobre región configurable.
 - [x] `rugus-core::sched` cooperativo round-robin, max 4 tareas.
 - [x] `rugus-arch-cortex-m::switch`: PendSV ASM.
 - [x] Ejemplo `dual-blink-stm32f769-disco` con dos tareas.
 
-✅ **G1 cerrado** (2026-05-25). SDRAM verify pendiente de afinación en placa.
+✅ **G1 cerrado** (2026-05-25). **Próximo: G2.**
 
 ## G2 — MPU + dominios + syscalls *(8-10 sem)*
+
+**Primer paso:** `rugus-arch-cortex-m::mpu` — configurar 8 regiones MPU (priv/user) antes de syscalls y sandbox.
 
 **Entregable:** apps en modo usuario; faults reportan dominio + PC.
 

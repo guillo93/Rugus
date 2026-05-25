@@ -1,3 +1,21 @@
+---
+
+## 2026-05-25 — Agent — G1 cerrado en main (PR #16 merge)
+
+**Git:** `main` alineado con `origin/main` @ 71488e4 (merge PR #16).
+
+**Verificación (main, HW STM32F769I-DISCO):**
+
+- `cargo build --workspace --release --target thumbv7em-none-eabihf` — OK.
+- `cargo clippy --workspace --all-targets --target thumbv7em-none-eabihf -- -D warnings` — OK.
+- `./tools/verify-dual-blink-stm32f769-disco.sh` — **10/10 PASS** (SDRAM OK, tasks A/B).
+- `./tools/verify-blink-stm32f769-disco.sh` — build/clippy OK; flash RTT falló por
+  `interface is busy` (probe en uso por dual-blink concurrente); re-ejecutar solo.
+
+**Release:** CHANGELOG [0.2.0], tag `v0.2.0`, ROADMAP → próximo G2.
+
+**Próximo agente:** G2 — MPU (`rugus-arch-cortex-m::mpu`), luego syscalls SVC.
+
 # Agent Log — Rugus
 
 Bitácora de sesiones de agentes IA que han trabajado en este repositorio.
