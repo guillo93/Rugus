@@ -29,7 +29,7 @@ stm32f7           = { version = "0.15.1", features = ["stm32f7x9", "rt"] }
 # Logging por SWD/RTT (target-side); el host usa `probe-rs`
 defmt             = "0.3.10"
 defmt-rtt         = "0.4.1"
-panic-probe       = { version = "0.3.2", features = ["print-defmt"] }
+panic-probe       = { version = "1.0.0", features = ["print-defmt"] }
 
 # Primitivas no_std
 critical-section  = "1.2"
