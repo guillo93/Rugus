@@ -1,5 +1,23 @@
 ---
 
+## 2026-05-25 — Agent — G2 cerrado en main (PR #19 merge)
+
+**Git:** `main` @ dc26239 (merge PR #19).
+
+**Release:** tag `v0.3.0` en origin.
+
+**Verificación (main, HW STM32F769I-DISCO):**
+
+- `cargo build --workspace --release --target thumbv7em-none-eabihf` — OK.
+- `cargo fmt --all --check` — OK.
+- `./tools/verify-dual-blink-stm32f769-disco.sh` — **10/10 PASS**.
+- `./tools/verify-app-sandbox-stm32f769-disco.sh` — **12/12 PASS**.
+- `./tools/verify-blink-stm32f769-disco.sh` — **8/8 PASS**.
+
+**Próximo agente:** G3 — segundo chip Cortex-M (RP2040 o STM32F411).
+
+
+
 ## 2026-05-25 — Agent — G1 cerrado en main (PR #16 merge)
 
 **Git:** `main` alineado con `origin/main` @ 71488e4 (merge PR #16).
