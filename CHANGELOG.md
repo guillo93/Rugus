@@ -11,28 +11,6 @@ SemVer estricto.
 
 ## [Unreleased]
 
-### Added
-
-- **G1 — clocks, SDRAM/FMC, heap, scheduler cooperativo, dual-blink.**
-  - `rugus-hal-stm32f7::rcc` — HSE 25 MHz → PLL 216 MHz (VOSRDY fix).
-  - `rugus-hal-stm32f7::cache` — I/D-cache M7.
-  - `rugus-hal-stm32f7::fmc` — SDRAM 16 MB @ 0xC000_0000 (init + verify).
-  - `rugus-core::heap` — `linked_list_allocator` sobre región configurable.
-  - `rugus-core::sched` — cooperativo round-robin, 4 tareas, 3 bandas de prioridad.
-  - `rugus-arch-cortex-m::switch` — PendSV handler ASM + bootstrap primera tarea.
-  - Ejemplo `examples/dual-blink-stm32f769-disco` — LD1/LD2 en paralelo vía scheduler.
-  - Script `tools/verify-dual-blink-stm32f769-disco.sh`.
-
-### Validated
-
-- **G1 en HW real (STM32F769I-DISCO, probe-rs).** `blink-stm32f769-disco` sigue verde;
-  `dual-blink-stm32f769-disco` alterna task A/B por RTT sin HardFault.
-
-### Known limitations
-
-- `fmc::init` verify read/write falla en placa actual (init sequence presente;
-  heap cae a SRAM interna). MPU SDRAM completa en G2.
-
 ### Fixed
 
 - `examples/blink-stm32f769-disco/build.rs` añadido: copia `memory.x` a
@@ -58,6 +36,37 @@ SemVer estricto.
 - GitHub Discussions habilitadas para preguntas y diseño no-issue.
 - Branch protection en `main` con `enforce_admins` activo (owner incluido
   en las reglas, sin bypass).
+
+---
+
+## [0.2.0] — 2026-05-25 — G1
+
+Clocks, SDRAM/FMC, heap, scheduler cooperativo y ejemplo dual-blink en STM32F769I-DISCO.
+
+### Added
+
+- **G1 — clocks, SDRAM/FMC, heap, scheduler cooperativo, dual-blink.**
+  - `rugus-hal-stm32f7::rcc` — HSE 25 MHz → PLL 216 MHz (VOSRDY fix).
+  - `rugus-hal-stm32f7::cache` — I/D-cache M7.
+  - `rugus-hal-stm32f7::fmc` — SDRAM 16 MB @ 0xC000_0000 (init + verify).
+  - `rugus-core::heap` — `linked_list_allocator` sobre región configurable.
+  - `rugus-core::sched` — cooperativo round-robin, 4 tareas, 3 bandas de prioridad.
+  - `rugus-arch-cortex-m::switch` — PendSV handler ASM + bootstrap primera tarea.
+  - Ejemplo `examples/dual-blink-stm32f769-disco` — LD1/LD2 en paralelo vía scheduler.
+  - Scripts `tools/verify-blink-stm32f769-disco.sh` y `tools/verify-dual-blink-stm32f769-disco.sh`.
+
+### Validated
+
+- **G1 en HW real (STM32F769I-DISCO, probe-rs).** `dual-blink-stm32f769-disco`:
+  SDRAM OK @ 0xC000_0000, heap en SDRAM, tasks A/B alternan por RTT sin HardFault;
+  verify script **10/10 PASS** (2026-05-25, post PR #16).
+
+### Fixed
+
+- `rugus-hal-stm32f7::fmc` — mux FMC pins vía `GPIOx::ptr()` (AF12); `SDCR1` RBURST/RPIPE;
+  deshabilitar FMC NOR bank1; init SDRAM antes de D-cache en dual-blink (PR #16).
+
+---
 
 ---
 
@@ -102,5 +111,6 @@ multi-arquitectura y entrega el primer ejemplo en HW real.
 - `rugus-hal-stm32f7` solo expone GPIO; el resto de drivers (RCC, FMC,
   LTDC, ETH, CRYP, JPEG) llegan por fase según se necesiten.
 
-[Unreleased]: https://github.com/guillo93/Rugus/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/guillo93/Rugus/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/guillo93/Rugus/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/guillo93/Rugus/releases/tag/v0.1.0
