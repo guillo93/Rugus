@@ -27,7 +27,7 @@ cortex-m-rt       = "0.7.5"
 stm32f7           = { version = "0.15.1", features = ["stm32f7x9", "rt"] }
 
 # Logging por SWD/RTT (target-side); el host usa `probe-rs`
-defmt             = "0.3.10"
+defmt             = "1.1.0"
 defmt-rtt         = "0.4.1"
 panic-probe       = { version = "0.3.2", features = ["print-defmt"] }
 
