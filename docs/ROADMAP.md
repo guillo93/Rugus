@@ -12,9 +12,12 @@ y parpadea LD1 con logs `defmt`.
 - [x] Traits `Arch` y HAL esqueleto.
 - [x] Crate `rugus-arch-cortex-m` stub.
 - [x] Crate `rugus-hal-stm32f7` con driver GPIO mínimo.
-- [x] Ejemplo blink con `memory.x` correcto para F769NIH6.
-- [ ] `cargo build --workspace` verde en CI.
-- [ ] `cargo run` flashea y parpadea en placa real.
+- [x] Ejemplo blink con `memory.x` + `build.rs` correcto para F769NIH6.
+- [x] `cargo build --workspace` verde en CI.
+- [x] **`cargo run` flashea y parpadea en placa real.** *(validado 2026-05-24
+      sobre STM32F769I-DISCO, STLink V2-1, probe-rs 0.31.0)*
+
+✅ **G0 cerrado.** Próximo: G1.
 
 ## G1 — Clocks + heap + scheduler cooperativo *(6-8 sem)*
 
