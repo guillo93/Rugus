@@ -11,31 +11,30 @@ SemVer estricto.
 
 ## [Unreleased]
 
-### Fixed
+---
 
-- `examples/blink-stm32f769-disco/build.rs` añadido: copia `memory.x` a
-  `OUT_DIR` y lo expone al search path del linker. Sin esto, `cargo run`
-  fallaba con `cannot find linker script memory.x` (setup canónico de
-  cortex-m-rt que faltó en el commit génesis).
+## [0.3.0] — 2026-05-25 — G2
 
-### Validated
-
-- **G0 cerrado en HW real.** Firmware `blink-stm32f769-disco` flasheado en
-  STM32F769I-DISCO vía STLink V2-1 (`probe-rs 0.31.0`); LD1 (PJ13) parpadea
-  ~1 Hz; logs `defmt` por SWD/RTT visibles. Validación 2026-05-24.
+MPU sandbox, syscalls SVC, fault handlers con report domain+PC, ejemplo app-sandbox en STM32F769I-DISCO.
 
 ### Added
 
-- Issue templates (`bug_report`, `feature_request`, `port_request`) con
-  campos estructurados YAML; `config.yml` redirige preguntas a Discussions
-  y reportes de seguridad a GitHub Security Advisories.
-- `PULL_REQUEST_TEMPLATE.md` con checklist y test plan.
-- `.github/dependabot.yml` para auto-update semanal de Cargo deps y
-  mensual de GitHub Actions (con grouping de patches/minors).
-- Badges en README: CI status, licenses, MSRV, no_std, Discussions count.
-- GitHub Discussions habilitadas para preguntas y diseño no-issue.
-- Branch protection en `main` con `enforce_admins` activo (owner incluido
-  en las reglas, sin bypass).
+- **G2 — MPU + dominios + syscalls SVC + sandbox.**
+  - `rugus-arch-cortex-m::mpu` — 8 regiones Cortex-M7 (Drivers, SDRAM, kernel RAM, flash, app stack).
+  - `rugus-arch-cortex-m` — SVC handler, exception handlers (MemoryManagement/Bus/Usage/HardFault).
+  - `rugus-core::domain`, `rugus-core::fault`, `rugus-core::syscall` dispatch + trampolines userland.
+  - `rugus-core::sched` — `spawn_user`, `kill_current_and_resume`, remapeo MPU en switch.
+  - Ejemplo `examples/app-sandbox-stm32f769-disco` — kernel + 2 apps userland, MemManage controlado.
+  - Script `tools/verify-app-sandbox-stm32f769-disco.sh`.
+
+### Validated
+
+- **G2 en HW real (STM32F769I-DISCO, probe-rs).** MemManage en app userland reporta dominio App + PC;
+  kernel mata tarea faultante; LD1 sigue parpadeando; verify script **12/12 PASS** (2026-05-25).
+
+### Fixed
+
+- `rugus-core::sched::pick_next` — no re-elegir la tarea actual en round-robin (kernel + apps).
 
 ---
 
@@ -111,6 +110,7 @@ multi-arquitectura y entrega el primer ejemplo en HW real.
 - `rugus-hal-stm32f7` solo expone GPIO; el resto de drivers (RCC, FMC,
   LTDC, ETH, CRYP, JPEG) llegan por fase según se necesiten.
 
-[Unreleased]: https://github.com/guillo93/Rugus/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/guillo93/Rugus/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/guillo93/Rugus/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/guillo93/Rugus/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/guillo93/Rugus/releases/tag/v0.1.0

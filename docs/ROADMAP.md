@@ -39,12 +39,14 @@ y parpadea LD1 con logs `defmt`.
 
 **Entregable:** apps en modo usuario; faults reportan dominio + PC.
 
-- [ ] `rugus-arch-cortex-m::mpu`: 8 regiones, política priv/user.
-- [ ] `rugus-core::syscall`: SVC handler, dispatch por ID, ABI v0.1.
-- [ ] HardFault/MemManage/BusFault/UsageFault con report.
-- [ ] Política "app que faulta → kernel mata tarea, no panic global".
-- [ ] Ejemplo `app-sandbox-stm32f769-disco` con app userland que faulta
+- [x] `rugus-arch-cortex-m::mpu`: 8 regiones, política priv/user.
+- [x] `rugus-core::syscall`: SVC handler, dispatch por ID, ABI v0.1.
+- [x] HardFault/MemManage/BusFault/UsageFault con report.
+- [x] Política "app que faulta → kernel mata tarea, no panic global".
+- [x] Ejemplo `app-sandbox-stm32f769-disco` con app userland que faulta
       controladamente.
+
+✅ **G2 cerrado** (2026-05-25). **Próximo: G3.**
 
 ## G3 — Segundo chip Cortex-M *(4-6 sem)*
 

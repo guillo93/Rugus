@@ -11,11 +11,15 @@
 #![warn(missing_docs)]
 
 pub mod arch;
+pub mod domain;
+pub mod fault;
 pub mod heap;
 pub mod sched;
 pub mod syscall;
 
 pub use arch::Arch;
+pub use domain::Domain;
+pub use fault::{FaultKind, FaultReport};
 
 /// Errores visibles al espacio de usuario vía syscall. Mirrors negative
 /// `i32` values en `docs/SYSCALL_ABI.md`.

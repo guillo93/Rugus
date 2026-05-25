@@ -236,8 +236,8 @@ fn delay_us(us: u32) {
 }
 
 fn configure_mpu(_scb: &mut cortex_m::peripheral::SCB) {
-    // MPU desactivada en G1: la región SDRAM se accede con mantenimiento
-    // explícito de cache en verify. Configuración MPU completa llega en G2.
+    // G2: `rugus_arch_cortex_m::platform_init` programa MPU antes del scheduler.
+    // FMC verify usa acceso directo con D-cache off cuando hace falta.
 }
 
 fn verify(

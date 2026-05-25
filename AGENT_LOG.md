@@ -16,6 +16,27 @@
 
 **Próximo agente:** G2 — MPU (`rugus-arch-cortex-m::mpu`), luego syscalls SVC.
 
+---
+
+## 2026-05-25 — Composer — G2 completo: MPU + SVC + sandbox (PR feat/g2-mpu-sandbox)
+
+**Scope:** G2 cierre: `rugus-arch-cortex-m::mpu`, syscalls SVC, fault handlers, `app-sandbox-stm32f769-disco`, verify script, docs.
+
+**Entregado:**
+
+- MPU 8 regiones (Drivers/SDRAM/kernel RAM/flash/app stack) con `PRIVDEFENA` y atributos normal memory (WB).
+- SVC handler + dispatch ABI v0.1 (`YieldNow`, `TaskId`; `SleepMs`/IPC stub `Einval`).
+- Exception handlers: MemoryManagement/BusFault/UsageFault/HardFault → report domain+PC, kill task.
+- `sched::spawn_user`, `kill_current_and_resume`, fix `pick_next` no re-elegir tarea actual.
+- Ejemplo sandbox: kernel (priv) + good app (SVC yield) + bad app (MemManage @ 0x4000_0000).
+
+**Verificación HW:**
+
+- `./tools/verify-app-sandbox-stm32f769-disco.sh` — **12/12 PASS**.
+- `./tools/verify-dual-blink-stm32f769-disco.sh` — **10/10 PASS** (regresión sched OK).
+
+**Próximo agente:** G3 — segundo chip Cortex-M (RP2040 o STM32F411).
+
 # Agent Log — Rugus
 
 Bitácora de sesiones de agentes IA que han trabajado en este repositorio.
