@@ -63,12 +63,36 @@ fn enable_clocks_and_pins(dp: &pac::Peripherals) {
 
 fn configure_fmc_pins(_dp: &pac::Peripherals) {
     const AF12: u32 = 0b1100;
-    af_push_pull_port(unsafe { &*pac::GPIOD::ptr() }, &[0, 1, 8, 9, 10, 14, 15], AF12);
-    af_push_pull_port(unsafe { &*pac::GPIOE::ptr() }, &[0, 1, 7, 8, 9, 10, 11, 12, 13, 14, 15], AF12);
-    af_push_pull_port(unsafe { &*pac::GPIOF::ptr() }, &[0, 1, 2, 3, 4, 5, 11, 12, 13, 14, 15], AF12);
-    af_push_pull_port(unsafe { &*pac::GPIOG::ptr() }, &[0, 1, 2, 4, 5, 8, 15], AF12);
-    af_push_pull_port(unsafe { &*pac::GPIOH::ptr() }, &[2, 3, 5, 8, 9, 10, 11, 12, 13, 14, 15], AF12);
-    af_push_pull_port(unsafe { &*pac::GPIOI::ptr() }, &[0, 1, 2, 3, 4, 5, 6, 7, 9, 10], AF12);
+    af_push_pull_port(
+        unsafe { &*pac::GPIOD::ptr() },
+        &[0, 1, 8, 9, 10, 14, 15],
+        AF12,
+    );
+    af_push_pull_port(
+        unsafe { &*pac::GPIOE::ptr() },
+        &[0, 1, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+        AF12,
+    );
+    af_push_pull_port(
+        unsafe { &*pac::GPIOF::ptr() },
+        &[0, 1, 2, 3, 4, 5, 11, 12, 13, 14, 15],
+        AF12,
+    );
+    af_push_pull_port(
+        unsafe { &*pac::GPIOG::ptr() },
+        &[0, 1, 2, 4, 5, 8, 15],
+        AF12,
+    );
+    af_push_pull_port(
+        unsafe { &*pac::GPIOH::ptr() },
+        &[2, 3, 5, 8, 9, 10, 11, 12, 13, 14, 15],
+        AF12,
+    );
+    af_push_pull_port(
+        unsafe { &*pac::GPIOI::ptr() },
+        &[0, 1, 2, 3, 4, 5, 6, 7, 9, 10],
+        AF12,
+    );
 }
 
 fn af_push_pull_port(port: &pac::gpiod::RegisterBlock, pins: &[u8], af: u32) {
@@ -79,16 +103,15 @@ fn af_push_pull_port(port: &pac::gpiod::RegisterBlock, pins: &[u8], af: u32) {
     for pin in pins {
         let bit = *pin as u32;
         let shift = bit * 2;
-        port.moder.modify(|r, w| unsafe {
-            w.bits((r.bits() & !(0b11 << shift)) | (0b10 << shift))
-        });
-        port.otyper.modify(|r, w| unsafe { w.bits(r.bits() & !(1 << bit)) });
+        port.moder
+            .modify(|r, w| unsafe { w.bits((r.bits() & !(0b11 << shift)) | (0b10 << shift)) });
+        port.otyper
+            .modify(|r, w| unsafe { w.bits(r.bits() & !(1 << bit)) });
         port.ospeedr.modify(|r, w| unsafe {
             w.bits((r.bits() & !(0b11 << shift)) | (OSPEED_VERY_HIGH << shift))
         });
-        port.pupdr.modify(|r, w| unsafe {
-            w.bits((r.bits() & !(0b11 << shift)) | (PULL_UP << shift))
-        });
+        port.pupdr
+            .modify(|r, w| unsafe { w.bits((r.bits() & !(0b11 << shift)) | (PULL_UP << shift)) });
         let afr_shift = (bit % 8) * 4;
         if bit < 8 {
             port.afrl.modify(|r, w| unsafe {
@@ -217,7 +240,10 @@ fn configure_mpu(_scb: &mut cortex_m::peripheral::SCB) {
     // explícito de cache en verify. Configuración MPU completa llega en G2.
 }
 
-fn verify(scb: &mut cortex_m::peripheral::SCB, cpuid: &mut cortex_m::peripheral::CPUID) -> Result<(), SdramError> {
+fn verify(
+    scb: &mut cortex_m::peripheral::SCB,
+    cpuid: &mut cortex_m::peripheral::CPUID,
+) -> Result<(), SdramError> {
     // SAFETY: SDRAM init completada.
     let dcache_was_on = cortex_m::peripheral::SCB::dcache_enabled();
     unsafe {
