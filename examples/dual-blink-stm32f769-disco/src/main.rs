@@ -104,10 +104,18 @@ fn main() -> ! {
     unsafe {
         let sched = &mut *core::ptr::addr_of_mut!(SCHEDULER);
         sched
-            .spawn(&mut *core::ptr::addr_of_mut!(STACK_A), task_a, Priority::App)
+            .spawn(
+                &mut *core::ptr::addr_of_mut!(STACK_A),
+                task_a,
+                Priority::App,
+            )
             .expect("spawn task A");
         sched
-            .spawn(&mut *core::ptr::addr_of_mut!(STACK_B), task_b, Priority::App)
+            .spawn(
+                &mut *core::ptr::addr_of_mut!(STACK_B),
+                task_b,
+                Priority::App,
+            )
             .expect("spawn task B");
         defmt::info!("scheduler: 2 tasks, starting cooperative run");
         sched.start();
