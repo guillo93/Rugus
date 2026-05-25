@@ -278,3 +278,101 @@ merge del PR de templates/badges/dependabot.
    1.95 ya no acepta `vfp4` ni `fp-armv8d16sp`). Probable fix: dejar solo
    `target-cpu=cortex-m7` en `.cargo/config.toml` y dejar que el target
    `thumbv7em-none-eabihf` deduzca el FPU.
+
+---
+
+## 2026-05-24 — Composer — Debug G1 blink: hang en VOSRDY (RCC)
+
+**Scope:** `crates/rugus-hal-stm32f7/src/rcc.rs`, verificación HW con
+probe-rs 0.31.0 + ST-Link en STM32F769I-DISCO.
+
+**Cronología de debug:**
+
+1. **Síntoma:** Tras flash (~0.85 s) LD1 no parpadea y RTT vacío con firmware G1
+   (HSE→PLL 216 MHz + cache). G0 (HSI 16 MHz, sin RCC) sí arranca y RTT OK.
+2. **Bisección RTT:** Logs `defmt` entre pasos de `rcc::init` → hang en
+   `configure_voltage_scale` esperando `CSR1.VOSRDY`.
+3. **Registros en HW:** Tras reset `CR1=0xC000` (VOS Scale 1), `CSR1=0`
+   (`VOSRDY=0`). Re-escribir Scale 1 o bajar a Scale 2 cambia CR1 pero
+   `VOSRDY` nunca se pone a 1 → bucle infinito.
+4. **Over-drive sí funciona** sin poll de VOSRDY cuando ya estamos en Scale 1:
+   `ODRDY`/`ODSWRDY` pasan; HSE, PLL y switch a 216 MHz completan.
+5. **Fix:** En `configure_voltage_scale`, solo programar VOS y esperar VOSRDY
+   si CR1.VOS **no** es ya Scale 1. Tras reset no tocar VOS ni bloquear en
+   VOSRDY.
+
+**Causa raíz:** Esperar `VOSRDY` tras re-escribir Scale 1 en cold boot
+(CR1 ya en Scale 1, CSR1.VOSRDY=0). El regulador no completa la secuencia
+“ready” sin transición real de VOS.
+
+**Verificación post-fix (probe-rs run):**
+
+```
+INFO  rugus blink @ STM32F769I-DISCO, SYSCLK 216 MHz
+INFO  LD1 (PJ13) configured; toggling at ~1 Hz
+```
+
+**Comando de flash:**
+
+```bash
+cd examples/blink-stm32f769-disco
+cargo build --release --target thumbv7em-none-eabihf
+probe-rs run --chip STM32F769NIHx --log-format full --rtt-scan-memory \
+  ../../target/thumbv7em-none-eabihf/release/blink-stm32f769-disco
+```
+
+**Estado al cerrar:** Firmware G1 arranca en HW; RTT confirma 216 MHz y loop
+LD1. Pendiente confirmación visual del usuario de que LD1 parpadea ~1 Hz.
+
+**Próximo agente:** Confirmar blink en placa; luego commit/PR G1. No avanzar
+fases G1 restantes hasta merge verificado en HW.
+
+---
+
+## Verificación automatizada pipeline (2026-05-24T23:40-05:00)
+
+Checklist:
+
+- [x] build OK (`cargo build --workspace --release --target thumbv7em-none-eabihf`)
+- [x] clippy OK (`cargo clippy --workspace --all-targets --target thumbv7em-none-eabihf -- -D warnings`)
+- [x] flash OK (`probe-rs run`, ELF relinked con `defmt.x` vía build del ejemplo)
+- [x] RTT: SYSCLK 216 MHz
+- [x] RTT: LD1 configured
+- [x] no fault detected
+
+Notas:
+
+- `cargo build --workspace` desde la raíz **no** aplica `rustflags` de
+  `examples/blink-stm32f769-disco/.cargo/config.toml`; el ELF queda sin
+  sección `.defmt` y `probe-rs` falla con «no `.defmt` section». Rebuild del
+  paquete blink (o script) corrige el enlace.
+- RTT capturado (~25 s, exit 124 por `timeout` esperado).
+- ST-LINK detectado: `probe-rs list` → STLink V2-1 `0483:374b`.
+- LED: usuario confirmó parpadeo manual; RTT automatizado también OK.
+
+Script: `tools/verify-blink-stm32f769-disco.sh`
+
+---
+
+## 2026-05-25 — Composer — G1 completo: scheduler + dual-blink + FMC/heap
+
+**Scope:** G1 cierre: `fmc`, `heap`, `sched`, PendSV, `dual-blink-stm32f769-disco`,
+scripts verify, docs ROADMAP/CHANGELOG.
+
+**Decisiones clave:**
+
+1. **PendSV sin `bl` a Rust** — las llamadas `bl` dentro del handler pisaban LR
+   (EXC_RETURN); switch vía literales `RUGUS_SWITCH_PREV/NEXT`.
+2. **Bootstrap primera tarea** — `start_first` salta directo al PC del frame
+   sintético; PendSV solo para `yield` cooperativo.
+3. **SDRAM verify** — secuencia BSP ST presente pero readback falla en placa;
+   ejemplo usa heap fallback en SRAM interna hasta afinar FMC/MPU (G2).
+
+**Estado al cerrar:**
+
+- `./tools/verify-blink-stm32f769-disco.sh` — 8/8 PASS.
+- `./tools/verify-dual-blink-stm32f769-disco.sh` — 9/10 (SDRAM verify WARN en HW).
+- RTT dual-blink: task A/B alternan LD1/LD2 sin HardFault.
+
+**Próximo agente:** Afinar `fmc::init` verify (GPIO/timing/MPU); G2 MPU + syscalls.
+

@@ -6,7 +6,7 @@
 //! | Hito | Módulo añadido |
 //! |------|----------------|
 //! | G0   | `gpio` (mínimo) |
-//! | G1   | `rcc` (clocks), `fmc` (SDRAM), `flash`, `systick` |
+//! | G1   | `rcc` (clocks), `cache`, `fmc` (SDRAM), `flash`, `systick` |
 //! | G2   | `nvic`, hooks para MPU del arch backend |
 //! | G4   | `ltdc`, `dma2d`, `i2c`, `eth`, `cryp`, `hash`, `rng` |
 //! | G4+  | `jpeg`, `usb_hs` |
@@ -20,4 +20,7 @@
 
 pub use stm32f7::stm32f7x9 as pac;
 
+pub mod cache;
+pub mod fmc;
 pub mod gpio;
+pub mod rcc;

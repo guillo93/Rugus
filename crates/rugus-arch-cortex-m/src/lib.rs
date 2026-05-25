@@ -1,29 +1,24 @@
 //! Rugus `Arch` backend para ARM Cortex-M.
 //!
 //! Cubre ARMv7-M (Cortex-M3), ARMv7E-M (Cortex-M4/M7) y ARMv8-M Main
-//! (Cortex-M33). Para Cortex-M0/M0+ (ARMv6-M) habrá un backend separado
-//! o un cfg de capacidades reducidas (sin MPU configurable, sin algunos
-//! intrinsics).
-//!
-//! Estado G0: stub. Implementación real de context switch + MPU llega
-//! en G1/G2.
+//! (Cortex-M33). Context switch cooperativo vía PendSV en G1.
 
 #![no_std]
 #![deny(unsafe_op_in_unsafe_fn)]
 #![warn(missing_docs)]
+
+mod switch;
 
 use rugus_core::arch::{Arch, CriticalGuard};
 
 /// Marker type que implementa [`rugus_core::Arch`] para Cortex-M.
 pub struct CortexM;
 
-/// Contexto de tarea (registros calling-convention-saved + SP).
-///
-/// Layout exacto se decide al implementar el context switch ASM en G1.
+/// Contexto de tarea: puntero al frame software (r4–r11) en el stack.
 #[repr(C)]
 #[derive(Default)]
 pub struct Context {
-    /// Stack pointer de la tarea.
+    /// Stack pointer de la tarea (PSP tras restore).
     pub sp: u32,
 }
 
@@ -38,10 +33,18 @@ impl Arch for CortexM {
 
     const HAS_MEMORY_PROTECTION: bool = true;
 
-    unsafe fn switch_context(_prev: *mut Self::Context, _next: *const Self::Context) {
-        // Implementación real (PendSV trigger + ASM) llega en G1.
-        // Por ahora, no-op para que compile en G0.
-        cortex_m::asm::nop();
+    unsafe fn switch_context(prev: *mut Self::Context, next: *const Self::Context) {
+        unsafe {
+            switch::request_switch(prev, next);
+        }
+    }
+
+    fn init_task_stack(stack: &mut [u8], entry: fn() -> !) -> Self::Context {
+        switch::init_task_stack(stack, entry)
+    }
+
+    fn start_first(ctx: *const Self::Context) -> ! {
+        switch::start_first(ctx)
     }
 
     fn enter_critical() -> Self::SavedIrq {
@@ -52,8 +55,7 @@ impl Arch for CortexM {
 
     fn exit_critical(saved: Self::SavedIrq) {
         if saved.0 == 0 {
-            // SAFETY: estamos restaurando el estado previo de PRIMASK que
-            // guardamos al entrar. No habilita IRQs si estaban desactivadas.
+            // SAFETY: restauramos PRIMASK capturado en enter_critical.
             unsafe { cortex_m::interrupt::enable() }
         }
     }

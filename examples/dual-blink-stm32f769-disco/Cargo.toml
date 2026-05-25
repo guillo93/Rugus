@@ -1,0 +1,25 @@
+[package]
+name        = "dual-blink-stm32f769-disco"
+description = "Rugus dual-blink: two cooperative tasks on STM32F769I-DISCO."
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+authors.workspace      = true
+repository.workspace   = true
+publish     = false
+
+[[bin]]
+name = "dual-blink-stm32f769-disco"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+cortex-m            = { workspace = true }
+defmt               = { workspace = true }
+rugus-runtime       = { workspace = true }
+rugus-hal           = { workspace = true }
+rugus-hal-stm32f7   = { workspace = true, features = ["stm32f769"] }
+rugus-core          = { workspace = true }
+rugus-arch-cortex-m = { workspace = true }

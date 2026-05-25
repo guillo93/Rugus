@@ -11,6 +11,7 @@
 #![warn(missing_docs)]
 
 pub mod arch;
+pub mod heap;
 pub mod sched;
 pub mod syscall;
 

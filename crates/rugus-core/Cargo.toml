@@ -13,8 +13,9 @@ test = false
 bench = false
 
 [dependencies]
-defmt            = { workspace = true, optional = true }
-heapless         = { workspace = true }
+defmt                   = { workspace = true, optional = true }
+heapless                = { workspace = true }
+linked_list_allocator   = { workspace = true }
 
 [features]
 default = []

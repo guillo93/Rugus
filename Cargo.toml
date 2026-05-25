@@ -7,6 +7,7 @@ members = [
   "crates/rugus-hal-stm32f7",
   "crates/rugus-runtime",
   "examples/blink-stm32f769-disco",
+  "examples/dual-blink-stm32f769-disco",
 ]
 
 [workspace.package]
@@ -35,6 +36,7 @@ panic-probe       = { version = "1.0.0", features = ["print-defmt"] }
 critical-section  = "1.2"
 heapless          = { version = "0.9", default-features = false }
 bitflags          = { version = "2.6", default-features = false }
+linked_list_allocator = { version = "0.10", default-features = false, features = ["use_spin"] }
 
 # Crates internos del workspace
 rugus-core          = { path = "crates/rugus-core",          version = "0.1.0" }
