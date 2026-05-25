@@ -199,3 +199,82 @@ hubo cambio de licencia.
 1. Verificar que CI quedó verde tras el push.
 2. Esperar a que el owner decida la cuestión de firmas.
 3. Si CI pasa y firmas se resuelven, PR mergeable.
+
+---
+
+## 2026-05-24 — Claude Opus 4.7 — G0 cerrado en HW + hygiene templates merged
+
+**Scope:** Cierre formal del hito G0 con validación en hardware real, y
+merge del PR de templates/badges/dependabot.
+
+**Lo que pasó (cronológico):**
+
+1. **PR #9** (templates + badges + dependabot) mergeado a `main` por rebase.
+2. **Tag `v0.1.0`** creado en `main` apuntando al commit del génesis G0
+   completo. **GitHub Release** publicado como pre-release con notas
+   extraídas del CHANGELOG.
+3. **`enforce_admins: true`** activado en branch protection — el owner
+   queda sin bypass; cualquier cambio a `main` debe ir por PR + CI verde.
+4. **GitHub Discussions** habilitadas.
+5. **12 labels OSS** creados (`kind:*`, `prio:*`, `status:*`).
+6. **Validación en HW real (clave):** el owner conectó la
+   STM32F769I-DISCO por USB ST-LINK. Instalé `probe-rs-tools 0.31.0` vía
+   `cargo install`. `probe-rs list` detectó `STLink V2-1`. Intenté
+   `cargo run --release` y el linker falló con `cannot find linker
+   script memory.x` — **bug que faltó en el commit génesis**: no incluí
+   el `build.rs` canónico de cortex-m-rt que copia `memory.x` a `OUT_DIR`.
+
+   **Fix:** creado `examples/blink-stm32f769-disco/build.rs` con el setup
+   estándar (`include_bytes!("memory.x")` + `OUT_DIR` + `rustc-link-search`).
+   Tras el fix, segundo intento de flash funcionó:
+
+   ```
+   Running `probe-rs run --chip STM32F769NIHx ...`
+   Finished in 0.96s
+   0 [INFO ] rugus blink @ STM32F769I-DISCO, HSI 16 MHz default
+   0 [INFO ] LD1 (PJ13) configured; toggling at ~1 Hz
+   ```
+
+   Owner confirmó: **LD1 (PJ13) parpadea ~1 Hz físicamente en la placa**.
+   **G0 cerrado en HW.**
+
+7. Checkboxes G0 marcados en `docs/ROADMAP.md`.
+
+**Decisiones clave:**
+
+1. **No re-pushear a `v0.1.0` con el fix del build.rs**. El tag apunta al
+   estado del génesis G0 sin validar; el build.rs fix va en
+   `[Unreleased]` del CHANGELOG y entra al próximo release (probablemente
+   `v0.1.1` patch o se incluye en `v0.2.0` con G1). Razón: tags
+   inmutables son contrato; reescribir un tag publicado rompe a quien lo
+   haya clonado.
+2. **Mantener warnings cosméticos** sobre `target-feature=+vfp4` y
+   `+fp-armv8d16sp`. rustc 1.95 los marca como deprecated; el firmware
+   funciona. Limpieza en otro PR aparte (no en este fix puntual).
+3. **CI no detectó el bug del `build.rs`** porque `cargo build
+   --workspace` aparentemente skipea el link del binario en algunos
+   estados de cache. Investigar en G1 — quizás añadir `cargo run -p
+   blink-stm32f769-disco` a un job de CI con `--no-run` o ejecución en
+   QEMU para asegurar que el link siempre se ejerce.
+
+**Estado al cerrar:**
+
+- **Rugus G0 cerrado oficialmente.** Workspace compila, CI verde, release
+  publicado, firmware probado en HW.
+- PR `fix/blink-build-rs` abierto con el fix + checkboxes + AGENT_LOG +
+  CHANGELOG. Pendiente CI + merge.
+- Dependabot ya activo: hay un PR auto-abierto bumpeando
+  `actions/checkout` a v6.
+
+**Próximo agente que toque esto:**
+
+1. Mergear este PR cuando CI pase (todo es config/docs + un build.rs trivial).
+2. Mergear o revisar el PR de Dependabot.
+3. **Empezar G1** — issue #2 (RCC HSE → PLL 216 MHz) es el primer paso.
+   Recomendación: design-doc corto en el body del PR, código en commits
+   del mismo PR, validar en HW con multímetro o smoke test
+   `cortex_m::asm::delay(216_000_000)` ≈ 1 segundo.
+4. Considerar PR aparte para limpiar warnings de `target-feature` (rustc
+   1.95 ya no acepta `vfp4` ni `fp-armv8d16sp`). Probable fix: dejar solo
+   `target-cpu=cortex-m7` en `.cargo/config.toml` y dejar que el target
+   `thumbv7em-none-eabihf` deduzca el FPU.

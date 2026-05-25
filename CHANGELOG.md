@@ -11,6 +11,19 @@ SemVer estricto.
 
 ## [Unreleased]
 
+### Fixed
+
+- `examples/blink-stm32f769-disco/build.rs` añadido: copia `memory.x` a
+  `OUT_DIR` y lo expone al search path del linker. Sin esto, `cargo run`
+  fallaba con `cannot find linker script memory.x` (setup canónico de
+  cortex-m-rt que faltó en el commit génesis).
+
+### Validated
+
+- **G0 cerrado en HW real.** Firmware `blink-stm32f769-disco` flasheado en
+  STM32F769I-DISCO vía STLink V2-1 (`probe-rs 0.31.0`); LD1 (PJ13) parpadea
+  ~1 Hz; logs `defmt` por SWD/RTT visibles. Validación 2026-05-24.
+
 ### Added
 
 - Issue templates (`bug_report`, `feature_request`, `port_request`) con
