@@ -376,3 +376,31 @@ scripts verify, docs ROADMAP/CHANGELOG.
 
 **Próximo agente:** Afinar `fmc::init` verify (GPIO/timing/MPU); G2 MPU + syscalls.
 
+---
+
+## 2026-05-25 — Composer — Fix SDRAM verify en F769I-DISCO (PR #16)
+
+**Problema:** `fmc::init` completaba secuencia FMC pero verify devolvía readback=0;
+dual-blink caía a heap fallback en SRAM interna (9/10 en verify script).
+
+**Diagnóstico (HW + RTT):**
+
+1. RTT: `VerifyFailed`, readback=0, sdcr1=0x19E4 (registro FMC OK).
+2. PG8 (SDCLK): `moder=0`, `afr=0` tras init → pines FMC nunca muxeados.
+3. Causa raíz: macro `af_port!` escribía vía `&dp.GPIOx` del PAC; en este
+   crate los accesos efectivos requieren `GPIOx::ptr()` (como `gpio.rs` / LEDs).
+
+**Fix aplicado (`crates/rugus-hal-stm32f7/src/fmc.rs`):**
+
+- GPIO FMC: `GPIOx::ptr()` + AF12, pull-up, very-high speed (BSP ST).
+- `RBURST`/`RPIPE` movidos a `SDCR1` (bank 1), no `SDCR2`.
+- Deshabilitar FMC NOR bank1 (`BCR1.MBKEN`) para evitar bloqueo bus especulativo.
+- Init SDRAM antes de D-cache en dual-blink; verify condicional si cache off.
+
+**Verificación HW:**
+
+- RTT: `SDRAM OK @ 0xC0000000`, heap en SDRAM 256 KiB.
+- `./tools/verify-dual-blink-stm32f769-disco.sh` — **10/10 PASS**.
+
+**Commit:** en rama `feat/g1-scheduler-dual-blink`, push a PR #16.
+
