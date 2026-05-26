@@ -59,6 +59,7 @@ impl<'a> RxRing<'a> {
             .dmardlar
             .write(|w| unsafe { w.srl().bits(ring_ptr as u32) });
 
+        core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
         eth_dma.dmaomr.modify(|_, w| w.sr().set_bit());
         self.demand_poll();
     }
@@ -104,6 +105,7 @@ impl<'a> RxRing<'a> {
         if entry.is_available() {
             self.next_entry = (self.next_entry + 1) % entries_len;
             let length = entry.recv(packet_id)?;
+            super::note_rx_frame();
             Ok((entry_num, length))
         } else {
             Err(RxError::WouldBlock)

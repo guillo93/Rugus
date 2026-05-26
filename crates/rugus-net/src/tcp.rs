@@ -24,7 +24,7 @@ impl Endpoint {
     /// Default LAN HTTPS test server for Rugus G4 examples.
     pub const fn lan_https_server() -> Self {
         Self {
-            addr: Ipv4Address::new(192, 168, 1, 100),
+            addr: Ipv4Address::new(192, 168, 0, 112),
             port: 8443,
         }
     }

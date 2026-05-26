@@ -7,8 +7,8 @@ mod port;
 mod setup;
 
 pub use dma::{
-    EthRxToken, EthTxToken, EthernetDMA, InterruptReasonSummary, RxError, RxRingEntry, TxError,
-    TxRingEntry,
+    eth_stats, EthRxToken, EthStats, EthTxToken, EthernetDMA, InterruptReasonSummary, RxError,
+    RxRingEntry, TxError, TxRingEntry,
 };
 pub use mac::{EthernetMAC, EthernetMACWithMii, Speed, WrongClock};
 pub use miim::{MdcPin, MdioPin, Miim, Stm32Mii};

@@ -1,7 +1,17 @@
-/* STM32F769NIH6 — SRAM1 for ETH descriptor rings + smoltcp (G4 step 1). */
+/* STM32F769NIH6 — SRAM1 for app + dedicated ETH DMA region (ST BSP 0x2007C000). */
 
 MEMORY
 {
   FLASH (rx)  : ORIGIN = 0x08000000, LENGTH = 2048K
-  RAM   (rwx) : ORIGIN = 0x20020000, LENGTH = 368K
+  RAM   (rwx) : ORIGIN = 0x20020000, LENGTH = 352K
+  ETH   (rw)  : ORIGIN = 0x2007C000, LENGTH = 16K
+}
+
+SECTIONS
+{
+  .eth_dma (NOLOAD) : ALIGN(32) {
+    KEEP(*(.eth_dma))
+    KEEP(*(.eth_dma.*))
+    . = ALIGN(32);
+  } > ETH
 }

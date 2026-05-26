@@ -11,7 +11,8 @@ use ieee802_3_miim::phy::lan87xxa::LAN8742A;
 use rugus_hal_stm32f7::cache;
 use rugus_hal_stm32f7::eth::{
     self, configure_disco_pins, enable_eth_interrupt, enable_peripheral, eth_interrupt_handler,
-    init_phy, link_up, EthStack, PartsIn, RxRingEntry, TxRingEntry, DEFAULT_MAC, LAN8742_PHY_ADDR,
+    eth_stats, init_phy, link_up, EthStack, PartsIn, RxRingEntry, TxRingEntry, DEFAULT_MAC,
+    LAN8742_PHY_ADDR,
 };
 use rugus_hal_stm32f7::pac;
 use rugus_hal_stm32f7::rcc;
@@ -20,6 +21,14 @@ use rugus_runtime::entry;
 use smoltcp::iface::SocketStorage;
 use smoltcp::time::Instant;
 use stm32f7::stm32f7x9::interrupt;
+
+const ETH_RING_ENTRIES: usize = 4;
+
+#[link_section = ".eth_dma"]
+static mut RX_RING: [RxRingEntry; ETH_RING_ENTRIES] = [RxRingEntry::INIT; ETH_RING_ENTRIES];
+
+#[link_section = ".eth_dma"]
+static mut TX_RING: [TxRingEntry; ETH_RING_ENTRIES] = [TxRingEntry::INIT; ETH_RING_ENTRIES];
 
 static TIME_MS: Mutex<RefCell<u64>> = Mutex::new(RefCell::new(0));
 
@@ -44,12 +53,11 @@ fn main() -> ! {
 
     let parts = PartsIn::new(dp.ETHERNET_MAC, dp.ETHERNET_MMC, dp.ETHERNET_DMA);
 
-    let mut rx_ring: [RxRingEntry; 4] = Default::default();
-    let mut tx_ring: [TxRingEntry; 4] = Default::default();
+    let (rx_ring, tx_ring) = eth_rings();
 
     let EthStack { mut dma, mac } =
-        eth::init(parts, &clocks, &mut rx_ring, &mut tx_ring).expect("eth init");
-    defmt::debug!("ETH MAC+DMA init OK");
+        eth::init(parts, &clocks, rx_ring, tx_ring).expect("eth init");
+    defmt::debug!("ETH MAC+DMA init OK (rings idle until link up)");
 
     enable_eth_interrupt(&dma);
 
@@ -63,6 +71,14 @@ fn main() -> ! {
         cortex_m::asm::delay(clocks.sysclk / 20);
     }
     defmt::info!("PHY link up");
+    dma.restart_after_link_up();
+    defmt::debug!(
+        "ETH DMA restarted sr={} st={} rps={} tps={}",
+        eth_stats(&dma).rx_dma_enabled,
+        eth_stats(&dma).tx_dma_enabled,
+        eth_stats(&dma).rx_dma_state,
+        eth_stats(&dma).tx_dma_state
+    );
 
     let cfg = StaticConfig::home_lan();
     let mut socket_storage: [SocketStorage; 1] = Default::default();
@@ -92,9 +108,53 @@ fn main() -> ! {
         cortex_m::asm::delay(clocks.sysclk / 50);
     }
 
+    let mut last_log_ms = now_ms();
+    let mut last_rx = 0u32;
     loop {
         net.poll(Instant::from_millis(now_ms() as i64));
+
+        let t = now_ms();
+        if t.saturating_sub(last_log_ms) >= 1000 {
+            last_log_ms = t;
+            let stats = eth_stats(net.device_mut());
+            if stats.rx_frames != last_rx {
+                defmt::info!(
+                    "ETH rx={} tx={} sr={} st={} rps={} tps={} rbus={} tbus={}",
+                    stats.rx_frames,
+                    stats.tx_frames,
+                    stats.rx_dma_enabled,
+                    stats.tx_dma_enabled,
+                    stats.rx_dma_state,
+                    stats.tx_dma_state,
+                    stats.rx_buf_unavail,
+                    stats.tx_buf_unavail
+                );
+                last_rx = stats.rx_frames;
+            } else {
+                defmt::debug!(
+                    "ETH idle rx={} tx={} sr={} st={} rps={} tps={}",
+                    stats.rx_frames,
+                    stats.tx_frames,
+                    stats.rx_dma_enabled,
+                    stats.tx_dma_enabled,
+                    stats.rx_dma_state,
+                    stats.tx_dma_state
+                );
+            }
+        }
+
         cortex_m::asm::delay(clocks.sysclk / 100);
+    }
+}
+
+fn eth_rings() -> (&'static mut [RxRingEntry], &'static mut [TxRingEntry]) {
+    unsafe {
+        let rx = core::ptr::addr_of_mut!(RX_RING);
+        let tx = core::ptr::addr_of_mut!(TX_RING);
+        (
+            &mut *rx,
+            &mut *tx,
+        )
     }
 }
 

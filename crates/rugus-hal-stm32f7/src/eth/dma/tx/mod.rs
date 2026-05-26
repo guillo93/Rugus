@@ -48,6 +48,7 @@ impl<'ring> TxRing<'ring> {
             .dmatdlar
             .write(|w| unsafe { w.stl().bits(ring_ptr as u32) });
 
+        core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
         eth_dma.dmaomr.modify(|_, w| w.st().set_bit());
     }
 

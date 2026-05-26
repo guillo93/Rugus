@@ -3,6 +3,8 @@
 
 use cortex_m::peripheral::NVIC;
 
+use core::sync::atomic::{AtomicU32, Ordering};
+
 use crate::pac::{Interrupt, ETHERNET_DMA};
 
 mod smoltcp_phy;
@@ -19,6 +21,57 @@ pub use tx::{TxError, TxRing, TxRingEntry};
 
 mod packet_id;
 pub use packet_id::PacketId;
+
+static RX_FRAMES: AtomicU32 = AtomicU32::new(0);
+static TX_FRAMES: AtomicU32 = AtomicU32::new(0);
+
+/// Runtime counters and DMA status for RTT debug.
+#[derive(Clone, Copy, Debug)]
+pub struct EthStats {
+    /// Frames delivered to the stack.
+    pub rx_frames: u32,
+    /// Frames submitted to TX DMA.
+    pub tx_frames: u32,
+    /// RX DMA process state (DMACSR RPS).
+    pub rx_dma_state: u8,
+    /// TX DMA process state (DMACSR TPS).
+    pub tx_dma_state: u8,
+    /// Receive buffer unavailable (RBUS).
+    pub rx_buf_unavail: bool,
+    /// Transmit buffer unavailable (TBUS).
+    pub tx_buf_unavail: bool,
+    /// Abnormal interrupt summary (AIS).
+    pub abnormal_summary: bool,
+    /// DMAOMR SR bit (RX DMA enable).
+    pub rx_dma_enabled: bool,
+    /// DMAOMR ST bit (TX DMA enable).
+    pub tx_dma_enabled: bool,
+}
+
+/// Snapshot frame counters and DMA status registers.
+pub fn eth_stats(dma: &EthernetDMA<'_, '_>) -> EthStats {
+    let status = dma.eth_dma.dmasr.read();
+    let omr = dma.eth_dma.dmaomr.read();
+    EthStats {
+        rx_frames: RX_FRAMES.load(Ordering::Relaxed),
+        tx_frames: TX_FRAMES.load(Ordering::Relaxed),
+        rx_dma_state: status.rps().bits(),
+        tx_dma_state: status.tps().bits(),
+        rx_buf_unavail: status.rbus().bit_is_set(),
+        tx_buf_unavail: status.tbus().bit_is_set(),
+        abnormal_summary: status.ais().bit_is_set(),
+        rx_dma_enabled: omr.sr().bit_is_set(),
+        tx_dma_enabled: omr.st().bit_is_set(),
+    }
+}
+
+pub(crate) fn note_rx_frame() {
+    RX_FRAMES.fetch_add(1, Ordering::Relaxed);
+}
+
+pub(crate) fn note_tx_frame() {
+    TX_FRAMES.fetch_add(1, Ordering::Relaxed);
+}
 
 /// VLAN frame max size per datasheet.
 pub(crate) const MTU: usize = 1522;
@@ -45,6 +98,12 @@ impl<'rx, 'tx> EthernetDMA<'rx, 'tx> {
             if !eth_dma.dmabmr.read().sr().bit_is_set() {
                 break;
             }
+        }
+
+        // Clear sticky DMA status flags before descriptor programming (W1C).
+        let pending = eth_dma.dmasr.read().bits();
+        if pending != 0 {
+            eth_dma.dmasr.write(|w| unsafe { w.bits(pending) });
         }
 
         eth_dma.dmaomr.modify(|_, w| {
@@ -80,15 +139,19 @@ impl<'rx, 'tx> EthernetDMA<'rx, 'tx> {
             }
         });
 
-        let mut dma = EthernetDMA {
+        let dma = EthernetDMA {
             eth_dma,
             rx_ring: RxRing::new(rx_buffer),
             tx_ring: TxRing::new(tx_buffer),
         };
 
-        dma.rx_ring.start(&dma.eth_dma);
-        dma.tx_ring.start(&dma.eth_dma);
         dma
+    }
+
+    /// Start RX/TX descriptor rings. Call after MAC [`EthernetMAC::new`] (RE/TE set).
+    pub fn start(&mut self) {
+        self.rx_ring.start(&self.eth_dma);
+        self.tx_ring.start(&self.eth_dma);
     }
 
     pub fn enable_interrupt(&self) {
@@ -147,6 +210,12 @@ impl<'rx, 'tx> EthernetDMA<'rx, 'tx> {
 
     pub fn tx_available(&mut self) -> bool {
         self.tx_ring.next_entry_available()
+    }
+
+    /// Re-arm RX/TX rings after PHY link-up (REF_CLK absent before autoneg).
+    pub fn restart_after_link_up(&mut self) {
+        self.eth_dma.dmaomr.modify(|_, w| w.sr().clear_bit().st().clear_bit());
+        self.start();
     }
 }
 

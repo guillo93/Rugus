@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Automated build, flash, and RTT verification for https-get-stm32f769-disco.
 #
-# Requires a LAN HTTPS server at 192.168.1.100:8443 (see example README).
+# Requires a LAN HTTPS server at 192.168.0.112:8443 (see example README).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -40,7 +40,7 @@ echo "=== Rugus verify: https-get-stm32f769-disco ==="
 echo "Root:  $ROOT"
 echo "Probe: $PROBE"
 echo "Log:   $LOG"
-echo "Note:  LAN HTTPS server required at 192.168.1.100:8443"
+echo "Note:  LAN HTTPS server required at 192.168.0.112:8443"
 echo
 
 cd "$ROOT"
@@ -91,10 +91,10 @@ else
   record_fail "RTT: PHY link up"
 fi
 
-if grep -qiE 'IPv4 ready|static IPv4 192\.168\.1\.50|IPv4 address 192\.168\.1\.50' "$LOG"; then
-  record_pass "RTT: static IPv4 192.168.1.50"
+if grep -qiE 'IPv4 ready|static IPv4 192\.168\.0\.50|IPv4 address 192\.168\.0\.50' "$LOG"; then
+  record_pass "RTT: static IPv4 192.168.0.50"
 else
-  record_fail "RTT: static IPv4 192.168.1.50"
+  record_fail "RTT: static IPv4 192.168.0.50"
 fi
 
 if grep -qiE 'TCP established' "$LOG"; then
@@ -131,7 +131,7 @@ echo
 echo "=== Summary: $pass passed, $fail failed ==="
 if [[ $fail -gt 0 ]]; then
   echo "Tip: start LAN HTTPS server — see examples/https-get-stm32f769-disco/README.md"
-  echo "     Board IP: 192.168.1.50, server: 192.168.1.100:8443"
+  echo "     Board IP: 192.168.0.50, server: 192.168.0.112:8443"
   exit 1
 fi
 exit 0

@@ -48,16 +48,13 @@ impl<'rx, 'tx> Device for EthernetDMA<'rx, 'tx> {
     }
 
     fn receive(&mut self, _timestamp: Instant) -> Option<(Self::RxToken<'_>, Self::TxToken<'_>)> {
-        if self.tx_available() && self.rx_available() {
-            let EthernetDMA {
-                rx_ring, tx_ring, ..
-            } = self;
-            let rx = EthRxToken { rx_ring };
-            let tx = EthTxToken { tx_ring };
-            Some((rx, tx))
-        } else {
-            None
+        if !self.rx_available() {
+            return None;
         }
+        let EthernetDMA {
+            rx_ring, tx_ring, ..
+        } = self;
+        Some((EthRxToken { rx_ring }, EthTxToken { tx_ring }))
     }
 
     fn transmit(&mut self, _timestamp: Instant) -> Option<Self::TxToken<'_>> {
@@ -102,7 +99,9 @@ impl<'dma, 'tx> TxToken for EthTxToken<'dma, 'tx> {
     where
         F: FnOnce(&mut [u8]) -> R,
     {
-        let mut tx_packet = self.tx_ring.send_next(len, None).ok().unwrap();
+        let Some(mut tx_packet) = self.tx_ring.send_next(len, None).ok() else {
+            return f(&mut []);
+        };
         let res = f(&mut tx_packet);
         tx_packet.send();
         res
