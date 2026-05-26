@@ -65,7 +65,10 @@ fn main() -> ! {
     unsafe {
         heap::init(core::ptr::addr_of_mut!(HEAP).cast(), HEAP_SIZE);
     }
-    defmt::info!("heap on internal SRAM ({=u32} KiB)", HEAP_SIZE as u32 / 1024);
+    defmt::info!(
+        "heap on internal SRAM ({=u32} KiB)",
+        HEAP_SIZE as u32 / 1024
+    );
 
     let _box: alloc::boxed::Box<u32> = alloc::boxed::Box::new(0);
     defmt::info!("heap alloc smoke test OK");
