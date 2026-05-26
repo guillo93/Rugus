@@ -1,0 +1,23 @@
+[package]
+name        = "rugus-hal-stm32f4"
+description = "Rugus HAL implementation for STMicroelectronics STM32F4 family (F407 reference)."
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+authors.workspace      = true
+repository.workspace   = true
+
+[lib]
+test = false
+bench = false
+
+[dependencies]
+cortex-m         = { workspace = true }
+stm32f4          = { workspace = true }
+rugus-hal        = { workspace = true }
+
+# PAC `stm32f4` selects die via feature gate. `stm32f407` covers F407/F417.
+[features]
+default = ["stm32f407"]
+stm32f407 = []
