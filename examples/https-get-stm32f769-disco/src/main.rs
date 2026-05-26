@@ -16,7 +16,7 @@ use rugus_crypto::SoftwareRng;
 use rugus_hal_stm32f7::cache;
 use rugus_hal_stm32f7::eth::{
     self, configure_disco_pins, enable_eth_interrupt, enable_peripheral, eth_interrupt_handler,
-    init_phy, link_up, take_eth_irq_pending, EthStack, EthernetDMA, PartsIn, RxRingEntry,
+    init_phy, link_established, sync_mac_speed_from_phy, take_eth_irq_pending, EthStack, EthernetDMA, PartsIn, RxRingEntry,
     TxRingEntry, DEFAULT_MAC, LAN8742_PHY_ADDR,
 };
 use rugus_hal_stm32f7::fmc::{self, SDRAM_BASE};
@@ -82,9 +82,10 @@ fn main() -> ! {
     init_phy(&mut phy);
 
     defmt::info!("waiting for PHY link...");
-    while !link_up(&mut phy) {
+    while !link_established(&mut phy) {
         cortex_m::asm::delay(clocks.sysclk / 20);
     }
+    sync_mac_speed_from_phy(&mut phy);
     defmt::info!("PHY link up");
     dma.restart_after_link_up();
     enable_eth_interrupt(&dma);
