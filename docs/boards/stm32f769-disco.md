@@ -19,13 +19,13 @@ product board (G0–G4).
 | Item | Value |
 |------|-------|
 | PHY | SMSC **LAN8742A** (RMII), address **0** |
-| Connector | RJ45 **CN3** (user LAN) |
-| RMII pins | REF_CLK PA1, CRS_DV PA7, TX_EN PB11, TXD0 PB12, TXD1 PB13, RXD0 PC4, RXD1 PC5, MDIO PA2, MDC PC1 |
+| Connector | RJ45 **CN10** (Ethernet LAN) |
+| RMII pins | REF_CLK PA1, CRS_DV PA7, TX_EN PG11, TXD0 PG13, TXD1 PG14, RXD0 PC4, RXD1 PC5, MDIO PA2, MDC PC1 |
 | HAL module | `rugus-hal-stm32f7::eth` |
 | Examples | `eth-link-stm32f769-disco`, `https-get-stm32f769-disco` |
 | Verify | `./tools/verify-eth-link-stm32f769-disco.sh`, `./tools/verify-https-get-stm32f769-disco.sh` |
 
-Connect an Ethernet cable to **CN3** and a switch/router (or direct PC link)
+Connect an Ethernet cable to **CN10** and a switch/router (or direct PC link)
 before expecting `link up` in RTT logs. Default static IPv4 in examples:
 `192.168.0.50/24` (gateway `192.168.0.1`). HTTPS example expects a LAN server
 at `192.168.0.112:8443` — see

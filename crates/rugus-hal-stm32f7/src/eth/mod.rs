@@ -7,8 +7,8 @@ mod port;
 mod setup;
 
 pub use dma::{
-    eth_stats, EthRxToken, EthStats, EthTxToken, EthernetDMA, InterruptReasonSummary, RxError,
-    RxRingEntry, TxError, TxRingEntry,
+    eth_regs, eth_stats, EthRegSnapshot, EthRxToken, EthStats, EthTxToken, EthernetDMA,
+    InterruptReasonSummary, RxError, RxRingEntry, TxError, TxRingEntry,
 };
 pub use mac::{EthernetMAC, EthernetMACWithMii, Speed, WrongClock};
 pub use miim::{MdcPin, MdioPin, Miim, Stm32Mii};
@@ -17,8 +17,11 @@ pub use setup::{configure_disco_pins, enable_peripheral, Mdc, Mdio, PartsIn, LAN
 
 use core::sync::atomic::{AtomicBool, Ordering};
 
+use ieee802_3_miim::phy::lan87xxa::LAN8742A;
+use ieee802_3_miim::phy::PhySpeed;
 use ieee802_3_miim::Phy;
 
+use crate::pac::ETHERNET_MAC;
 use crate::rcc::Clocks;
 
 static ETH_IRQ_PENDING: AtomicBool = AtomicBool::new(false);
@@ -57,9 +60,37 @@ pub fn init_phy<M: Miim>(phy: &mut ieee802_3_miim::phy::lan87xxa::LAN8742A<M>) {
     phy.phy_init();
 }
 
-/// Poll PHY link status.
+/// Poll PHY link status (BSR link bit).
 pub fn link_up<M: Miim>(phy: &mut ieee802_3_miim::phy::lan87xxa::LAN8742A<M>) -> bool {
     phy.phy_link_up()
+}
+
+/// Poll PHY link + autoneg complete (preferred before starting DMA).
+pub fn link_established<M: Miim>(phy: &mut LAN8742A<M>) -> bool {
+    phy.link_established()
+}
+
+/// Match MAC speed/duplex to PHY SSR after autoneg (ST `ethernet_link_thread`).
+pub fn sync_mac_speed_from_phy<M: Miim>(phy: &mut LAN8742A<M>) {
+    let Some(ps) = phy.link_speed() else {
+        return;
+    };
+    let speed = match ps {
+        PhySpeed::HalfDuplexBase10T => Speed::HalfDuplexBase10T,
+        PhySpeed::FullDuplexBase10T => Speed::FullDuplexBase10T,
+        PhySpeed::HalfDuplexBase100Tx => Speed::HalfDuplexBase100Tx,
+        PhySpeed::FullDuplexBase100Tx => Speed::FullDuplexBase100Tx,
+    };
+    // SAFETY: ETH MAC enabled after init; single-writer in main until IRQ handlers run.
+    unsafe {
+        let mac = &*ETHERNET_MAC::ptr();
+        mac.maccr.modify(|_, w| match speed {
+            Speed::HalfDuplexBase10T => w.fes().clear_bit().dm().clear_bit(),
+            Speed::FullDuplexBase10T => w.fes().clear_bit().dm().set_bit(),
+            Speed::HalfDuplexBase100Tx => w.fes().set_bit().dm().clear_bit(),
+            Speed::FullDuplexBase100Tx => w.fes().set_bit().dm().set_bit(),
+        });
+    }
 }
 
 /// Handle `ETH` IRQ — call from `#[pac::interrupt]` handler.

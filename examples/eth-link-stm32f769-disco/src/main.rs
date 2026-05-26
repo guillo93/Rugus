@@ -8,11 +8,12 @@ use core::cell::RefCell;
 use cortex_m::interrupt::Mutex;
 use cortex_m_rt::exception;
 use ieee802_3_miim::phy::lan87xxa::LAN8742A;
+use ieee802_3_miim::Phy;
 use rugus_hal_stm32f7::cache;
 use rugus_hal_stm32f7::eth::{
     self, configure_disco_pins, enable_eth_interrupt, enable_peripheral, eth_interrupt_handler,
-    eth_stats, init_phy, link_up, EthStack, PartsIn, RxRingEntry, TxRingEntry, DEFAULT_MAC,
-    LAN8742_PHY_ADDR,
+    eth_regs, eth_stats, init_phy, link_established, sync_mac_speed_from_phy, EthStack, PartsIn,
+    RxRingEntry, TxRingEntry, DEFAULT_MAC, LAN8742_PHY_ADDR,
 };
 use rugus_hal_stm32f7::pac;
 use rugus_hal_stm32f7::rcc;
@@ -65,12 +66,27 @@ fn main() -> ! {
     let mut phy = LAN8742A::new(mac, LAN8742_PHY_ADDR);
     init_phy(&mut phy);
 
-    defmt::info!("waiting for PHY link (cable to LAN port)...");
-    while !link_up(&mut phy) {
+    defmt::info!("waiting for PHY link + autoneg (cable to CN10)...");
+    while !link_established(&mut phy) {
         cortex_m::asm::delay(clocks.sysclk / 20);
     }
-    defmt::info!("PHY link up");
+    sync_mac_speed_from_phy(&mut phy);
+    defmt::info!("PHY link up (autoneg done)");
     dma.restart_after_link_up();
+
+    let regs = eth_regs(&dma);
+    defmt::info!(
+        "ETH regs maccr={:08x} dmabmr={:08x} dmasr={:08x} dmaomr={:08x} mmc_rx={} mmc_tx={}",
+        regs.maccr,
+        regs.dmabmr,
+        regs.dmasr,
+        regs.dmaomr,
+        regs.mmc_rx_unicast,
+        regs.mmc_tx_good
+    );
+    let phy_bmsr = phy.read(1);
+    defmt::info!("PHY BMSR={:04x} link_bit={}", phy_bmsr, phy_bmsr & 0x0004 != 0);
+
     defmt::debug!(
         "ETH DMA restarted sr={} st={} rps={} tps={}",
         eth_stats(&dma).rx_dma_enabled,
@@ -109,6 +125,7 @@ fn main() -> ! {
 
     let mut last_log_ms = now_ms();
     let mut last_rx = 0u32;
+    let traffic_start = now_ms();
     loop {
         net.device_mut().service_dma();
         net.poll(Instant::from_millis(now_ms() as i64));
@@ -117,6 +134,7 @@ fn main() -> ! {
         if t.saturating_sub(last_log_ms) >= 1000 {
             last_log_ms = t;
             let stats = eth_stats(net.device_mut());
+            let in_window = t.saturating_sub(traffic_start) < 30_000;
             if stats.rx_frames != last_rx {
                 defmt::info!(
                     "ETH rx={} tx={} sr={} st={} rps={} tps={} rbus={} tbus={}",
@@ -130,6 +148,14 @@ fn main() -> ! {
                     stats.tx_buf_unavail
                 );
                 last_rx = stats.rx_frames;
+            } else if in_window {
+                defmt::info!(
+                    "ETH idle rx={} tx={} rps={} tps={} (ping 192.168.0.50 now)",
+                    stats.rx_frames,
+                    stats.tx_frames,
+                    stats.rx_dma_state,
+                    stats.tx_dma_state
+                );
             } else {
                 defmt::debug!(
                     "ETH idle rx={} tx={} sr={} st={} rps={} tps={}",
