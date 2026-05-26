@@ -62,21 +62,36 @@ No external SDRAM on this board (unlike F769I-DISCO).
 
 ## Rugus capabilities on this board
 
-| Feature | G3 blink | Notes |
-|---------|----------|-------|
-| GPIO / LEDs | Yes | `rugus-hal-stm32f4::gpio` |
-| RCC 168 MHz | Yes | `rugus-hal-stm32f4::rcc` |
-| MPU | Hardware yes | Software support from G2 arch crate; not exercised in G3 blink |
-| I/D-cache | N/A | Cortex-M4 has no cache |
-| SDRAM | No | Not populated |
+| Feature | G3 blink | dual-blink | app-sandbox | Notes |
+|---------|----------|------------|-------------|-------|
+| GPIO / LEDs | Yes | LD4 + LD6 | LD4 kernel, LD6 good app | `rugus-hal-stm32f4::gpio` |
+| RCC 168 MHz | Yes | Yes | Yes | `rugus-hal-stm32f4::rcc` |
+| Scheduler cooperativo | — | Yes | Yes | `rugus-core::sched` |
+| Heap | — | 32 KiB SRAM | 32 KiB SRAM | No external SDRAM |
+| MPU / syscalls | — | — | Yes | `rugus-arch-cortex-m` (sin cambios M4) |
+| I/D-cache | N/A | N/A | N/A | Cortex-M4 has no cache |
+| SDRAM | No | No | No | Not populated |
 
-## Example
+## Examples
 
 ```bash
-cd examples/blink-stm32f407g-disco
-cargo run --release
-# or
-../../tools/verify-blink-stm32f407g-disco.sh
+# Single-task blink (LD4)
+cd examples/blink-stm32f407g-disco && cargo run --release
+
+# Dual cooperative tasks (LD4 + LD6)
+cd examples/dual-blink-stm32f407g-disco && cargo run --release
+
+# MPU sandbox: kernel + userland apps, MemManage kill policy
+cd examples/app-sandbox-stm32f407g-disco && cargo run --release
+```
+
+Verify scripts (default `PROBE_RS_PROBE` for this board’s ST-Link):
+
+```bash
+PROBE_RS_PROBE=0483:3752:066EFF575353667267172509 \
+  ./tools/verify-blink-stm32f407g-disco.sh
+./tools/verify-dual-blink-stm32f407g-disco.sh
+./tools/verify-app-sandbox-stm32f407g-disco.sh
 ```
 
 ## Related

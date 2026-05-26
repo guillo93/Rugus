@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# Automated build, flash, and RTT verification for blink-stm32f407g-disco.
+# Automated build, flash, and RTT verification for app-sandbox-stm32f407g-disco (G3).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-EXAMPLE="$ROOT/examples/blink-stm32f407g-disco"
+EXAMPLE="$ROOT/examples/app-sandbox-stm32f407g-disco"
 TARGET="thumbv7em-none-eabihf"
-ELF="$ROOT/target/$TARGET/release/blink-stm32f407g-disco"
+ELF="$ROOT/target/$TARGET/release/app-sandbox-stm32f407g-disco"
 CHIP="STM32F407VG"
-LOG="${RUGUS_RTT_LOG:-/tmp/rugus-rtt-verify-f407.log}"
-RTT_TIMEOUT="${RUGUS_RTT_TIMEOUT:-25}"
+LOG="${RUGUS_RTT_LOG:-/tmp/rugus-rtt-sandbox-verify-f407.log}"
+RTT_TIMEOUT="${RUGUS_RTT_TIMEOUT:-45}"
 # Default F407 onboard ST-Link when F769 is also connected:
 PROBE_RS_PROBE="${PROBE_RS_PROBE:-0483:3752:066EFF575353667267172509}"
 PROBE_ARGS=(--probe "$PROBE_RS_PROBE")
@@ -36,7 +36,7 @@ run_check() {
   fi
 }
 
-echo "=== Rugus verify: blink-stm32f407g-disco ==="
+echo "=== Rugus verify: app-sandbox-stm32f407g-disco (G3) ==="
 echo "Root: $ROOT"
 echo "Log:  $LOG"
 echo "Probe: $PROBE_RS_PROBE"
@@ -46,7 +46,7 @@ cd "$ROOT"
 run_check "build (workspace release)" \
   cargo build --workspace --release --target "$TARGET"
 
-run_check "build (blink + defmt link)" \
+run_check "build (app-sandbox + defmt link)" \
   bash -c "cd \"$EXAMPLE\" && cargo build --release"
 
 run_check "clippy (workspace, -D warnings)" \
@@ -69,7 +69,7 @@ set -e
 cat "$LOG"
 
 if [[ $probe_exit -eq 0 || $probe_exit -eq 124 ]]; then
-  if grep -q 'Finished in' "$LOG" || grep -q 'INFO' "$LOG"; then
+  if grep -qiE 'INFO|kernel|sandbox' "$LOG"; then
     record_pass "flash/run completed"
   else
     record_fail "flash/run (no success indicators)"
@@ -84,22 +84,45 @@ else
   record_fail "RTT: SYSCLK 168 MHz"
 fi
 
-if grep -qiE 'LD4|PD12|toggling' "$LOG"; then
-  record_pass "RTT: LD4 configured"
+if grep -qiE 'heap on internal SRAM' "$LOG"; then
+  record_pass "RTT: heap on internal SRAM"
 else
-  record_fail "RTT: LD4 configured"
+  record_fail "RTT: heap on internal SRAM"
 fi
 
-if grep -qiE 'HardFault|panic|Exception.*halt|defmt version found, but no' "$LOG"; then
-  record_fail "fault or defmt/link error in log"
+if grep -qiE 'kernel task.*started' "$LOG"; then
+  record_pass "RTT: kernel task started"
 else
-  record_pass "no fault / defmt error detected"
+  record_fail "RTT: kernel task started"
+fi
+
+if grep -qiE 'MemManage.*domain=App|fault MemManage.*App|killing task' "$LOG"; then
+  record_pass "RTT: MemManage fault reported (domain App)"
+else
+  record_fail "RTT: MemManage fault + domain App"
+fi
+
+if grep -qiE 'killing task' "$LOG"; then
+  record_pass "RTT: kernel killed faulting task"
+else
+  record_fail "RTT: task kill policy"
+fi
+
+if grep -qiE 'kernel toggle LD4' "$LOG"; then
+  record_pass "RTT: kernel continued after fault"
+else
+  record_fail "RTT: kernel continued after fault"
+fi
+
+if grep -qiE 'HardFault.*handler mode|defmt version found, but no|global panic' "$LOG"; then
+  record_fail "global panic / handler HardFault in log"
+else
+  record_pass "no global panic detected"
 fi
 
 echo
 echo "=== Summary: $pass passed, $fail failed ==="
 if [[ $fail -gt 0 ]]; then
-  echo "Tip: if RTT is empty but LED blinks, try RUGUS_RTT_TIMEOUT=30 or rebuild from examples/blink-stm32f407g-disco/."
   exit 1
 fi
 exit 0

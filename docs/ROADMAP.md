@@ -59,10 +59,14 @@ onboard). Documentación: [`docs/boards/stm32f407g-disco.md`](boards/stm32f407g-
 Tier mínimo futuro (post-G3, sin MPU): STM32F103 Blue Pill — ver
 [`docs/boards/stm32f103c8-bluepill.md`](boards/stm32f103c8-bluepill.md).
 
-- [ ] `rugus-hal-stm32f4`: GPIO + RCC 168 MHz para F407 Discovery.
-- [ ] `examples/blink-stm32f407g-disco` verificado en HW.
-- [ ] Refactor mínimo en `rugus-arch-cortex-m` si M4 expone gaps.
+- [x] `rugus-hal-stm32f4`: GPIO + RCC 168 MHz para F407 Discovery.
+- [x] `examples/blink-stm32f407g-disco` verificado en HW.
+- [x] `examples/dual-blink-stm32f407g-disco` — scheduler cooperativo, heap SRAM interna.
+- [x] `examples/app-sandbox-stm32f407g-disco` — MPU + syscalls en Cortex-M4 (opcional G3).
+- [x] Refactor mínimo en `rugus-arch-cortex-m` si M4 expone gaps (ninguno requerido).
 - [x] CI matrix: `thumbv7em-none-eabihf` ya cubre Cortex-M4F (mismo target que M7).
+
+✅ **G3 cerrado** (2026-05-25). **Próximo: G4 o F103 downscale** (ver AGENT_LOG).
 
 ## G4 — Red + TLS + crypto *(8-10 sem)*
 
