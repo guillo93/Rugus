@@ -1,5 +1,66 @@
 ---
 
+## 2026-05-26 — Agent — G4 merge-ready: CI verde + fix MPU https-get (PR #24)
+
+**Rama:** `feat/g4-eth-smoltcp` · **Commit CI:** `10fe98f` · **Placa:** STM32F769I-DISCO · **Probe F769:** `0483:374b:066EFF524853837267102836`
+
+### Phase 1 — CI (completado)
+
+| Check | Estado |
+|-------|--------|
+| rustfmt | **PASS** |
+| cargo doc (`RUSTDOCFLAGS=-D warnings`) | **PASS** — links rotos en `rugus-hal::crypto`, `eth/dma` |
+| clippy | **PASS** |
+| build dev/release | **PASS** |
+
+Fix: `cargo fmt --all`; doc links → texto plano / `crate::eth::init`; push `10fe98f`.
+
+### Phase 2 — ETH L2 verify
+
+`./tools/verify-eth-link-stm32f769-disco.sh` → **9/9 PASS** (2026-05-26 noche).
+
+RTT: SYSCLK 216 MHz, PHY link up, IPv4 192.168.0.50. Contadores `ETH rx=0 tx=0` (sin tráfico PC; cable probablemente en enlace directo Windows, no en `enp1s0` Fedora).
+
+### Phase 3 — HTTPS verify
+
+**Bug crítico encontrado y corregido:** `https-get` HardFault MemManage @ `0x2007c004` en `dma.restart_after_link_up()` cuando SDRAM (`fmc::init`) precedía mal a MPU ETH.
+
+**Fixes aplicados (pendiente commit):**
+- `cache::configure_eth_mpu` — no desactivar MPU global (`ctrl=0`); reprogramar región 1.
+- `EthernetDMA::start` — re-assert MPU ETH antes de programar descriptores.
+- `desc.rs` — omitir clean/invalidate D-cache en rango `.eth_dma` (MPU non-cacheable).
+- `https-get` — FMC antes de cache (orden dual-blink); ETH IRQ tras `restart_after_link_up`; TCP timeout sin panic.
+
+Post-fix RTT https-get: PHY + IPv4 OK → `TCP connect 192.168.0.112:8443` → **Timeout** (L2 placa↔PC no en mismo broadcast domain que servidor OpenSSL en Fedora). Servidor OpenSSL escuchando en `:8443` del host.
+
+`./tools/verify-https-get-stm32f769-disco.sh` → **5/13** sin path L2 (esperado hasta ping Windows).
+
+### Phase 4 — Docs
+
+- Subred unificada `192.168.0.0/24` en CHANGELOG, `docs/boards/stm32f769-disco.md`, README https-get (`192.168.0.112:8443`).
+- ROADMAP G4 ya [x]; CHANGELOG 0.5.0 actualizado.
+
+### Qué debe hacer el usuario mañana (HW)
+
+1. **Merge PR #24** cuando CI esté verde (`gh pr checks 24`).
+2. **Reflash** `eth-link` o `https-get` con probe F769:
+   ```bash
+   export PROBE_RS_PROBE=0483:374b:066EFF524853837267102836
+   ./tools/verify-eth-link-stm32f769-disco.sh      # objetivo 9/9
+   ```
+3. **Windows ping (enlace directo):** PC `192.168.0.112/24`, placa `192.168.0.50`, cable CN3↔PC:
+   ```cmd
+   ping 192.168.0.50
+   ```
+   RTT debe mostrar `ETH rx=… tx=…` incrementando.
+4. **HTTPS 13/13:** en PC Windows (o mismo switch que placa), OpenSSL:
+   ```bash
+   openssl s_server -accept 8443 -www -cert /tmp/rugus-cert.pem -key /tmp/rugus-key.pem
+   ```
+   Luego `./tools/verify-https-get-stm32f769-disco.sh`.
+
+**Próximo:** cert pinning; CRYP HW; ping ARP si rx sigue en 0 con cable en switch.
+
 ---
 
 ## 2026-05-25 — Agent — G4 complete: HTTPS GET + rugus-tls/crypto (feat/g4-eth-smoltcp)
@@ -585,4 +646,37 @@ dual-blink caía a heap fallback en SRAM interna (9/10 en verify script).
 - `./tools/verify-dual-blink-stm32f769-disco.sh` — **10/10 PASS**.
 
 **Commit:** en rama `feat/g1-scheduler-dual-blink`, push a PR #16.
+
+
+## G4 Ethernet + HTTPS — verificación HW (2026-05-26)
+
+**Rama:** `feat/g4-eth-smoltcp` (PR #24) · **Placa:** STM32F769I-DISCO · **Probe:** `0483:374b:066EFF524853837267102836`
+
+**Red host:** `enp1s0` = `192.168.0.112/24`, gw `192.168.0.1` (sin sudo para alias `192.168.1.100`).
+
+**Topología ejemplo (adaptada):** placa `192.168.0.50/24`, servidor HTTPS PC `192.168.0.112:8443` (`StaticConfig::home_lan`, `Endpoint::lan_https_server`).
+
+**Servidor de prueba (OpenSSL 3.5 — sin `-servername`, requiere `-cert`/`-key`):**
+```bash
+openssl req -x509 -newkey rsa:2048 -nodes \
+  -keyout /tmp/rugus-key.pem -out /tmp/rugus-cert.pem -days 365 \
+  -subj "/CN=rugus-test"
+openssl s_server -accept 8443 -www \
+  -cert /tmp/rugus-cert.pem -key /tmp/rugus-key.pem
+```
+
+**Scripts:**
+| Script | Resultado |
+|--------|-----------|
+| `./tools/verify-eth-link-stm32f769-disco.sh` | **9/9 PASS** (PHY link, IPv4 192.168.0.50, RTT) |
+| `./tools/verify-https-get-stm32f769-disco.sh` | **9/13 PASS**, 4 FAIL (TCP/TLS/HTTP/complete) |
+
+**RTT https-get:** PHY + IPv4 OK; `TCP connect 192.168.0.112:8443` → timeout (servidor en host OK vía `curl -k https://127.0.0.1:8443/`). Desde PC: `ping 192.168.0.50` y `ip neigh` → **ARP FAILED** con firmware eth-link activo → capa 2 placa↔PC no verificada (revisar cable al puerto LAN de la F769, mismo switch que `enp1s0`).
+
+**Fixes en rama (pendiente commit):**
+- `examples/https-get-stm32f769-disco/.cargo/config.toml`: `defmt.x` + rustflags (ELF `.defmt`).
+- `crates/rugus-hal-stm32f7`: D-cache clean/invalidate buffers + descriptores DMA; smoltcp RX sin exigir TX libre; TX token sin panic si ring lleno.
+- Subred documentada en README/scripts para LAN `192.168.0.0/24`.
+
+**Siguiente paso HW:** mismo broadcast domain que el PC; opcional `sudo ip addr add 192.168.1.100/24 dev enp1s0` si se restaura subred `192.168.1.x` por defecto.
 

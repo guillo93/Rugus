@@ -69,7 +69,7 @@ impl<'a> RxRing<'a> {
         while self.running_state().is_running() {}
     }
 
-    fn demand_poll(&self) {
+    pub(crate) fn demand_poll(&self) {
         let eth_dma = unsafe { &*ETHERNET_DMA::ptr() };
         eth_dma.dmarpdr.write(|w| unsafe { w.rpd().bits(1) });
     }

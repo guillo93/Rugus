@@ -5,6 +5,7 @@ use cortex_m::peripheral::NVIC;
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
+use crate::cache;
 use crate::pac::{Interrupt, ETHERNET_DMA};
 
 mod smoltcp_phy;
@@ -150,6 +151,10 @@ impl<'rx, 'tx> EthernetDMA<'rx, 'tx> {
 
     /// Start RX/TX descriptor rings. Call after [`crate::eth::init`] (MAC RE/TE set).
     pub fn start(&mut self) {
+        // SAFETY: re-assert ETH MPU region before touching `.eth_dma` descriptors.
+        unsafe {
+            cache::configure_eth_mpu(&mut cortex_m::Peripherals::steal().MPU);
+        }
         self.rx_ring.start(&self.eth_dma);
         self.tx_ring.start(&self.eth_dma);
     }
@@ -218,6 +223,18 @@ impl<'rx, 'tx> EthernetDMA<'rx, 'tx> {
             .dmaomr
             .modify(|_, w| w.sr().clear_bit().st().clear_bit());
         self.start();
+        self.service_dma();
+    }
+
+    /// Clear RBUS and poke RX poll demand so the DMA leaves the stopped state.
+    pub fn service_dma(&mut self) {
+        let status = self.eth_dma.dmasr.read();
+        if status.rbus().bit_is_set() {
+            self.eth_dma
+                .dmasr
+                .write(|w| w.rbus().set_bit().nis().set_bit());
+        }
+        self.rx_ring.demand_poll();
     }
 }
 

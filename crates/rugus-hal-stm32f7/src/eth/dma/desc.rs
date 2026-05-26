@@ -56,6 +56,12 @@ impl Descriptor {
     pub(crate) fn invalidate_cpu(&self) {
         let bytes = self.desc.deref();
         let len = DESC_SIZE * core::mem::size_of::<u32>();
+        let ptr = bytes.as_ptr() as usize;
+        if (crate::cache::ETH_DMA_BASE as usize..crate::cache::ETH_DMA_BASE as usize + 16 * 1024)
+            .contains(&ptr)
+        {
+            return;
+        }
         cache::invalidate_dcache_for_dma(unsafe {
             core::slice::from_raw_parts(bytes.as_ptr() as *const u8, len)
         });
@@ -64,6 +70,13 @@ impl Descriptor {
     pub(crate) fn clean_dma(&self) {
         let bytes = self.desc.deref();
         let len = DESC_SIZE * core::mem::size_of::<u32>();
+        let ptr = bytes.as_ptr() as usize;
+        // Descriptors in `.eth_dma` are MPU non-cacheable; skip D-cache maintenance.
+        if (crate::cache::ETH_DMA_BASE as usize..crate::cache::ETH_DMA_BASE as usize + 16 * 1024)
+            .contains(&ptr)
+        {
+            return;
+        }
         cache::clean_dcache_for_dma(unsafe {
             core::slice::from_raw_parts(bytes.as_ptr() as *const u8, len)
         });

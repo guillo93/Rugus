@@ -22,14 +22,15 @@ Red + TLS + crypto en STM32F769I-DISCO: smoltcp, embedded-tls, HTTPS GET contra 
   - `rugus-hal::CryptoRng` trait; `rugus-crypto` — software SHA-256 + CSPRNG (CRYP HW futuro).
   - `rugus-tls` — wrapper `embedded-tls` blocking, TLS 1.3 LAN (sin verificación cert).
   - `rugus-net` — TCP connect helper, `TcpIo` adapter `embedded-io`, DHCP/static IPv4.
-  - Ejemplo `examples/https-get-stm32f769-disco` — GET `/` vía HTTPS a `192.168.1.100:8443`.
+  - Ejemplo `examples/https-get-stm32f769-disco` — GET `/` vía HTTPS a `192.168.0.112:8443`.
+  - Ejemplo `examples/eth-link-stm32f769-disco` — link + IPv4 estático `192.168.0.50/24`.
   - Script `tools/verify-https-get-stm32f769-disco.sh`.
   - Docs `examples/https-get-stm32f769-disco/README.md` (servidor OpenSSL/Python LAN).
 
 ### Validated
 
-- **G4 step 1 en HW:** `verify-eth-link-stm32f769-disco.sh` **9/9 PASS** (link, IP 192.168.1.50).
-- **G4 completo en HW:** requiere servidor HTTPS LAN; ver README del ejemplo.
+- **G4 step 1 en HW:** `verify-eth-link-stm32f769-disco.sh` **9/9 PASS** (link, IP 192.168.0.50).
+- **G4 completo en HW:** requiere servidor HTTPS LAN @ `192.168.0.112:8443`; ver README del ejemplo.
 
 ---
 
@@ -151,7 +152,8 @@ multi-arquitectura y entrega el primer ejemplo en HW real.
 - `rugus-hal-stm32f7` solo expone GPIO; el resto de drivers (RCC, FMC,
   LTDC, ETH, CRYP, JPEG) llegan por fase según se necesiten.
 
-[Unreleased]: https://github.com/guillo93/Rugus/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/guillo93/Rugus/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/guillo93/Rugus/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/guillo93/Rugus/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/guillo93/Rugus/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/guillo93/Rugus/compare/v0.1.0...v0.2.0

@@ -16,13 +16,15 @@ use rugus_crypto::SoftwareRng;
 use rugus_hal_stm32f7::cache;
 use rugus_hal_stm32f7::eth::{
     self, configure_disco_pins, enable_eth_interrupt, enable_peripheral, eth_interrupt_handler,
-    init_phy, link_up, take_eth_irq_pending, EthStack, PartsIn, RxRingEntry, TxRingEntry,
-    DEFAULT_MAC, LAN8742_PHY_ADDR,
+    init_phy, link_up, take_eth_irq_pending, EthStack, EthernetDMA, PartsIn, RxRingEntry,
+    TxRingEntry, DEFAULT_MAC, LAN8742_PHY_ADDR,
 };
 use rugus_hal_stm32f7::fmc::{self, SDRAM_BASE};
 use rugus_hal_stm32f7::pac;
 use rugus_hal_stm32f7::rcc;
-use rugus_net::{tcp_connect, Endpoint, NetStack, StaticConfig, TcpIo, DEFAULT_TCP_LOCAL_PORT};
+use rugus_net::{
+    tcp_connect, Endpoint, NetStack, StaticConfig, TcpError, TcpIo, DEFAULT_TCP_LOCAL_PORT,
+};
 use rugus_runtime::entry;
 use rugus_tls::{Aes128GcmSha256, TlsClient};
 use smoltcp::iface::SocketStorage;
@@ -56,7 +58,6 @@ fn main() -> ! {
     let dp = pac::Peripherals::take().expect("dp");
 
     let clocks = rcc::init(&dp);
-    cache::enable(&mut cp.SCB, &mut cp.CPUID);
     setup_systick(&mut cp.SYST);
     rugus_runtime::enable_cycle_counter(&mut cp);
 
@@ -65,7 +66,9 @@ fn main() -> ! {
         clocks.sysclk_mhz()
     );
 
+    // SDRAM verify toggles D-cache; configure ETH MPU + caches after FMC (dual-blink order).
     init_heap(&dp, &mut cp);
+    cache::enable_with_eth_dma(&mut cp.SCB, &mut cp.CPUID, &mut cp.MPU);
 
     configure_disco_pins(&dp);
     enable_peripheral();
@@ -74,17 +77,17 @@ fn main() -> ! {
     let (rx_ring, tx_ring) = eth_rings();
 
     let EthStack { mut dma, mac } = eth::init(parts, &clocks, rx_ring, tx_ring).expect("eth init");
-    enable_eth_interrupt(&dma);
 
     let mut phy = LAN8742A::new(mac, LAN8742_PHY_ADDR);
     init_phy(&mut phy);
 
     defmt::info!("waiting for PHY link...");
     while !link_up(&mut phy) {
-        idle_or_delay(clocks.sysclk / 20);
+        cortex_m::asm::delay(clocks.sysclk / 20);
     }
     defmt::info!("PHY link up");
     dma.restart_after_link_up();
+    enable_eth_interrupt(&dma);
 
     let cfg = StaticConfig::home_lan();
     let mut socket_storage: [SocketStorage; 2] = Default::default();
@@ -111,16 +114,22 @@ fn main() -> ! {
         remote.port
     );
 
-    tcp_connect(
+    match tcp_connect(
         &mut net,
         tcp_handle,
         remote,
         DEFAULT_TCP_LOCAL_PORT,
         now_ms,
         15_000,
-    )
-    .expect("tcp connect");
-    defmt::info!("TCP established");
+    ) {
+        Ok(()) => defmt::info!("TCP established"),
+        Err(e) => {
+            defmt::error!("tcp connect failed: {}", tcp_error_str(e));
+            loop {
+                idle_or_delay(clocks.sysclk / 100);
+            }
+        }
+    }
 
     {
         let mut tls_read = [0u8; TLS_READ_LEN];
@@ -160,6 +169,15 @@ fn main() -> ! {
     }
 }
 
+fn tcp_error_str(e: TcpError) -> &'static str {
+    match e {
+        TcpError::Timeout => "timeout",
+        TcpError::Closed => "closed",
+        TcpError::InvalidState => "invalid state",
+        TcpError::WouldBlock => "would block",
+    }
+}
+
 fn eth_rings() -> (&'static mut [RxRingEntry], &'static mut [TxRingEntry]) {
     unsafe {
         let rx = core::ptr::addr_of_mut!(RX_RING);
@@ -187,7 +205,7 @@ fn init_heap(dp: &pac::Peripherals, cp: &mut cortex_m::Peripherals) {
     }
 }
 
-fn wait_ipv4(net: &mut NetStack<'_, impl smoltcp::phy::Device>, cfg: &StaticConfig) {
+fn wait_ipv4(net: &mut NetStack<'_, EthernetDMA<'_, '_>>, cfg: &StaticConfig) {
     defmt::info!(
         "static IPv4 {}.{}.{}.{}/{}",
         cfg.address.octets()[0],
@@ -197,6 +215,7 @@ fn wait_ipv4(net: &mut NetStack<'_, impl smoltcp::phy::Device>, cfg: &StaticConf
         cfg.prefix_len
     );
     loop {
+        net.device_mut().service_dma();
         net.poll(Instant::from_millis(now_ms() as i64));
         if net.ipv4().is_some() {
             defmt::info!("IPv4 ready");

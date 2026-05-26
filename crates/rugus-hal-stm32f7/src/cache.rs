@@ -7,22 +7,22 @@
 
 use cortex_m::peripheral::{CPUID, MPU, SCB};
 
-/// Cola SRAM1 reservada para descriptores/buffers ETH (16 KiB, ST F769 BSP).
-pub const ETH_DMA_BASE: u32 = 0x2007_C000;
+/// Descriptores/buffers ETH en `.eth_dma` — alineado a 16 KiB para MPU (ver `memory.x`).
+pub const ETH_DMA_BASE: u32 = 0x2007_8000;
 const ETH_DMA_MPU_SIZE: u8 = 13; // 2^(13+1) = 16 KiB
 
 const MPU_RASR_ENABLE: u32 = 1;
 const MPU_ATTR_NORMAL_NONCACHE: u32 = (1 << 19) | (1 << 18); // TEX=001, S=1, C=0, B=0
-const MPU_AP_FULL: u32 = 0b111 << 24;
+/// AP=011 — full access (privileged + unprivileged RW).
+const MPU_AP_FULL: u32 = 0b011 << 24;
 
 /// Marca la región ETH DMA como no cacheable (MPU región 1).
 ///
 /// Llamar **antes** de [`enable`]. Los buffers en `.eth_dma` deben estar en
 /// [`ETH_DMA_BASE`].
 pub fn configure_eth_mpu(mpu: &mut MPU) {
-    // SAFETY: única configuración MPU en init de ejemplo G4; región 1 exclusiva ETH.
+    // SAFETY: región 1 reservada para `.eth_dma` en ejemplos G4.
     unsafe {
-        mpu.ctrl.write(0);
         mpu.rnr.write(1);
         mpu.rbar.write(ETH_DMA_BASE);
         mpu.rasr.write(
@@ -31,17 +31,25 @@ pub fn configure_eth_mpu(mpu: &mut MPU) {
                 | MPU_ATTR_NORMAL_NONCACHE
                 | ((ETH_DMA_MPU_SIZE as u32) << 1),
         );
-        mpu.ctrl.write(1 | (1 << 2)); // ENABLE | PRIVDEFENA
+        if mpu.ctrl.read() == 0 {
+            mpu.ctrl.write(1 | (1 << 2)); // ENABLE | PRIVDEFENA
+        }
     }
 }
 
 /// Habilita I-cache y D-cache del M7 si aún están apagadas.
 ///
 /// Debe llamarse después de [`crate::rcc::init`] cuando SYSCLK ya corre a
-/// la frecuencia objetivo. Tras ETH, llamar [`configure_eth_mpu`] antes.
+/// la frecuencia objetivo.
 pub fn enable(scb: &mut SCB, cpuid: &mut CPUID) {
     scb.enable_icache();
     scb.enable_dcache(cpuid);
+}
+
+/// MPU no-cache para `.eth_dma` + I/D-cache — orden requerido en ejemplos G4.
+pub fn enable_with_eth_dma(scb: &mut SCB, cpuid: &mut CPUID, mpu: &mut MPU) {
+    configure_eth_mpu(mpu);
+    enable(scb, cpuid);
 }
 
 const CACHE_LINE: usize = 32;
