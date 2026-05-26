@@ -63,6 +63,26 @@ Post-fix RTT https-get: PHY + IPv4 OK → `TCP connect 192.168.0.112:8443` → *
 
 ---
 
+## 2026-05-26 — Agent — G4 overnight: CI verde + MPU ETH + informe matutino (feat/g4-eth-smoltcp)
+
+**Scope:** PR #24 merge-ready — rustfmt/doc/clippy/build CI, HW verify, `docs/G4-MORNING-REPORT.md`.
+
+**CI:** run `26433207575` — **5/5 PASS** en remoto (`10fe98f`).
+
+**HW:**
+
+- `verify-eth-link-stm32f769-disco.sh` — **9/9 PASS** (sin MemManage tras MPU).
+- `verify-https-get-stm32f769-disco.sh` — **9/13** (TCP timeout; OpenSSL OK en host).
+- `ping 192.168.0.50` desde `192.168.0.112` — fallo ARP; RTT `ETH rx=0` (L2/router — ver informe).
+
+**Fixes:** `enable_with_eth_dma()`, MPU AP=011, `.eth_dma` @ `0x20078000`, `EthernetDMA::service_dma()`, `probe-rs download` para flash fiable.
+
+**Entregable usuario:** `docs/G4-MORNING-REPORT.md` (español).
+
+**Próximo:** push commits; usuario valida L2 (cable CN3 / directo); repetir https 13/13.
+
+---
+
 ## 2026-05-25 — Agent — G4 complete: HTTPS GET + rugus-tls/crypto (feat/g4-eth-smoltcp)
 
 **Scope:** G4 full deliverable on STM32F769I-DISCO — smoltcp TCP, embedded-tls, HTTPS GET LAN.

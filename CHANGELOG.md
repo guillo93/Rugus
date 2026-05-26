@@ -27,10 +27,14 @@ Red + TLS + crypto en STM32F769I-DISCO: smoltcp, embedded-tls, HTTPS GET contra 
   - Script `tools/verify-https-get-stm32f769-disco.sh`.
   - Docs `examples/https-get-stm32f769-disco/README.md` (servidor OpenSSL/Python LAN).
 
+### Fixed
+
+- **ETH DMA MPU** — región no-cacheable 16 KiB @ `0x20078000` (alineada), `enable_with_eth_dma()`, `service_dma()` (RBUS + poll demand).
+
 ### Validated
 
 - **G4 step 1 en HW:** `verify-eth-link-stm32f769-disco.sh` **9/9 PASS** (link, IP 192.168.0.50).
-- **G4 completo en HW:** requiere servidor HTTPS LAN @ `192.168.0.112:8443`; ver README del ejemplo.
+- **G4 HTTPS en HW:** `verify-https-get` **9/13** (TCP timeout; L2 placa↔PC sin tramas RX — ver `docs/G4-MORNING-REPORT.md`).
 
 ---
 
