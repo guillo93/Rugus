@@ -16,6 +16,11 @@ bench = false
 cortex-m         = { workspace = true }
 stm32f7          = { workspace = true }
 rugus-hal        = { workspace = true }
+rugus-net        = { workspace = true }
+smoltcp          = { workspace = true }
+ieee802_3_miim   = { workspace = true }
+volatile-register = { workspace = true }
+aligned          = { workspace = true }
 
 # El PAC `stm32f7` agrupa por die en lugar de por part-number.
 # `stm32f7x9` cubre F769/F779 (mismo silicio, distinto packaging).

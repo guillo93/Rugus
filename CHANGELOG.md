@@ -11,6 +11,15 @@ SemVer estricto.
 
 ## [Unreleased]
 
+### Added
+
+- **G4 step 1 — Ethernet link + smoltcp (STM32F769I-DISCO).**
+  - `rugus-hal-stm32f7::eth` — ETH MAC + DMA + LAN8742A RMII.
+  - `rugus-hal::EthMac` trait + `EthMacPort` adapter.
+  - Crate `rugus-net` — smoltcp wrapper (static IPv4 + DHCP helpers).
+  - Ejemplo `examples/eth-link-stm32f769-disco` — link up, IP 192.168.1.50/24.
+  - Script `tools/verify-eth-link-stm32f769-disco.sh`.
+
 ---
 
 ## [0.4.0] — 2026-05-25 — G3

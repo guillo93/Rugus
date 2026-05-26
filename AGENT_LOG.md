@@ -2,6 +2,23 @@
 
 ---
 
+## 2026-05-25 — Agent — G4 kickoff: ETH MAC + smoltcp link (feat/g4-eth-smoltcp)
+
+**Scope:** G4 step 1 on STM32F769I-DISCO — RMII + LAN8742A, `rugus-net`, example
+`eth-link-stm32f769-disco`. Issue #23. Tag `v0.4.0` pushed on main.
+
+**Entregado:**
+
+- `rugus-hal-stm32f7::eth` — PAC-only ETH MAC/DMA (adapted from stm32-eth patterns), RMII pin mux DISCO, smoltcp `Device`.
+- `rugus-hal::EthMac` trait + `EthMacPort` adapter.
+- Crate `rugus-net` — smoltcp `Interface` + static IPv4 / DHCP helpers.
+- Example `examples/eth-link-stm32f769-disco` — PHY link wait + static `192.168.1.50/24`.
+- `tools/verify-eth-link-stm32f769-disco.sh`, `docs/boards/stm32f769-disco.md`.
+
+**Verificación HW:** *(pending / run `./tools/verify-eth-link-stm32f769-disco.sh` with cable on CN3)*
+
+**Próximo:** `rugus-tls` + `https-get-stm32f769-disco`; DHCP-first polish; clippy doc warnings in `eth/`.
+
 ## 2026-05-25 — Agent — G3 cerrado: F407 dual-blink + app-sandbox (PR feat/g3-f407-complete)
 
 **Scope:** G3 completion — optional "muy bien hecho" items on STM32F407G-DISC1.

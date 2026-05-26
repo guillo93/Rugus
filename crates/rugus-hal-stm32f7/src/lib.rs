@@ -21,6 +21,7 @@
 pub use stm32f7::stm32f7x9 as pac;
 
 pub mod cache;
+pub mod eth;
 pub mod fmc;
 pub mod gpio;
 pub mod rcc;
