@@ -1,6 +1,7 @@
 use super::super::desc::Descriptor;
 use super::super::ring::{RingDescriptor, RingEntry};
 use super::super::PacketId;
+use crate::cache;
 
 #[derive(Debug, PartialEq)]
 pub(crate) enum RxDescriptorError {
@@ -45,6 +46,7 @@ impl RxDescriptor {
     }
 
     fn is_owned(&self) -> bool {
+        self.desc.invalidate_cpu();
         (self.desc.read(0) & RXDESC_0_OWN) == RXDESC_0_OWN
     }
 
@@ -141,6 +143,7 @@ impl RxRingEntry {
         } else if self.desc().is_first() && self.desc().is_last() {
             let frame_len = self.desc().get_frame_len();
             core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::Acquire);
+            cache::invalidate_dcache_for_dma(&self.as_slice()[..frame_len]);
             self.desc_mut().packet_id = packet_id;
             Ok(frame_len)
         } else {

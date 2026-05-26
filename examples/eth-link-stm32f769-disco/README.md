@@ -13,9 +13,9 @@ configure a static IPv4 address, and log link + IP over defmt RTT.
 
 | Field   | Value          |
 |---------|----------------|
-| IPv4    | 192.168.1.50   |
+| IPv4    | 192.168.0.50   |
 | Netmask | 255.255.255.0 (/24) |
-| Gateway | 192.168.1.1    |
+| Gateway | 192.168.0.1    |
 | MAC     | 02:00:52:55:47:01 |
 
 Adjust `StaticConfig::home_lan()` in `crates/rugus-net/src/lib.rs` if your LAN uses another subnet.
@@ -48,17 +48,26 @@ Automated verify:
 ```
 INFO  rugus eth-link @ STM32F769I-DISCO, SYSCLK 216 MHz
 INFO  MAC 02:00:00:00:00:01
-INFO  static IPv4 192.168.1.50/24 gw Some(192.168.1.1)
+INFO  static IPv4 192.168.0.50/24 gw Some(192.168.0.1)
 INFO  PHY link up
-INFO  IPv4 address 192.168.1.50
+INFO  IPv4 address 192.168.0.50
 ```
 
-## Optional: ping from PC
+## Optional: ping from PC (Windows direct link)
 
-If your PC is on `192.168.1.0/24`, add a host route or set a compatible address, then:
+Set the PC NIC to **192.168.0.112/24** (no gateway needed on a direct cable). Flash
+`eth-link`, then from Windows:
+
+```cmd
+ping 192.168.0.50
+```
+
+While pinging, RTT should show `ETH rx=… tx=…` counters incrementing (ARP + echo
+reply). Fedora host cannot reach the Windows link; use RTT counters or Windows ping
+as the L2/L3 check.
 
 ```bash
-ping 192.168.1.50
+ping 192.168.0.50
 ```
 
 ## See also

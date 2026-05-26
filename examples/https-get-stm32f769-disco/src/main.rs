@@ -39,6 +39,14 @@ const TLS_WRITE_LEN: usize = 4096;
 
 static TIME_MS: Mutex<RefCell<u64>> = Mutex::new(RefCell::new(0));
 
+const ETH_RING_ENTRIES: usize = 4;
+
+#[link_section = ".eth_dma"]
+static mut RX_RING: [RxRingEntry; ETH_RING_ENTRIES] = [RxRingEntry::INIT; ETH_RING_ENTRIES];
+
+#[link_section = ".eth_dma"]
+static mut TX_RING: [TxRingEntry; ETH_RING_ENTRIES] = [TxRingEntry::INIT; ETH_RING_ENTRIES];
+
 static mut TCP_RX_BUF: [u8; 2048] = [0; 2048];
 static mut TCP_TX_BUF: [u8; 2048] = [0; 2048];
 
@@ -63,11 +71,10 @@ fn main() -> ! {
     enable_peripheral();
 
     let parts = PartsIn::new(dp.ETHERNET_MAC, dp.ETHERNET_MMC, dp.ETHERNET_DMA);
-    let mut rx_ring: [RxRingEntry; 4] = Default::default();
-    let mut tx_ring: [TxRingEntry; 4] = Default::default();
+    let (rx_ring, tx_ring) = eth_rings();
 
     let EthStack { mut dma, mac } =
-        eth::init(parts, &clocks, &mut rx_ring, &mut tx_ring).expect("eth init");
+        eth::init(parts, &clocks, rx_ring, tx_ring).expect("eth init");
     enable_eth_interrupt(&dma);
 
     let mut phy = LAN8742A::new(mac, LAN8742_PHY_ADDR);
@@ -78,6 +85,7 @@ fn main() -> ! {
         idle_or_delay(clocks.sysclk / 20);
     }
     defmt::info!("PHY link up");
+    dma.restart_after_link_up();
 
     let cfg = StaticConfig::home_lan();
     let mut socket_storage: [SocketStorage; 2] = Default::default();
@@ -150,6 +158,14 @@ fn main() -> ! {
     defmt::info!("https-get complete");
     loop {
         idle_or_delay(clocks.sysclk / 100);
+    }
+}
+
+fn eth_rings() -> (&'static mut [RxRingEntry], &'static mut [TxRingEntry]) {
+    unsafe {
+        let rx = core::ptr::addr_of_mut!(RX_RING);
+        let tx = core::ptr::addr_of_mut!(TX_RING);
+        (&mut *rx, &mut *tx)
     }
 }
 

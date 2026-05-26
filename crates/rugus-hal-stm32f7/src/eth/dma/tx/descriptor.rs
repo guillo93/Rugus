@@ -1,6 +1,7 @@
 use super::super::desc::Descriptor;
 use super::super::ring::{RingDescriptor, RingEntry};
 use super::super::PacketId;
+use crate::cache;
 
 const TXDESC_0_OWN: u32 = 1 << 31;
 const TXDESC_0_IC: u32 = 1 << 30;
@@ -41,6 +42,7 @@ impl TxDescriptor {
     }
 
     fn is_owned(&self) -> bool {
+        self.desc.invalidate_cpu();
         (self.desc.read(0) & TXDESC_0_OWN) == TXDESC_0_OWN
     }
 
@@ -112,7 +114,9 @@ impl TxRingEntry {
     }
 
     pub(super) fn send(&mut self, length: usize, packet_id: Option<PacketId>) {
+        cache::clean_dcache_for_dma(&self.as_slice()[..length]);
         self.desc_mut().set_owned(length, packet_id);
+        super::super::note_tx_frame();
     }
 
     pub fn buffer(&self) -> &[u8] {

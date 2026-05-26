@@ -3,6 +3,8 @@ use core::ops::{Deref, DerefMut};
 use aligned::{Aligned, A8};
 use volatile_register::{RO, RW};
 
+use crate::cache;
+
 const DESC_SIZE: usize = 8;
 
 #[repr(C)]
@@ -51,15 +53,33 @@ impl Descriptor {
         unsafe { &mut *rw }
     }
 
+    pub(crate) fn invalidate_cpu(&self) {
+        let bytes = self.desc.deref();
+        let len = DESC_SIZE * core::mem::size_of::<u32>();
+        cache::invalidate_dcache_for_dma(unsafe {
+            core::slice::from_raw_parts(bytes.as_ptr() as *const u8, len)
+        });
+    }
+
+    pub(crate) fn clean_dma(&self) {
+        let bytes = self.desc.deref();
+        let len = DESC_SIZE * core::mem::size_of::<u32>();
+        cache::clean_dcache_for_dma(unsafe {
+            core::slice::from_raw_parts(bytes.as_ptr() as *const u8, len)
+        });
+    }
+
     pub fn read(&self, n: usize) -> u32 {
         self.r(n).read()
     }
 
     pub unsafe fn write(&mut self, n: usize, value: u32) {
+        self.clean_dma();
         // SAFETY: n < DESC_SIZE; rw points at descriptor word.
         unsafe {
             self.rw(n).write(value);
         }
+        self.clean_dma();
     }
 
     pub unsafe fn modify<F>(&mut self, n: usize, f: F)
@@ -70,5 +90,6 @@ impl Descriptor {
         unsafe {
             self.rw(n).modify(f);
         }
+        self.clean_dma();
     }
 }

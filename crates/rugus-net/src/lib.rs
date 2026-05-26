@@ -31,12 +31,12 @@ pub struct StaticConfig {
 }
 
 impl StaticConfig {
-    /// Typical LAN static host: 192.168.1.50/24, gateway .1
+    /// Typical LAN static host: 192.168.0.50/24, gateway .1
     pub const fn home_lan() -> Self {
         Self {
-            address: Ipv4Address::new(192, 168, 1, 50),
+            address: Ipv4Address::new(192, 168, 0, 50),
             prefix_len: 24,
-            gateway: Some(Ipv4Address::new(192, 168, 1, 1)),
+            gateway: Some(Ipv4Address::new(192, 168, 0, 1)),
         }
     }
 }

@@ -6,9 +6,9 @@ Rugus **G4** deliverable: HTTPS GET against a LAN server on STM32F769I-DISCO.
 
 | Role | IPv4 | Notes |
 |------|------|-------|
-| F769 board | `192.168.1.50/24` | Static (`StaticConfig::home_lan()`) |
-| Gateway | `192.168.1.1` | Typical home router |
-| HTTPS server (PC) | `192.168.1.100:8443` | `Endpoint::lan_https_server()` |
+| F769 board | `192.168.0.50/24` | Static (`StaticConfig::home_lan()`) |
+| Gateway | `192.168.0.1` | Typical home router |
+| HTTPS server (PC) | `192.168.0.100:8443` | `Endpoint::lan_https_server()` |
 
 Connect the board to **CN3** (RJ45) and ensure the server PC is on the same LAN.
 
@@ -18,7 +18,7 @@ The firmware uses SNI / Host **`rugus-test`** and skips certificate verification
 
 ### Option A — OpenSSL (quick)
 
-On the server PC (`192.168.1.100`):
+On the server PC (`192.168.0.100`):
 
 ```bash
 openssl req -x509 -newkey rsa:2048 -nodes \
