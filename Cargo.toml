@@ -9,7 +9,9 @@ members = [
   "crates/rugus-runtime",
   "examples/blink-stm32f407g-disco",
   "examples/blink-stm32f769-disco",
+  "examples/dual-blink-stm32f407g-disco",
   "examples/dual-blink-stm32f769-disco",
+  "examples/app-sandbox-stm32f407g-disco",
   "examples/app-sandbox-stm32f769-disco",
 ]
 

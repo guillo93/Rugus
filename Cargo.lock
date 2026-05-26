@@ -3,6 +3,19 @@
 version = 3
 
 [[package]]
+name = "app-sandbox-stm32f407g-disco"
+version = "0.1.0"
+dependencies = [
+ "cortex-m",
+ "defmt",
+ "rugus-arch-cortex-m",
+ "rugus-core",
+ "rugus-hal",
+ "rugus-hal-stm32f4",
+ "rugus-runtime",
+]
+
+[[package]]
 name = "app-sandbox-stm32f769-disco"
 version = "0.1.0"
 dependencies = [
@@ -149,6 +162,19 @@ checksum = "c0f73a4a4a91609e977ae3b7bd831ffa292edfd42ad140a3244a61d805b0e05e"
 dependencies = [
  "critical-section",
  "defmt",
+]
+
+[[package]]
+name = "dual-blink-stm32f407g-disco"
+version = "0.1.0"
+dependencies = [
+ "cortex-m",
+ "defmt",
+ "rugus-arch-cortex-m",
+ "rugus-core",
+ "rugus-hal",
+ "rugus-hal-stm32f4",
+ "rugus-runtime",
 ]
 
 [[package]]

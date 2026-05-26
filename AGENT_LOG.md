@@ -2,6 +2,31 @@
 
 ---
 
+## 2026-05-25 — Agent — G3 cerrado: F407 dual-blink + app-sandbox (PR feat/g3-f407-complete)
+
+**Scope:** G3 completion — optional "muy bien hecho" items on STM32F407G-DISC1.
+
+**Entregado:**
+
+- `examples/dual-blink-stm32f407g-disco` — LD4/LD6 cooperative scheduler, heap 32 KiB SRAM.
+- `examples/app-sandbox-stm32f407g-disco` — MPU + syscalls + MemManage kill (no SDRAM).
+- Scripts `verify-{dual-blink,app-sandbox}-stm32f407g-disco.sh` con `PROBE_RS_PROBE` default F407.
+- ROADMAP G3 cerrado; CHANGELOG [0.4.0]; `docs/boards/stm32f407g-disco.md` ampliado.
+
+**Verificación HW (STM32F407G-DISC1, probe `0483:3752:…`):**
+
+- `./tools/verify-blink-stm32f407g-disco.sh` — **8/8 PASS**
+- `./tools/verify-dual-blink-stm32f407g-disco.sh` — **10/10 PASS**
+- `./tools/verify-app-sandbox-stm32f407g-disco.sh` — **12/12 PASS**
+
+**Recomendación F103 vs G4:**
+
+- **G4 primero** si F769 es la placa producto (Panel-smartH): ETH + smoltcp + HTTPS necesitan F7.
+- **F103 en paralelo** como proyecto fin de semana para ampliar ecosistema (Cortex-M3, sin FPU/MPU).
+- Sin cambios en `rugus-arch-cortex-m` — MPU G2 funciona en M4 sin refactor.
+
+**Próximo agente:** Merge PR → tag `v0.4.0`; iniciar G4 (red/TLS) o F103 downscale según decisión usuario.
+
 ## 2026-05-25 — Agent — G3 HW verified: STM32F407G-DISC1 LD4 blink (PR #21)
 
 **Verificación HW (usuario confirmó LD4 verde):**

@@ -13,6 +13,27 @@ SemVer estricto.
 
 ---
 
+## [0.4.0] — 2026-05-25 — G3
+
+Segundo chip Cortex-M: STM32F407G-DISC1 con HAL F4, dual-blink cooperativo y sandbox MPU en SRAM interna.
+
+### Added
+
+- **G3 — STM32F407G-DISC1 (Cortex-M4F).**
+  - Crate `rugus-hal-stm32f4` — GPIO (LD3–LD6), RCC HSE 8 MHz → PLL 168 MHz.
+  - Ejemplo `examples/blink-stm32f407g-disco` — LD4 toggle + defmt RTT.
+  - Ejemplo `examples/dual-blink-stm32f407g-disco` — LD4/LD6 en paralelo vía scheduler; heap 32 KiB SRAM.
+  - Ejemplo `examples/app-sandbox-stm32f407g-disco` — kernel + 2 apps userland, MemManage controlado (sin SDRAM).
+  - Scripts `tools/verify-{blink,dual-blink,app-sandbox}-stm32f407g-disco.sh` con `PROBE_RS_PROBE` por defecto.
+  - Docs `docs/boards/{README,stm32f407g-disco,stm32f103c8-bluepill}.md`.
+
+### Validated
+
+- **G3 en HW real (STM32F407G-DISC1, probe-rs).** Blink LD4 @ 168 MHz; dual-blink tasks A/B;
+  app-sandbox MemManage + task kill; verify scripts **8/8**, **10/10**, **12/12 PASS** (2026-05-25).
+
+---
+
 ## [0.3.0] — 2026-05-25 — G2
 
 MPU sandbox, syscalls SVC, fault handlers con report domain+PC, ejemplo app-sandbox en STM32F769I-DISCO.
@@ -110,7 +131,8 @@ multi-arquitectura y entrega el primer ejemplo en HW real.
 - `rugus-hal-stm32f7` solo expone GPIO; el resto de drivers (RCC, FMC,
   LTDC, ETH, CRYP, JPEG) llegan por fase según se necesiten.
 
-[Unreleased]: https://github.com/guillo93/Rugus/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/guillo93/Rugus/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/guillo93/Rugus/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/guillo93/Rugus/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/guillo93/Rugus/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/guillo93/Rugus/releases/tag/v0.1.0

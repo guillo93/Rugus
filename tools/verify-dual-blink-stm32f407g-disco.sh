@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# Automated build, flash, and RTT verification for blink-stm32f407g-disco.
+# Automated build, flash, and RTT verification for dual-blink-stm32f407g-disco.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-EXAMPLE="$ROOT/examples/blink-stm32f407g-disco"
+EXAMPLE="$ROOT/examples/dual-blink-stm32f407g-disco"
 TARGET="thumbv7em-none-eabihf"
-ELF="$ROOT/target/$TARGET/release/blink-stm32f407g-disco"
+ELF="$ROOT/target/$TARGET/release/dual-blink-stm32f407g-disco"
 CHIP="STM32F407VG"
-LOG="${RUGUS_RTT_LOG:-/tmp/rugus-rtt-verify-f407.log}"
-RTT_TIMEOUT="${RUGUS_RTT_TIMEOUT:-25}"
+LOG="${RUGUS_RTT_LOG:-/tmp/rugus-rtt-dual-verify-f407.log}"
+RTT_TIMEOUT="${RUGUS_RTT_TIMEOUT:-30}"
 # Default F407 onboard ST-Link when F769 is also connected:
 PROBE_RS_PROBE="${PROBE_RS_PROBE:-0483:3752:066EFF575353667267172509}"
 PROBE_ARGS=(--probe "$PROBE_RS_PROBE")
@@ -36,7 +36,7 @@ run_check() {
   fi
 }
 
-echo "=== Rugus verify: blink-stm32f407g-disco ==="
+echo "=== Rugus verify: dual-blink-stm32f407g-disco ==="
 echo "Root: $ROOT"
 echo "Log:  $LOG"
 echo "Probe: $PROBE_RS_PROBE"
@@ -46,7 +46,7 @@ cd "$ROOT"
 run_check "build (workspace release)" \
   cargo build --workspace --release --target "$TARGET"
 
-run_check "build (blink + defmt link)" \
+run_check "build (dual-blink + defmt link)" \
   bash -c "cd \"$EXAMPLE\" && cargo build --release"
 
 run_check "clippy (workspace, -D warnings)" \
@@ -69,7 +69,7 @@ set -e
 cat "$LOG"
 
 if [[ $probe_exit -eq 0 || $probe_exit -eq 124 ]]; then
-  if grep -q 'Finished in' "$LOG" || grep -q 'INFO' "$LOG"; then
+  if grep -q 'Finished in' "$LOG" || grep -qiE 'INFO|task' "$LOG"; then
     record_pass "flash/run completed"
   else
     record_fail "flash/run (no success indicators)"
@@ -84,10 +84,22 @@ else
   record_fail "RTT: SYSCLK 168 MHz"
 fi
 
-if grep -qiE 'LD4|PD12|toggling' "$LOG"; then
-  record_pass "RTT: LD4 configured"
+if grep -qiE 'heap on internal SRAM|heap alloc smoke test OK' "$LOG"; then
+  record_pass "RTT: heap on internal SRAM"
 else
-  record_fail "RTT: LD4 configured"
+  record_fail "RTT: heap on internal SRAM"
+fi
+
+if grep -qiE 'task A.*started' "$LOG"; then
+  record_pass "RTT: task A started"
+else
+  record_fail "RTT: task A started"
+fi
+
+if grep -qiE 'task B.*started' "$LOG"; then
+  record_pass "RTT: task B started"
+else
+  record_fail "RTT: task B started"
 fi
 
 if grep -qiE 'HardFault|panic|Exception.*halt|defmt version found, but no' "$LOG"; then
@@ -99,7 +111,6 @@ fi
 echo
 echo "=== Summary: $pass passed, $fail failed ==="
 if [[ $fail -gt 0 ]]; then
-  echo "Tip: if RTT is empty but LED blinks, try RUGUS_RTT_TIMEOUT=30 or rebuild from examples/blink-stm32f407g-disco/."
   exit 1
 fi
 exit 0

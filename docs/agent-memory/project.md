@@ -41,8 +41,8 @@ Resumen:
 
 | Arch | Chip ejemplar | Hito |
 |------|---------------|------|
-| Cortex-M7 (ARMv7E-M) | STM32F769NIH6 | G0 (actual) |
-| Cortex-M4 (ARMv7E-M) | STM32F407VGT6 / Discovery | G3 (activo) |
+| Cortex-M7 (ARMv7E-M) | STM32F769NIH6 | G0–G2 (actual producto) |
+| Cortex-M4 (ARMv7E-M) | STM32F407VGT6 / Discovery | G3 cerrado |
 | Cortex-M3 (ARMv7-M) | STM32F103C8T6 / Blue Pill | post-G3 (“Rugus lite”) |
 | Cortex-M0+ (ARMv6-M) | RP2040 | G3 |
 | Cortex-M33 (ARMv8-M Main) | nRF5340 / STM32L5 | G4 |
