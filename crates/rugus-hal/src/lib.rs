@@ -14,7 +14,9 @@
 #![warn(missing_docs)]
 
 pub mod digital;
+pub mod eth;
 pub mod serial;
 
 pub use digital::GpioPin;
+pub use eth::EthMac;
 pub use serial::SerialPort;
