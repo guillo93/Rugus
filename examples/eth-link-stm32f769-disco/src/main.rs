@@ -55,8 +55,7 @@ fn main() -> ! {
 
     let (rx_ring, tx_ring) = eth_rings();
 
-    let EthStack { mut dma, mac } =
-        eth::init(parts, &clocks, rx_ring, tx_ring).expect("eth init");
+    let EthStack { mut dma, mac } = eth::init(parts, &clocks, rx_ring, tx_ring).expect("eth init");
     defmt::debug!("ETH MAC+DMA init OK (rings idle until link up)");
 
     enable_eth_interrupt(&dma);
@@ -151,10 +150,7 @@ fn eth_rings() -> (&'static mut [RxRingEntry], &'static mut [TxRingEntry]) {
     unsafe {
         let rx = core::ptr::addr_of_mut!(RX_RING);
         let tx = core::ptr::addr_of_mut!(TX_RING);
-        (
-            &mut *rx,
-            &mut *tx,
-        )
+        (&mut *rx, &mut *tx)
     }
 }
 

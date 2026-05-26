@@ -1,7 +1,7 @@
 //! Crypto trait (G4) — backends live in `rugus-crypto` and chip HALs.
 //!
 //! STM32F7 CRYP/HASH/RNG hardware is planned; until then use
-//! [`rugus_crypto::SoftwareRng`] and pure-Rust digests.
+//! `SoftwareRng` from `rugus-crypto` and pure-Rust digests.
 
 /// Fill a buffer with cryptographically suitable random bytes.
 pub trait CryptoRng {
