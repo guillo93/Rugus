@@ -148,7 +148,7 @@ impl<'rx, 'tx> EthernetDMA<'rx, 'tx> {
         dma
     }
 
-    /// Start RX/TX descriptor rings. Call after MAC [`EthernetMAC::new`] (RE/TE set).
+    /// Start RX/TX descriptor rings. Call after [`crate::eth::init`] (MAC RE/TE set).
     pub fn start(&mut self) {
         self.rx_ring.start(&self.eth_dma);
         self.tx_ring.start(&self.eth_dma);
@@ -214,7 +214,9 @@ impl<'rx, 'tx> EthernetDMA<'rx, 'tx> {
 
     /// Re-arm RX/TX rings after PHY link-up (REF_CLK absent before autoneg).
     pub fn restart_after_link_up(&mut self) {
-        self.eth_dma.dmaomr.modify(|_, w| w.sr().clear_bit().st().clear_bit());
+        self.eth_dma
+            .dmaomr
+            .modify(|_, w| w.sr().clear_bit().st().clear_bit());
         self.start();
     }
 }

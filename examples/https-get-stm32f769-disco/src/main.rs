@@ -73,8 +73,7 @@ fn main() -> ! {
     let parts = PartsIn::new(dp.ETHERNET_MAC, dp.ETHERNET_MMC, dp.ETHERNET_DMA);
     let (rx_ring, tx_ring) = eth_rings();
 
-    let EthStack { mut dma, mac } =
-        eth::init(parts, &clocks, rx_ring, tx_ring).expect("eth init");
+    let EthStack { mut dma, mac } = eth::init(parts, &clocks, rx_ring, tx_ring).expect("eth init");
     enable_eth_interrupt(&dma);
 
     let mut phy = LAN8742A::new(mac, LAN8742_PHY_ADDR);
