@@ -1,5 +1,30 @@
 ---
 
+---
+
+## 2026-05-25 — Agent — G3 kickoff: STM32F407G-DISC1 blink (PR feat/g3-stm32f407g-disco)
+
+**Scope:** G3 inicio — `rugus-hal-stm32f4`, `examples/blink-stm32f407g-disco`,
+`docs/boards/`, agent-memory + ROADMAP, verify script.
+
+**Entregado:**
+
+- Crate `rugus-hal-stm32f4`: GPIO (LD3–LD6 PD12–PD15), RCC HSE 8 MHz → PLL 168 MHz.
+- Ejemplo `blink-stm32f407g-disco`: LD4 toggle + defmt RTT.
+- Docs: `docs/boards/{README,stm32f407g-disco,stm32f103c8-bluepill}.md`.
+- `project.md` / `ROADMAP.md`: F407 Discovery como G3; F103 Blue Pill post-G3.
+
+**Verificación HW (2026-05-25):**
+
+- `probe-rs list` → dos ST-Link V2-1 (`0483:374b`, `0483:3752`).
+- `cargo build --workspace --release --target thumbv7em-none-eabihf` — OK.
+- `./tools/verify-blink-stm32f407g-disco.sh` — build/clippy/defmt **5/8 PASS**;
+  flash/RTT bloqueado: probe `3752` → `JtagGetIdcodeError` (SWD sin target);
+  probe `374b` es F769 (page write falla con algo F407). **Re-flashear con solo
+  F407 USB conectado** y `PROBE_RS_PROBE=0483:3752:066EFF575353667267172509`.
+
+**Próximo agente:** Confirmar blink LD4 en F407; cerrar checkboxes G3 en ROADMAP.
+
 ## 2026-05-25 — Agent — G2 cerrado en main (PR #19 merge)
 
 **Git:** `main` @ dc26239 (merge PR #19).
@@ -14,7 +39,7 @@
 - `./tools/verify-app-sandbox-stm32f769-disco.sh` — **12/12 PASS**.
 - `./tools/verify-blink-stm32f769-disco.sh` — **8/8 PASS**.
 
-**Próximo agente:** G3 — segundo chip Cortex-M (RP2040 o STM32F411).
+**Próximo agente:** G3 — STM32F407G-DISC1 (`feat/g3-stm32f407g-disco`).
 
 
 
@@ -53,7 +78,7 @@
 - `./tools/verify-app-sandbox-stm32f769-disco.sh` — **12/12 PASS**.
 - `./tools/verify-dual-blink-stm32f769-disco.sh` — **10/10 PASS** (regresión sched OK).
 
-**Próximo agente:** G3 — segundo chip Cortex-M (RP2040 o STM32F411).
+**Próximo agente:** G3 — STM32F407G-DISC1 (`feat/g3-stm32f407g-disco`).
 
 # Agent Log — Rugus
 

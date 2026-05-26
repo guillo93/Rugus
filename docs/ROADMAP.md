@@ -50,13 +50,19 @@ y parpadea LD1 con logs `defmt`.
 
 ## G3 — Segundo chip Cortex-M *(4-6 sem)*
 
-**Entregable:** `examples/blink-rp2040-pico` o `examples/blink-stm32f411-bp`
-parpadea. Demuestra que la HAL es realmente portable.
+**Entregable:** `examples/blink-stm32f407g-disco` parpadea LD4 (PD12) con logs
+`defmt` RTT. Demuestra que la HAL es portable más allá del F769.
 
-- [ ] `rugus-hal-rp2040` o `rugus-hal-stm32f4` (elección según hardware
-      disponible).
-- [ ] Refactor mínimo en `rugus-arch-cortex-m` si M0+/M4 expone gaps.
-- [ ] CI matrix añade nuevo target.
+Placa de referencia: **STM32F407G-DISC1** (STM32F407VGT6, HSE 8 MHz, ST-Link
+onboard). Documentación: [`docs/boards/stm32f407g-disco.md`](boards/stm32f407g-disco.md).
+
+Tier mínimo futuro (post-G3, sin MPU): STM32F103 Blue Pill — ver
+[`docs/boards/stm32f103c8-bluepill.md`](boards/stm32f103c8-bluepill.md).
+
+- [ ] `rugus-hal-stm32f4`: GPIO + RCC 168 MHz para F407 Discovery.
+- [ ] `examples/blink-stm32f407g-disco` verificado en HW.
+- [ ] Refactor mínimo en `rugus-arch-cortex-m` si M4 expone gaps.
+- [x] CI matrix: `thumbv7em-none-eabihf` ya cubre Cortex-M4F (mismo target que M7).
 
 ## G4 — Red + TLS + crypto *(8-10 sem)*
 
