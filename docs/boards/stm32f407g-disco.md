@@ -47,6 +47,8 @@ The G3 blink example toggles **LD4 (green, PD12)**.
 - SWD: `probe-rs run --chip STM32F407VG`
 - With multiple ST-Links connected, set `PROBE_RS_PROBE=VID:PID:Serial` (see
   `probe-rs list`) or export it in the verify script environment.
+- Example (this board’s onboard ST-Link when an F769 DISCO is also connected):
+  `PROBE_RS_PROBE=0483:3752:066EFF575353667267172509` (chipid `0x413`; serial from `st-info --probe` / `probe-rs list`).
 - RTT logging via onboard ST-Link SWD (same workflow as F769 DISCO).
 
 ## Memory (blink example)
