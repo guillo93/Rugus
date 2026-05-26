@@ -2,6 +2,18 @@
 
 ---
 
+## 2026-05-25 — Agent — G3 HW verified: STM32F407G-DISC1 LD4 blink (PR #21)
+
+**Verificación HW (usuario confirmó LD4 verde):**
+
+- LD4 (green, PD12) blink visible on STM32F407G-DISC1 @ 168 MHz SYSCLK.
+- `./tools/verify-blink-stm32f407g-disco.sh` — **8/8 PASS**.
+- Dual ST-Link lab: `PROBE_RS_PROBE=0483:3752:066EFF575353667267172509`.
+
+**Docs:** `docs/boards/stm32f407g-disco.md` — PROBE_RS_PROBE example for F407 + F769.
+
+**Próximo agente:** Merge PR #21; cerrar checkboxes G3 en ROADMAP si aplica.
+
 ## 2026-05-25 — Agent — G3 kickoff: STM32F407G-DISC1 blink (PR feat/g3-stm32f407g-disco)
 
 **Scope:** G3 inicio — `rugus-hal-stm32f4`, `examples/blink-stm32f407g-disco`,
