@@ -1,4 +1,5 @@
 //! Ethernet MAC access and configuration (adapted from stm32-eth, PAC-only).
+#![allow(missing_docs)]
 
 use core::ops::{Deref, DerefMut};
 

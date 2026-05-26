@@ -72,13 +72,14 @@ Tier mínimo futuro (post-G3, sin MPU): STM32F103 Blue Pill — ver
 
 **Entregable:** un ejemplo descarga vía HTTPS contra un servidor LAN.
 
-- [x] `rugus-hal-stm32f7::eth` (ETH MAC + PHY LAN8742) — step 1: link + smoltcp.
-- [x] Crate `rugus-net` envolviendo `smoltcp` — static/DHCP helpers.
-- [ ] Crate `rugus-tls` envolviendo `embedded-tls`.
-- [ ] Crate `rugus-crypto` con backend HW por chip cuando disponible (CRYP
-      del F769, HMAC del RP2040, etc.).
-- [ ] Ejemplo `https-get-stm32f769-disco`.
+- [x] `rugus-hal-stm32f7::eth` (ETH MAC + PHY LAN8742) — link + smoltcp + ETH IRQ wake.
+- [x] Crate `rugus-net` envolviendo `smoltcp` — static/DHCP helpers + TCP IO adapter.
+- [x] Crate `rugus-tls` envolviendo `embedded-tls`.
+- [x] Crate `rugus-crypto` — backend software (SHA-256, CSPRNG); CRYP F769 documentado como futuro.
+- [x] Ejemplo `https-get-stm32f769-disco`.
 - [x] Ejemplo `eth-link-stm32f769-disco` (link + IPv4 estático).
+
+✅ **G4 cerrado** (2026-05-25). **Próximo: G5 o F103 downscale.**
 
 ## G5 — Primera arch no-Cortex-M *(12-16 sem)*
 

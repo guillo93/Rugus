@@ -22,12 +22,13 @@ product board (G0–G4).
 | Connector | RJ45 **CN3** (user LAN) |
 | RMII pins | REF_CLK PA1, CRS_DV PA7, TX_EN PB11, TXD0 PB12, TXD1 PB13, RXD0 PC4, RXD1 PC5, MDIO PA2, MDC PC1 |
 | HAL module | `rugus-hal-stm32f7::eth` |
-| Example | `examples/eth-link-stm32f769-disco` |
-| Verify | `./tools/verify-eth-link-stm32f769-disco.sh` |
+| Examples | `eth-link-stm32f769-disco`, `https-get-stm32f769-disco` |
+| Verify | `./tools/verify-eth-link-stm32f769-disco.sh`, `./tools/verify-https-get-stm32f769-disco.sh` |
 
 Connect an Ethernet cable to **CN3** and a switch/router before expecting
-`link up` in RTT logs. Default static IPv4 in the example: `192.168.1.50/24`
-(gateway `192.168.1.1`). Adjust `StaticConfig::home_lan()` if your LAN differs.
+`link up` in RTT logs. Default static IPv4 in examples: `192.168.1.50/24`
+(gateway `192.168.1.1`). HTTPS example expects a LAN server at `192.168.1.100:8443`
+— see [`examples/https-get-stm32f769-disco/README.md`](../../examples/https-get-stm32f769-disco/README.md).
 
 ## Examples (verified)
 
@@ -37,6 +38,7 @@ Connect an Ethernet cable to **CN3** and a switch/router before expecting
 | `dual-blink-stm32f769-disco` | G1 |
 | `app-sandbox-stm32f769-disco` | G2 |
 | `eth-link-stm32f769-disco` | G4 step 1 |
+| `https-get-stm32f769-disco` | G4 |
 
 ## Multi-board lab
 

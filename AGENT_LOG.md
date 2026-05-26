@@ -2,6 +2,29 @@
 
 ---
 
+## 2026-05-25 — Agent — G4 complete: HTTPS GET + rugus-tls/crypto (feat/g4-eth-smoltcp)
+
+**Scope:** G4 full deliverable on STM32F769I-DISCO — smoltcp TCP, embedded-tls, HTTPS GET LAN.
+
+**Entregado:**
+
+- `rugus-crypto` — software SHA-256 + CSPRNG (xoshiro256**); CRYP/HASH/RNG HW documented as future.
+- `rugus-tls` — `embedded-tls` blocking wrapper, `TlsClient`, LAN insecure mode (`NoVerify`).
+- `rugus-net` — `TcpIo` (`embedded-io`), `tcp_connect`, unified stack lifetime; `socket-tcp` feature.
+- `rugus-hal::CryptoRng` trait.
+- `rugus-hal-stm32f7::eth` — `take_eth_irq_pending()` + ETH IRQ flag for WFI poll.
+- Example `examples/https-get-stm32f769-disco` — SDRAM heap, TLS 1.3, GET `/` @ 192.168.1.100:8443.
+- `tools/verify-https-get-stm32f769-disco.sh`, example README (OpenSSL/Python LAN server).
+- ROADMAP G4 [x], CHANGELOG 0.5.0, `docs/boards/stm32f769-disco.md`.
+
+**Verificación HW:** `./tools/verify-eth-link-stm32f769-disco.sh` regression; `./tools/verify-https-get-stm32f769-disco.sh` needs LAN HTTPS server @ 192.168.1.100:8443.
+
+**Limitaciones:** cert verification disabled (lab); F769 CRYP not wired; TLS buffers on main stack (~20 KiB).
+
+**Próximo:** G5 (Cortex-A / RISC-V) o F103 downscale; cert pinning en `rugus-tls`.
+
+---
+
 ## 2026-05-25 — Agent — G4 kickoff: ETH MAC + smoltcp link (feat/g4-eth-smoltcp)
 
 **Scope:** G4 step 1 on STM32F769I-DISCO — RMII + LAN8742A, `rugus-net`, example
