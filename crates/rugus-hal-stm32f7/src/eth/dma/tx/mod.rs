@@ -113,7 +113,7 @@ impl<'ring> TxRing<'ring> {
         }
     }
 
-    fn demand_poll(&self) {
+    pub(crate) fn demand_poll(&self) {
         let eth_dma = unsafe { &*ETHERNET_DMA::ptr() };
         eth_dma.dmatpdr.write(|w| unsafe { w.tpd().bits(1) });
     }

@@ -6,7 +6,7 @@ use cortex_m::peripheral::NVIC;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::cache;
-use crate::pac::{Interrupt, ETHERNET_DMA};
+use crate::pac::{Interrupt, ETHERNET_DMA, ETHERNET_MAC, ETHERNET_MMC};
 
 mod smoltcp_phy;
 pub use smoltcp_phy::*;
@@ -63,6 +63,37 @@ pub fn eth_stats(dma: &EthernetDMA<'_, '_>) -> EthStats {
         abnormal_summary: status.ais().bit_is_set(),
         rx_dma_enabled: omr.sr().bit_is_set(),
         tx_dma_enabled: omr.st().bit_is_set(),
+    }
+}
+
+/// Key MAC/DMA registers for RTT debug (post-init or during traffic test).
+#[derive(Clone, Copy, Debug)]
+pub struct EthRegSnapshot {
+    /// MACCR
+    pub maccr: u32,
+    /// DMABMR
+    pub dmabmr: u32,
+    /// DMASR
+    pub dmasr: u32,
+    /// DMAOMR
+    pub dmaomr: u32,
+    /// MMC good RX unicast frames (hardware counter).
+    pub mmc_rx_unicast: u32,
+    /// MMC TX good frames (hardware counter).
+    pub mmc_tx_good: u32,
+}
+
+/// Read MAC/DMA control registers (safe anytime).
+pub fn eth_regs(dma: &EthernetDMA<'_, '_>) -> EthRegSnapshot {
+    let mac = unsafe { &*ETHERNET_MAC::ptr() };
+    let mmc = unsafe { &*ETHERNET_MMC::ptr() };
+    EthRegSnapshot {
+        maccr: mac.maccr.read().bits(),
+        dmabmr: dma.eth_dma.dmabmr.read().bits(),
+        dmasr: dma.eth_dma.dmasr.read().bits(),
+        dmaomr: dma.eth_dma.dmaomr.read().bits(),
+        mmc_rx_unicast: mmc.mmcrgufcr.read().bits(),
+        mmc_tx_good: mmc.mmctgfcr.read().bits(),
     }
 }
 
@@ -226,13 +257,19 @@ impl<'rx, 'tx> EthernetDMA<'rx, 'tx> {
         self.service_dma();
     }
 
-    /// Clear RBUS and poke RX poll demand so the DMA leaves the stopped state.
+    /// Clear RBUS/TBUS and poke RX/TX poll demand so DMA leaves stopped state.
     pub fn service_dma(&mut self) {
         let status = self.eth_dma.dmasr.read();
         if status.rbus().bit_is_set() {
             self.eth_dma
                 .dmasr
                 .write(|w| w.rbus().set_bit().nis().set_bit());
+        }
+        if status.tbus().bit_is_set() {
+            self.eth_dma
+                .dmasr
+                .write(|w| w.tbus().set_bit().nis().set_bit());
+            self.tx_ring.demand_poll();
         }
         self.rx_ring.demand_poll();
     }

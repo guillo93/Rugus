@@ -33,41 +33,29 @@ pub fn enable_peripheral() {
     });
 }
 
-/// Configure RMII + MDIO/MDC pins on the F769I-DISCO (PB11/PB12 TX, not Nucleo PG11).
+/// Configure RMII + MDIO/MDC pins on the F769I-DISCO (UM2033 Table 14).
+///
+/// TX: PG11 `ETH_TX_EN`, PG13 `ETH_TXD0`, PG14 `ETH_TXD1` — not PB11/PB12 (USB ULPI).
 pub fn configure_disco_pins(dp: &pac::Peripherals) {
     let rcc = &dp.RCC;
     rcc.ahb1enr.modify(|_, w| {
         w.gpioaen().set_bit();
-        w.gpioben().set_bit();
-        w.gpiocen().set_bit()
+        w.gpiocen().set_bit();
+        w.gpiogen().set_bit()
     });
     let _ = rcc.ahb1enr.read().bits();
 
-    // RMII inputs: REF_CLK PA1, CRS_DV PA7, RXD0 PC4, RXD1 PC5
+    // All RMII signals route through AF11 — plain GPIO input (MODER=00) does not
+    // connect REF_CLK/RXD to the ETH MAC (ST community / RM00224583).
     unsafe {
-        input_floating(pac::GPIOA::ptr() as *const GpioBlock, &[1, 7]);
-        input_floating(pac::GPIOC::ptr() as *const GpioBlock, &[4, 5]);
-        af_very_high(pac::GPIOB::ptr() as *const GpioBlock, &[11, 12, 13], AF11);
-        af_very_high(pac::GPIOA::ptr() as *const GpioBlock, &[2], AF11);
-        af_very_high(pac::GPIOC::ptr() as *const GpioBlock, &[1], AF11);
+        af_very_high(pac::GPIOA::ptr() as *const GpioBlock, &[1, 2, 7], AF11);
+        af_very_high(pac::GPIOC::ptr() as *const GpioBlock, &[1, 4, 5], AF11);
+        af_very_high(pac::GPIOG::ptr() as *const GpioBlock, &[11, 13, 14], AF11);
     }
 }
 
 /// All GPIO ports share the same register layout on STM32F7.
 type GpioBlock = pac::gpioa::RegisterBlock;
-
-unsafe fn input_floating(port: *const GpioBlock, pins: &[u8]) {
-    // SAFETY: port is a valid GPIO register block from PAC::ptr().
-    let gpio = unsafe { &*port };
-    for pin in pins {
-        let bit = *pin as u32;
-        let shift = bit * 2;
-        gpio.moder
-            .modify(|r, w| unsafe { w.bits(r.bits() & !(0b11 << shift)) });
-        gpio.pupdr
-            .modify(|r, w| unsafe { w.bits(r.bits() & !(0b11 << shift)) });
-    }
-}
 
 unsafe fn af_very_high(port: *const GpioBlock, pins: &[u8], af: u32) {
     // SAFETY: port is a valid GPIO register block from PAC::ptr().
