@@ -13,5 +13,6 @@ test = false
 bench = false
 
 [dependencies]
-smoltcp = { workspace = true }
-defmt   = { workspace = true }
+smoltcp      = { workspace = true }
+embedded-io  = { workspace = true }
+defmt        = { workspace = true }

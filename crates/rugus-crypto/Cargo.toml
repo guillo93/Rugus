@@ -1,0 +1,22 @@
+[package]
+name        = "rugus-crypto"
+description = "Rugus crypto abstraction — software backend now, HW CRYP/HASH later."
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+authors.workspace      = true
+repository.workspace   = true
+
+[lib]
+test = false
+bench = false
+
+[dependencies]
+rand_core = { workspace = true }
+sha2      = { workspace = true }
+defmt     = { workspace = true, optional = true }
+
+[features]
+default = []
+defmt   = ["dep:defmt"]

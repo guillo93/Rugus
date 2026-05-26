@@ -153,6 +153,7 @@ impl<A: Arch> Scheduler<A> {
     /// Mata la tarea faultante y salta a la siguiente; no retorna.
     ///
     /// Invocado desde el fault handler del arch backend.
+    #[allow(unused_variables)]
     pub fn kill_current_and_resume(&mut self, report: FaultReport) -> ! {
         #[cfg(feature = "log")]
         {

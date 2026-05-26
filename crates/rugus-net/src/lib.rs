@@ -3,14 +3,21 @@
 #![no_std]
 #![warn(missing_docs)]
 
-use smoltcp::iface::{Config, Interface, SocketSet, SocketStorage};
+pub mod tcp;
+
+use smoltcp::iface::{Config, Interface, SocketHandle, SocketSet, SocketStorage};
 use smoltcp::phy::Device;
 use smoltcp::socket::dhcpv4::{Event as DhcpEvent, Socket as DhcpSocket};
 use smoltcp::time::Instant;
 use smoltcp::wire::{EthernetAddress, HardwareAddress, IpAddress, IpCidr, Ipv4Address};
 
+pub use tcp::{tcp_connect, Endpoint, TcpError, TcpIo};
+
 /// Default MAC for Rugus F769 examples (locally administered).
 pub const DEFAULT_MAC: [u8; 6] = [0x02, 0x00, 0x52, 0x55, 0x47, 0x01];
+
+/// Default ephemeral local TCP port for client sockets.
+pub const DEFAULT_TCP_LOCAL_PORT: u16 = 49152;
 
 /// Static IPv4 configuration.
 #[derive(Clone, Copy, Debug)]
@@ -35,20 +42,23 @@ impl StaticConfig {
 }
 
 /// IPv4 stack: smoltcp [`Interface`] + optional DHCP socket.
-pub struct NetStack<'a, 'device, D: Device> {
+///
+/// Uses one stack lifetime for both the PHY device and socket storage so TCP
+/// IO adapters can borrow fields disjointly.
+pub struct NetStack<'stack, D: Device> {
     iface: Interface,
-    device: &'device mut D,
-    sockets: SocketSet<'a>,
-    dhcp_handle: Option<smoltcp::iface::SocketHandle>,
+    device: &'stack mut D,
+    sockets: SocketSet<'stack>,
+    dhcp_handle: Option<SocketHandle>,
 }
 
-impl<'a, 'device, D: Device> NetStack<'a, 'device, D> {
+impl<'stack, D: Device> NetStack<'stack, D> {
     /// Create interface with static IPv4 (no DHCP).
     pub fn new_static(
         mac: [u8; 6],
         cfg: StaticConfig,
-        device: &'device mut D,
-        storage: &'a mut [SocketStorage<'a>],
+        device: &'stack mut D,
+        storage: &'stack mut [SocketStorage<'stack>],
     ) -> Self {
         let mut iface = Interface::new(
             Config::new(HardwareAddress::Ethernet(EthernetAddress(mac))),
@@ -74,8 +84,8 @@ impl<'a, 'device, D: Device> NetStack<'a, 'device, D> {
     /// Create interface that acquires IPv4 via DHCPv4.
     pub fn new_dhcp(
         mac: [u8; 6],
-        device: &'device mut D,
-        storage: &'a mut [SocketStorage<'a>],
+        device: &'stack mut D,
+        storage: &'stack mut [SocketStorage<'stack>],
     ) -> Self {
         let iface = Interface::new(
             Config::new(HardwareAddress::Ethernet(EthernetAddress(mac))),
@@ -95,6 +105,21 @@ impl<'a, 'device, D: Device> NetStack<'a, 'device, D> {
     /// Poll the stack once.
     pub fn poll(&mut self, now: Instant) {
         self.iface.poll(now, self.device, &mut self.sockets);
+    }
+
+    /// smoltcp interface context (for TCP connect).
+    pub fn context(&mut self) -> &mut smoltcp::iface::Context {
+        self.iface.context()
+    }
+
+    /// Mutable socket set.
+    pub fn sockets_mut(&mut self) -> &mut SocketSet<'stack> {
+        &mut self.sockets
+    }
+
+    /// Mutable reference to the Ethernet device.
+    pub fn device_mut(&mut self) -> &mut D {
+        self.device
     }
 
     /// First assigned IPv4 address, if any.

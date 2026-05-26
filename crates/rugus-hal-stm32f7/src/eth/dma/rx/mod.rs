@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 pub(crate) use self::descriptor::RxDescriptor;
 
 use self::descriptor::RxDescriptorError;

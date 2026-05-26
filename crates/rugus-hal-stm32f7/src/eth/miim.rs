@@ -1,4 +1,5 @@
 //! MII / MDIO bit-bang via ETH MAC SMI.
+#![allow(missing_docs)]
 
 pub use ieee802_3_miim::Miim;
 

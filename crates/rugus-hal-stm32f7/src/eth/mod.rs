@@ -1,5 +1,4 @@
 //! Ethernet — ETH MAC + LAN8742A PHY (RMII) on STM32F769I-DISCO.
-#![allow(missing_docs, dead_code)] // G4 step 1: internal DMA types; docs follow in step 2.
 
 mod dma;
 mod mac;
@@ -16,9 +15,13 @@ pub use miim::{MdcPin, MdioPin, Miim, Stm32Mii};
 pub use port::EthMacPort;
 pub use setup::{configure_disco_pins, enable_peripheral, Mdc, Mdio, PartsIn, LAN8742_PHY_ADDR};
 
+use core::sync::atomic::{AtomicBool, Ordering};
+
 use ieee802_3_miim::Phy;
 
 use crate::rcc::Clocks;
+
+static ETH_IRQ_PENDING: AtomicBool = AtomicBool::new(false);
 
 /// Default locally-administered MAC for Rugus F769 examples.
 pub const DEFAULT_MAC: [u8; 6] = [0x02, 0x00, 0x52, 0x55, 0x47, 0x01];
@@ -61,7 +64,16 @@ pub fn link_up<M: Miim>(phy: &mut ieee802_3_miim::phy::lan87xxa::LAN8742A<M>) ->
 
 /// Handle `ETH` IRQ — call from `#[pac::interrupt]` handler.
 pub fn eth_interrupt_handler() -> InterruptReasonSummary {
-    EthernetDMA::interrupt_handler()
+    let summary = EthernetDMA::interrupt_handler();
+    if summary.is_rx || summary.is_tx {
+        ETH_IRQ_PENDING.store(true, Ordering::Release);
+    }
+    summary
+}
+
+/// Take pending ETH IRQ flag (clears it). Use to avoid busy-polling when idle.
+pub fn take_eth_irq_pending() -> bool {
+    ETH_IRQ_PENDING.swap(false, Ordering::AcqRel)
 }
 
 /// Enable NVIC `ETH` and DMA RX/TX IRQs.

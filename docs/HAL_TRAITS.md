@@ -48,7 +48,7 @@ pub trait SerialPort {
 | `Rng`        | G2   | si el chip tiene TRNG, lo usa; si no, PRNG con seed inicial |
 | `EthMac`     | G4   | nivel MAC, smoltcp consumirá esta interfaz — **implementado en `rugus-hal-stm32f7::eth::EthMacPort`** |
 | `Display`    | G4   | framebuffer-style, compatible con embedded-graphics |
-| `Crypto`     | G4   | AES/HASH/HMAC; backend HW si el chip lo tiene |
+| `Crypto`     | G4   | AES/HASH/HMAC; backend HW si el chip lo tiene — **trait `CryptoRng` en `rugus-hal`; impl software en `rugus-crypto`** |
 | `BlockDev`   | G5   | SDIO/eMMC/SPI-flash; para FS futuro |
 
 ## Capacidades **chip-specific** (no en `rugus-hal`)

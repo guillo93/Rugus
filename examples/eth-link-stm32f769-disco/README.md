@@ -16,9 +16,9 @@ configure a static IPv4 address, and log link + IP over defmt RTT.
 | IPv4    | 192.168.1.50   |
 | Netmask | 255.255.255.0 (/24) |
 | Gateway | 192.168.1.1    |
-| MAC     | 02:00:00:00:00:01 |
+| MAC     | 02:00:52:55:47:01 |
 
-Adjust `StaticConfig::DISCO_LAN` in `crates/rugus-net/src/stack.rs` if your LAN uses another subnet.
+Adjust `StaticConfig::home_lan()` in `crates/rugus-net/src/lib.rs` if your LAN uses another subnet.
 
 ## Build & flash
 
@@ -61,7 +61,7 @@ If your PC is on `192.168.1.0/24`, add a host route or set a compatible address,
 ping 192.168.1.50
 ```
 
-## Next steps (G4)
+## See also
 
-- DHCP client
-- `rugus-tls` + HTTPS GET example
+- G4 HTTPS: [`https-get-stm32f769-disco`](../https-get-stm32f769-disco/README.md)
+- DHCP: `NetStack::new_dhcp()` in `rugus-net`

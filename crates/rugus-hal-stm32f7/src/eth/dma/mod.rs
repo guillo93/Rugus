@@ -1,4 +1,5 @@
 //! Ethernet DMA access and configuration.
+#![allow(missing_docs, dead_code)]
 
 use cortex_m::peripheral::NVIC;
 

@@ -11,14 +11,25 @@ SemVer estricto.
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-05-25 — G4
+
+Red + TLS + crypto en STM32F769I-DISCO: smoltcp, embedded-tls, HTTPS GET contra servidor LAN.
+
 ### Added
 
-- **G4 step 1 — Ethernet link + smoltcp (STM32F769I-DISCO).**
-  - `rugus-hal-stm32f7::eth` — ETH MAC + DMA + LAN8742A RMII.
-  - `rugus-hal::EthMac` trait + `EthMacPort` adapter.
-  - Crate `rugus-net` — smoltcp wrapper (static IPv4 + DHCP helpers).
-  - Ejemplo `examples/eth-link-stm32f769-disco` — link up, IP 192.168.1.50/24.
-  - Script `tools/verify-eth-link-stm32f769-disco.sh`.
+- **G4 — Ethernet + smoltcp + TLS + HTTPS GET (STM32F769I-DISCO).**
+  - `rugus-hal-stm32f7::eth` — ETH IRQ pending flag + `take_eth_irq_pending()` for WFI poll.
+  - `rugus-hal::CryptoRng` trait; `rugus-crypto` — software SHA-256 + CSPRNG (CRYP HW futuro).
+  - `rugus-tls` — wrapper `embedded-tls` blocking, TLS 1.3 LAN (sin verificación cert).
+  - `rugus-net` — TCP connect helper, `TcpIo` adapter `embedded-io`, DHCP/static IPv4.
+  - Ejemplo `examples/https-get-stm32f769-disco` — GET `/` vía HTTPS a `192.168.1.100:8443`.
+  - Script `tools/verify-https-get-stm32f769-disco.sh`.
+  - Docs `examples/https-get-stm32f769-disco/README.md` (servidor OpenSSL/Python LAN).
+
+### Validated
+
+- **G4 step 1 en HW:** `verify-eth-link-stm32f769-disco.sh` **9/9 PASS** (link, IP 192.168.1.50).
+- **G4 completo en HW:** requiere servidor HTTPS LAN; ver README del ejemplo.
 
 ---
 
