@@ -88,7 +88,7 @@ else
   record_fail "RTT: PHY link up"
 fi
 
-if grep -qiE 'IPv4 address 192\.168\.1\.50|IPv4 ready 192\.168\.1\.50' "$LOG"; then
+if grep -qiE 'IPv4 address 192\.168\.1\.50|IPv4 ready 192\.168\.1\.50|static IPv4 192\.168\.1\.50' "$LOG"; then
   record_pass "RTT: static IPv4 192.168.1.50"
 else
   record_fail "RTT: static IPv4 192.168.1.50"

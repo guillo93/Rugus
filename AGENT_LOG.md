@@ -19,6 +19,29 @@
 
 **Próximo:** `rugus-tls` + `https-get-stm32f769-disco`; DHCP-first polish; clippy doc warnings in `eth/`.
 
+---
+
+## 2026-05-25 — Agent — G4 step 1: Ethernet link + static IPv4 (feat/g4-eth-smoltcp)
+
+**Scope:** G4 incremental — ETH MAC + LAN8742A RMII, smoltcp, link up + static IP on F769I-DISCO.
+
+**Entregado:**
+
+- `rugus-hal-stm32f7::eth` — MAC, DMA rings, MII, smoltcp `Device`, `EthMacPort`.
+- `rugus-hal::EthMac` trait.
+- Crate `rugus-net` — smoltcp wrapper (static IPv4 + DHCP helpers).
+- `examples/eth-link-stm32f769-disco` — 192.168.1.50/24, defmt RTT.
+- `tools/verify-eth-link-stm32f769-disco.sh` (probe `0483:374b:…`).
+
+**Verificación HW (STM32F769I-DISCO, cable LAN, probe-rs):**
+
+- RTT: SYSCLK 216 MHz, PHY link up, IPv4 192.168.1.50.
+- `./tools/verify-eth-link-stm32f769-disco.sh` — build/clippy/defmt OK; RTT link+IP confirmados.
+
+**Notas:** tag `v0.4.0` ya existe en origin. Issue #23 G4 kickoff.
+
+**Próximo agente:** `rugus-tls` + `https-get-stm32f769-disco`; DHCP polish en `rugus-net`.
+
 ## 2026-05-25 — Agent — G3 cerrado: F407 dual-blink + app-sandbox (PR feat/g3-f407-complete)
 
 **Scope:** G3 completion — optional "muy bien hecho" items on STM32F407G-DISC1.

@@ -40,7 +40,11 @@ impl<'rx, 'tx> EthernetDMA<'rx, 'tx> {
         tx_buffer: &'tx mut [TxRingEntry],
     ) -> Self {
         eth_dma.dmabmr.modify(|_, w| w.sr().set_bit());
-        while eth_dma.dmabmr.read().sr().bit_is_set() {}
+        for _ in 0..100_000 {
+            if !eth_dma.dmabmr.read().sr().bit_is_set() {
+                break;
+            }
+        }
 
         eth_dma.dmaomr.modify(|_, w| {
             w.dtcefd()

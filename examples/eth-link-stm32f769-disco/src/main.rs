@@ -38,7 +38,9 @@ fn main() -> ! {
     );
 
     configure_disco_pins(&dp);
+    defmt::debug!("RMII pins configured");
     enable_peripheral();
+    defmt::debug!("ETH peripheral enabled");
 
     let parts = PartsIn::new(dp.ETHERNET_MAC, dp.ETHERNET_MMC, dp.ETHERNET_DMA);
 
@@ -47,6 +49,7 @@ fn main() -> ! {
 
     let EthStack { mut dma, mac } =
         eth::init(parts, &clocks, &mut rx_ring, &mut tx_ring).expect("eth init");
+    defmt::debug!("ETH MAC+DMA init OK");
 
     enable_eth_interrupt(&dma);
 
