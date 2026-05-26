@@ -38,7 +38,7 @@ fn main() -> ! {
     let dp = pac::Peripherals::take().expect("dp");
 
     let clocks = rcc::init(&dp);
-    cache::enable(&mut cp.SCB, &mut cp.CPUID);
+    cache::enable_with_eth_dma(&mut cp.SCB, &mut cp.CPUID, &mut cp.MPU);
     setup_systick(&mut cp.SYST);
 
     defmt::info!(
@@ -110,6 +110,7 @@ fn main() -> ! {
     let mut last_log_ms = now_ms();
     let mut last_rx = 0u32;
     loop {
+        net.device_mut().service_dma();
         net.poll(Instant::from_millis(now_ms() as i64));
 
         let t = now_ms();

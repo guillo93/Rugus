@@ -25,10 +25,11 @@ product board (G0–G4).
 | Examples | `eth-link-stm32f769-disco`, `https-get-stm32f769-disco` |
 | Verify | `./tools/verify-eth-link-stm32f769-disco.sh`, `./tools/verify-https-get-stm32f769-disco.sh` |
 
-Connect an Ethernet cable to **CN3** and a switch/router before expecting
-`link up` in RTT logs. Default static IPv4 in examples: `192.168.1.50/24`
-(gateway `192.168.1.1`). HTTPS example expects a LAN server at `192.168.1.100:8443`
-— see [`examples/https-get-stm32f769-disco/README.md`](../../examples/https-get-stm32f769-disco/README.md).
+Connect an Ethernet cable to **CN3** and a switch/router (or direct PC link)
+before expecting `link up` in RTT logs. Default static IPv4 in examples:
+`192.168.0.50/24` (gateway `192.168.0.1`). HTTPS example expects a LAN server
+at `192.168.0.112:8443` — see
+[`examples/https-get-stm32f769-disco/README.md`](../../examples/https-get-stm32f769-disco/README.md).
 
 ## Examples (verified)
 
