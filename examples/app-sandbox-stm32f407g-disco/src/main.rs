@@ -81,7 +81,10 @@ fn main() -> ! {
     unsafe {
         rugus_core::heap::init(core::ptr::addr_of_mut!(HEAP).cast(), HEAP_SIZE);
     }
-    defmt::info!("heap on internal SRAM ({=u32} KiB)", HEAP_SIZE as u32 / 1024);
+    defmt::info!(
+        "heap on internal SRAM ({=u32} KiB)",
+        HEAP_SIZE as u32 / 1024
+    );
 
     platform_init(&mut cp);
 
