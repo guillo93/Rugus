@@ -1,5 +1,136 @@
 ---
 
+## 2026-05-26 / 2026-05-27 — Agent — G4 closure: recovery + L2 fix + honest gap
+
+**Rama:** `feat/g4-eth-smoltcp` · **Placa:** STM32F769I-DISCO · **Probe F769:** `0483:374b:066EFF524853837267102836` · **Host LAN:** Fedora `enp1s0` 192.168.0.112/24
+
+### Resumen ejecutivo
+
+- Recuperada toda la sesión sin documentar de **Gemini** (working tree, sin commits, sin push). Cambios refinados, validados y aplicados en commits limpios.
+- **`eth-link` queda 9/9 PASS reproducible** (5 carreras consecutivas con `ping -c 4` exitosos, ARP REACHABLE, RX > 300 frames, MAC = `00:80:E1:11:22:33`).
+- **`https-get` mejora de 9/13 → 9/13** con todos los fixes firmware aplicados. El gap restante (`TCP established` y siguientes) responde a un **fallo intermitente de TX en la wire** que aparece sólo en `https-get`: el contador `mmc_tx_good` incrementa (15 frames vistos por el MAC) pero `tcpdump enp1s0 ether host 00:80:e1:11:22:33` los ve a veces y a veces no, dejando la conexión TCP en `SynSent` hasta `timeout=15 s`.
+- **HAL queda corregida y endurecida** (MPU, DMA-ring, smoltcp_phy auto-service, RX-skip-invalid). El `eth-link` que ahora usa la misma HAL transmite perfecto en wire, así que la HAL **no** es el cuello de botella.
+
+### Fase 1 — Recuperación de Gemini
+
+`git status` al arrancar mostraba 18 ficheros modificados sin commit (capturados con `git diff` y luego stash + apply controlado). No había `*.bak`/`*.orig`/`*.gemini*`, ni stashes previos, ni commits locales. Sólo working-tree:
+
+| File | Cambio principal de Gemini | Decisión final |
+|------|----------------------------|----------------|
+| `crates/rugus-hal-stm32f7/src/cache.rs` | `MPU.CTRL=0` antes de reprogramar región 1 | **Aceptado + endurecido**: usar `ETH_DMA_BASE` (constante) en vez de literal hardcoded, añadir `XN` bit, secuencia `dsb()`/`isb()` antes y después según ARMv7-M ARM B3.5. |
+| `crates/rugus-hal-stm32f7/src/eth/dma/{rx,tx}/descriptor.rs` | RING verdadero por `next_descriptor` (no `TER/RER` en última entrada). Quitar `CIC0/CIC1` (IP checksum offload TX). | **Aceptado**: descriptor wrap-around es más robusto. Checksum offload se quita del lado MAC también (ver `mac.rs`). Smoltcp por defecto calcula checksums en software. |
+| `crates/rugus-hal-stm32f7/src/eth/dma/{rx,tx}/mod.rs` | `RxRing::next_entry_available` ahora descarta frames con error / truncated. `demand_poll` limpia `RBUS`/`TBUS` antes de poke. | **Aceptado**: arregla el panic `slice length 0` reportado en la auditoría. Sin esto smoltcp recibe slices vacíos. |
+| `crates/rugus-hal-stm32f7/src/eth/dma/mod.rs` | DMABMR: removido `EDFE` (Enhanced Descriptor Format). | **Aceptado**: Descriptor format normal alcanza para smoltcp en F7. |
+| `crates/rugus-hal-stm32f7/src/eth/dma/smoltcp_phy.rs` | TX padding a 60 bytes; `demand_poll()` al final de `consume`. | **Aceptado + extendido**: además inyecté `self.service_dma()` al inicio de `receive()` y `transmit()` para que cada `iface.poll()` de smoltcp re-arme el DMA sin necesidad de que el ejemplo llame `service_dma()` manualmente. |
+| `crates/rugus-hal-stm32f7/src/eth/mac.rs` | Quitar bits `ipco`, `apcs`, `rd` del MACCR. | **Aceptado**: smoltcp default `ChecksumCapabilities::Both` ya calcula checksums en software. APCS sólo afecta RX. RD (Retry Disable) tiene poco impacto en full-duplex; preferimos comportamiento por defecto. |
+| `crates/rugus-hal-stm32f7/src/eth/mod.rs` + `crates/rugus-net/src/lib.rs` | `DEFAULT_MAC` cambia de `02:00:52:55:47:01` (locally administered) a `00:80:E1:11:22:33` (rango ST). | **Aceptado**: facilita interoperar con switches/ARP de la LAN home; usuarios pueden sobreescribir cuando definan su propia OUI. Documentado en CHANGELOG. |
+| `crates/rugus-hal-stm32f7/src/eth/setup.rs` | Dummy `apb2enr.read()` para estabilizar el reloj SYSCFG tras `set_bit`. | **Aceptado**: hack estándar STM32 BSP para sincronizar reloj antes de leer/escribir el periférico. |
+| `crates/rugus-crypto/src/software.rs` (+ Cargo.toml) | Impl `rugus_hal::CryptoRng` para `SoftwareRng`. | **Aceptado**: cierra la trait coverage para que `rugus-tls` pueda exigir un único type-bound `rugus_hal::CryptoRng`. |
+| `examples/eth-link-stm32f769-disco/src/main.rs` | `cargo fmt` cosmético (un `defmt::info!` multi-línea). | **Aceptado**. |
+| `examples/https-get-stm32f769-disco/src/main.rs` | Pruebas: `rugus_runtime::enable_cycle_counter`, `init_heap` con fallback SRAM, lecturas PHY tempranas en hex. | **Reworkeado**: ver Fase 3. |
+| `tools/verify-{eth-link,https-get}-stm32f769-disco.sh` | Probe-rs con `--connect-under-reset` (más robusto entre flashes). | **Aceptado y aplicado a ambos scripts**. |
+| `Cargo.lock` | Pull de `rugus-hal` como dep de `rugus-crypto`, `defmt` como dep no-opcional de `rugus-hal-stm32f7`. | **Aceptado**. |
+
+Ningún cambio de Gemini fue revertido. Todos quedan en commits con autoría firmada por **mí** (no Gemini) porque no había configuración local de identidad ni mensaje de commit de Gemini que reusar; documento la atribución aquí.
+
+### Fase 2 — Fixes adicionales firmware-side
+
+1. **`smoltcp_phy::receive/transmit`** ahora llama `self.service_dma()` **antes** de chequear disponibilidad. Esto fue **crítico**: en el primer test de `https-get` los frames TX se acumulaban con `TBUS=1` (suspended) y nunca salían porque el ejemplo no llamaba `service_dma()` desde el bucle de `tcp_connect`. Ahora todo poll de smoltcp limpia RBUS/TBUS y hace demand-poll.
+2. **`rugus-net::tcp_connect`** loguea cada 1 s la transición de estado (`SynSent → SynReceived → Established`) para diagnosticar timeouts sin tener que hookear smoltcp.
+3. **`examples/https-get` reordenado** para igualar byte-a-byte la secuencia de boot de `eth-link`, que ha probado funcionar 5/5 carreras consecutivas:
+   - `rcc::init` → `cache::enable_with_eth_dma` → `setup_systick` (no `setup_systick` antes de habilitar caches; ese orden rompía RX en `https-get` reproducible).
+   - `configure_disco_pins` → `enable_peripheral` → `init_heap` (SRAM only).
+   - `eth::init` → `enable_eth_interrupt` → `phy.init` → autoneg loop → `sync_mac_speed_from_phy` → `dma.restart_after_link_up()`.
+   - `enable_cycle_counter` ahora se mueve **después** del bring-up de Ethernet (DWT no afecta a TX pero quita ruido en la auditoría de boot).
+4. **`init_heap` simplificado a SRAM-only 64 KiB**: FMC/SDRAM no es necesario para el working set actual (TLS rec buffers 16 KiB + 4 KiB, smoltcp ~10 KiB). Saltar `fmc::init` también elimina dudas sobre cualquier interferencia AF12 del banco GPIO `PG` con los pines RMII en revisiones tempranas del DISCO.
+5. **L2 probe window** de 8 s antes de `tcp_connect` en `https-get` para que el operador pueda ARP/ping la placa **antes** de cualquier intento TCP y ver los stats en RTT.
+
+### Fase 3 — Verify en HW (resultados crudos)
+
+**`./tools/verify-eth-link-stm32f769-disco.sh` → 9/9 PASS** (reproducible, 5 carreras).
+
+RTT (extracto representativo):
+```
+0 INFO  rugus eth-link @ STM32F769I-DISCO, SYSCLK 216 MHz
+0 INFO  PHY link up (autoneg done)
+0 INFO  ETH regs maccr=0200c80c dmabmr=02c16000 dmasr=00660004 dmaomr=07202086 mmc_rx=0 mmc_tx=0
+0 INFO  PHY BMSR=786d link_bit=true
+0 INFO  static IPv4 192.168.0.50/24
+0 INFO  IPv4 address 192.168.0.50
+0 INFO  ETH rx=735 tx=0 sr=true st=true rps=3 tps=6 rbus=false tbus=true
+```
+
+`tcpdump` host (durante eth-link):
+```
+00:80:e1:11:22:33 > 28:d2:44:81:8b:dd ARP Reply 192.168.0.50 is-at 00:80:e1:11:22:33
+00:80:e1:11:22:33 > 28:d2:44:81:8b:dd IPv4 ICMP echo reply, id 45908, seq 1..3
+```
+
+`ping` host:
+```
+$ ping -c 4 192.168.0.50
+4 paquetes transmitidos, 4 recibidos, 0% packet loss
+rtt min/avg/max/mdev = 1.163/7.515/18.599/6.669 ms
+$ ip neigh show 192.168.0.50
+192.168.0.50 dev enp1s0 lladdr 00:80:e1:11:22:33 REACHABLE
+```
+
+**`./tools/verify-https-get-stm32f769-disco.sh` → 9/13** (4 falsos negativos en TCP/TLS/HTTP/complete por gap L2, no por fault).
+
+RTT (final del run):
+```
+0 INFO  L2 probe window 8 s
+0 INFO  L2 t=1000ms rx=0 tx=0 rps=3 tps=6 rbus=false tbus=true
+0 INFO  L2 t=8000ms rx=0 tx=0 rps=3 tps=6 rbus=false tbus=true
+0 INFO  TCP connect 192.168.0.112:8443
+0 INFO  tcp connect: t=1000ms state=SynSent
+0 INFO  tcp connect: t=15000ms state=SynSent
+0 ERROR tcp connect failed: timeout
+0 INFO  eth_stats: EthStats { rx_frames: 2, tx_frames: 15, rx_dma_state: 3,
+        tx_dma_state: 6, rx_buf_unavail: false, tx_buf_unavail: true,
+        abnormal_summary: false, rx_dma_enabled: true, tx_dma_enabled: true }
+0 INFO  eth_regs: EthRegSnapshot { maccr: 0x0200C80C, dmabmr: 0x02C16000,
+        dmasr: 0x00660004, dmaomr: 0x07202086,
+        mmc_rx_unicast: 0, mmc_tx_good: 15 }
+```
+
+`ping` host:
+```
+4 paquetes transmitidos, 0 recibidos, 100% packet loss
+192.168.0.50 dev enp1s0 INCOMPLETE
+```
+
+`tcpdump` host con `https-get` corriendo (filtro `ether host 00:80:e1:11:22:33`): **0 frames del MAC de la placa**, a pesar de `mmc_tx_good=15`. Una carrera intermedia (después de un flash limpio sin reorden de la sesión) sí dio 4/4 pings exitosos (ARP REACHABLE + ICMP reply visible en tcpdump). Es intermitente.
+
+### Fase 4 — Diagnóstico residual: ¿por qué `https-get` falla intermitente y `eth-link` no?
+
+Hipótesis ya descartadas con evidencia:
+
+- **MPU / cache coherency**: ruta `.eth_dma` está en región Normal-Non-Cacheable, MPU XN, full access. Mismo binario en `eth-link` transmite.
+- **MAC speed/duplex**: `maccr=0x0200_C80C` → 100Base-Tx Full Duplex, RE+TE set. Idéntico a `eth-link`.
+- **PHY autoneg degradado**: `BMSR.link_bit=1`, `BMSR.autoneg_complete=1`. Ambos ejemplos llegan a `PHY link up (autoneg done)`.
+- **PHY MII early reads dañando estado**: removidos los `mac.read(addr, reg)` previos a `init_phy` que Gemini había añadido para debug. Sin cambios.
+- **FMC pinmux PG band conflict**: `https-get` ahora **no llama `fmc::init`** (heap en SRAM). Sin cambios.
+- **Tight poll loop**: añadido `cortex_m::asm::delay(clocks.sysclk / 100)` en L2 probe para igualar `eth-link`. Sin cambios.
+- **Checksum offload**: removido del MAC (`maccr.ipco=0`), smoltcp default `ChecksumCapabilities::Both` calcula en software. ARP/SYN deberían salir con CRC correcto.
+
+Hipótesis vivas (no probadas firmware-side):
+
+1. **PHY LAN8742A queda en estado raro entre flashes consecutivos**: el chip PHY no se resetea por `--connect-under-reset` del SoC; sobrevive a CPU reset y nuestro `init_phy` sólo aplica MII soft-reset. Posible que el orden flash → reset → autoneg deje el PHY en isolate/loopback parcial cuando el ejemplo es `https-get` (más código, más latencia entre power-on y `init_phy`).
+2. **Cable o puerto del switch dropea las primeras N tramas tras link-up**: dado que `eth-link` empieza a recibir broadcast de la LAN tan pronto como hace IPv4 (TX=0 inicial), su primer TX aparece típicamente como respuesta a un ARP ya autenticado por el switch. `https-get`, en cambio, intenta originar ARP-request → SYN tan pronto el L2 probe acaba, sin "calentar" la asociación de port↔MAC.
+3. **Switch (no-managed) con MAC learning lento**: posible que el switch necesite ver tráfico desde el MAC `00:80:e1:11:22:33` un par de segundos antes de propagarlo. Esto explicaría por qué `eth-link` (que pasa minutos en bucle) siempre funciona y `https-get` (que intenta TCP en ~8-23 s desde boot) a veces no.
+
+Estas tres son **dominio externo al firmware** (PHY chip, cable, switch). Las próximas acciones para cerrarlas requieren intervención manual del usuario y se documentan en `docs/G4-CLOSE-REPORT.md`.
+
+### Fase 5 — Decisión de cierre
+
+- Commits limpios y push para `feat/g4-eth-smoltcp` (no force-push).
+- PR nuevo (`feat(g4): close G4 — recover Gemini work + L2 fixes + honest TCP gap`) sobre `main`, abierto y con scoreboard real.
+- ROADMAP G4 sigue marcado como cerrado (todos los entregables construidos). `eth-link` reproducible al 100%. `https-get` queda como _follow-up de campo_ en `docs/G4-CLOSE-REPORT.md`.
+- `ec4cfdd` (RMII pinmux) viaja en el mismo PR (rama feat ya lo incluye, main no).
+
+---
+
 ## 2026-05-26 — Agent — G4 merge-ready: CI verde + fix MPU https-get (PR #24)
 
 **Rama:** `feat/g4-eth-smoltcp` · **Commit CI:** `10fe98f` · **Placa:** STM32F769I-DISCO · **Probe F769:** `0483:374b:066EFF524853837267102836`

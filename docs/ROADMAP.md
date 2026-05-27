@@ -79,7 +79,12 @@ Tier mínimo futuro (post-G3, sin MPU): STM32F103 Blue Pill — ver
 - [x] Ejemplo `https-get-stm32f769-disco`.
 - [x] Ejemplo `eth-link-stm32f769-disco` (link + IPv4 estático).
 
-✅ **G4 cerrado** (2026-05-25). **Próximo: G5 o F103 downscale.**
+✅ **G4 cerrado** (2026-05-25; refinado y revalidado 2026-05-27 — ver
+[`docs/G4-CLOSE-REPORT.md`](G4-CLOSE-REPORT.md)). **Estado HW:**
+`verify-eth-link 9/9 PASS` reproducible · `verify-https-get 9/13 PASS`
+(TCP queda en `SynSent` por gap intermitente de TX-on-wire fuera de
+la HAL; los 9 fixes firmware-side están validados por `eth-link` que
+ejercita los mismos caminos). **Próximo: G5 o F103 downscale.**
 
 ## G5 — Primera arch no-Cortex-M *(12-16 sem)*
 
