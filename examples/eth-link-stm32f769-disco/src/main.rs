@@ -85,7 +85,11 @@ fn main() -> ! {
         regs.mmc_tx_good
     );
     let phy_bmsr = phy.read(1);
-    defmt::info!("PHY BMSR={:04x} link_bit={}", phy_bmsr, phy_bmsr & 0x0004 != 0);
+    defmt::info!(
+        "PHY BMSR={:04x} link_bit={}",
+        phy_bmsr,
+        phy_bmsr & 0x0004 != 0
+    );
 
     defmt::debug!(
         "ETH DMA restarted sr={} st={} rps={} tps={}",
