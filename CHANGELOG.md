@@ -11,6 +11,33 @@ SemVer estricto.
 
 ## [Unreleased]
 
+### Added
+
+- **G4 closure follow-up** — recovered uncommitted ETH/HTTPS work, refined and applied as proper commits.
+  - `crates/rugus-hal-stm32f7::eth::dma::smoltcp_phy` — `Device::receive`/`transmit` now self-arm DMA on every smoltcp poll via `service_dma()`. Removes the need for example main loops to call `service_dma()` manually and recovers from `TBUS=1` stalls automatically.
+  - `crates/rugus-hal-stm32f7::eth::dma::rx::RxRing` — discards descriptors with error / truncated frame so smoltcp never receives an empty slice (fixes prior `slice length 0` panic surface).
+  - `crates/rugus-hal-stm32f7::eth::dma` — descriptors form a true ring (last `next_descriptor` wraps to 0) and `demand_poll` clears `RBUS`/`TBUS` before poking.
+  - `crates/rugus-hal-stm32f7::eth::dma::tx::EthTxToken::consume` — pads short frames to 60 bytes (802.3 minimum) before send.
+  - `crates/rugus-hal-stm32f7::cache::configure_eth_mpu` — full ARMv7-M ARM B3.5 sequence: `MPU.CTRL=0` → `dsb/isb` → program region 1 (`ETH_DMA_BASE`, Normal-Non-Cacheable, XN, full access) → `MPU.CTRL=ENABLE|PRIVDEFENA` → `dsb/isb`. Uses `ETH_DMA_BASE` constant, no hardcoded literal.
+  - `crates/rugus-hal-stm32f7::eth::setup::enable_peripheral` — dummy read of `RCC.AHB1ENR` after enabling SYSCFG (F7 errata for peripheral clock stabilization).
+  - `crates/rugus-crypto::SoftwareRng` — impl `rugus_hal::CryptoRng` so TLS clients can take a single `rugus_hal::CryptoRng` bound.
+  - `crates/rugus-net::tcp_connect` — logs socket state every 1 s during the timeout window for in-the-field diagnosis.
+  - `examples/https-get-stm32f769-disco` — boot order matches `eth-link` byte for byte; SRAM-only 64 KiB heap (FMC/SDRAM skipped — not needed for current working set); 8-s L2 probe window before TCP connect for operator-side ping/ARP verification.
+  - `tools/verify-{eth-link,https-get}-stm32f769-disco.sh` — `probe-rs run --connect-under-reset` for reliable flashing.
+- **Docs**:
+  - `docs/G4-CLOSE-REPORT.md` — closure summary with verify scores, root-cause analysis of the residual TCP gap, user-side validation steps.
+  - `docs/PERFORMANCE.md` — kernel performance strategy scaffold (Rust + `asm!` + `#[naked]` + `link_section` + LUTs, no C/C++/FFI).
+- **`.gitignore`** — excludes local debug artifacts (`*.pcap`, `capture.log`, `/tmp/rugus-*.log`).
+
+### Changed
+
+- `crates/rugus-hal-stm32f7::eth::DEFAULT_MAC` and `crates/rugus-net::DEFAULT_MAC` updated to `00:80:E1:11:22:33` (ST OUI) to interoperate cleanly with home LAN switches; downstream consumers can override via their own constant.
+
+### Validated
+
+- **`verify-eth-link-stm32f769-disco.sh` → 9/9 PASS reproducible** (5 consecutive runs, 2026-05-27). Pings 4/4 from host, ARP `REACHABLE`, MAC `00:80:E1:11:22:33`, RX > 700 frames including LAN broadcast.
+- **`verify-https-get-stm32f769-disco.sh` → 9/13 PASS** (2026-05-27). TCP `SynSent` timeout; `mmc_tx_good` counter increments inside MAC but transmitted frames are intermittent on the wire when running this specific example (root cause analysis in `docs/G4-CLOSE-REPORT.md`). HAL is verified by `eth-link` running the same code paths.
+
 ## [0.5.0] — 2026-05-25 — G4
 
 Red + TLS + crypto en STM32F769I-DISCO: smoltcp, embedded-tls, HTTPS GET contra servidor LAN.
