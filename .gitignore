@@ -9,3 +9,8 @@ Cargo.lock.bak
 *~
 .DS_Store
 Thumbs.db
+
+# Local debug captures (tcpdump, RTT logs)
+*.pcap
+capture.log
+/tmp/rugus-*.log
