@@ -41,15 +41,17 @@ impl<'a> RxRing<'a> {
 
     pub(crate) fn start(&mut self, eth_dma: &ETHERNET_DMA) {
         {
+            let first_ptr = self.entries[0].desc() as *const RxDescriptor;
             let mut previous: Option<&mut RxRingEntry> = None;
             for entry in self.entries.iter_mut() {
+                let current_ptr = entry.desc() as *const RxDescriptor;
                 if let Some(prev_entry) = &mut previous {
-                    prev_entry.setup(Some(entry));
+                    prev_entry.setup(current_ptr);
                 }
                 previous = Some(entry);
             }
             if let Some(entry) = &mut previous {
-                entry.setup(None);
+                entry.setup(first_ptr);
             }
         }
         self.next_entry = 0;
@@ -71,6 +73,7 @@ impl<'a> RxRing<'a> {
 
     pub(crate) fn demand_poll(&self) {
         let eth_dma = unsafe { &*ETHERNET_DMA::ptr() };
+        eth_dma.dmasr.write(|w| w.rbus().set_bit());
         eth_dma.dmarpdr.write(|w| unsafe { w.rpd().bits(1) });
     }
 
@@ -83,11 +86,23 @@ impl<'a> RxRing<'a> {
         }
     }
 
-    pub fn next_entry_available(&self) -> bool {
+    pub fn next_entry_available(&mut self) -> bool {
         if !self.running_state().is_running() {
             self.demand_poll();
         }
-        self.entries[self.next_entry].is_available()
+
+        loop {
+            let entry = &mut self.entries[self.next_entry];
+            if !entry.is_available() {
+                return false;
+            }
+            if !entry.is_valid() {
+                entry.discard();
+                self.next_entry = (self.next_entry + 1) % self.entries.len();
+                continue;
+            }
+            return true;
+        }
     }
 
     fn recv_next_impl(
@@ -104,9 +119,13 @@ impl<'a> RxRing<'a> {
 
         if entry.is_available() {
             self.next_entry = (self.next_entry + 1) % entries_len;
-            let length = entry.recv(packet_id)?;
-            super::note_rx_frame();
-            Ok((entry_num, length))
+            match entry.recv(packet_id) {
+                Ok(length) => {
+                    super::note_rx_frame();
+                    Ok((entry_num, length))
+                }
+                Err(e) => Err(e.into()),
+            }
         } else {
             Err(RxError::WouldBlock)
         }

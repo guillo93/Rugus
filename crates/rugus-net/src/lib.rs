@@ -14,7 +14,7 @@ use smoltcp::wire::{EthernetAddress, HardwareAddress, IpAddress, IpCidr, Ipv4Add
 pub use tcp::{tcp_connect, Endpoint, TcpError, TcpIo};
 
 /// Default MAC for Rugus F769 examples (locally administered).
-pub const DEFAULT_MAC: [u8; 6] = [0x02, 0x00, 0x52, 0x55, 0x47, 0x01];
+pub const DEFAULT_MAC: [u8; 6] = [0x00, 0x80, 0xE1, 0x11, 0x22, 0x33];
 
 /// Default ephemeral local TCP port for client sockets.
 pub const DEFAULT_TCP_LOCAL_PORT: u16 = 49152;

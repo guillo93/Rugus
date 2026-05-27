@@ -54,10 +54,11 @@ impl RxDescriptor {
         self.write_buffer1();
         self.write_buffer2();
         core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::Release);
+        cortex_m::asm::dsb();
         unsafe {
             self.desc.write(0, RXDESC_0_OWN);
         }
-        core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+        cortex_m::asm::dsb();
     }
 
     fn has_error(&self) -> bool {
@@ -115,18 +116,15 @@ impl RxDescriptor {
 pub type RxRingEntry = RingEntry<RxDescriptor>;
 
 impl RingDescriptor for RxDescriptor {
-    fn setup(&mut self, buffer: *const u8, len: usize, next: Option<&Self>) {
+    fn setup(&mut self, buffer: *const u8, len: usize, next: *const Self) {
         unsafe {
             self.desc.write(1, RXDESC_1_RCH);
         }
         self.set_buffer1(buffer, len);
-        match next {
-            Some(next) => self.set_buffer2(&next.desc as *const Descriptor as *const u8),
-            None => {
-                self.set_buffer2(core::ptr::null());
-                self.set_end_of_ring();
-            }
-        };
+
+        let next_desc_addr = unsafe { &(*next).desc as *const Descriptor as *const u8 };
+        self.set_buffer2(next_desc_addr);
+
         self.set_owned();
     }
 }
@@ -134,6 +132,17 @@ impl RingDescriptor for RxDescriptor {
 impl RxRingEntry {
     pub(super) fn is_available(&self) -> bool {
         !self.desc().is_owned()
+    }
+
+    pub(super) fn is_valid(&self) -> bool {
+        !self.desc().has_error()
+            && self.desc().is_first()
+            && self.desc().is_last()
+            && self.desc().get_frame_len() >= 18
+    }
+
+    pub(super) fn discard(&mut self) {
+        self.desc_mut().set_owned();
     }
 
     pub(super) fn recv(&mut self, packet_id: Option<PacketId>) -> Result<usize, RxDescriptorError> {

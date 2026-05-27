@@ -56,27 +56,18 @@ impl TxDescriptor {
         }
 
         core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::Release);
+        cortex_m::asm::dsb();
 
-        let mut extra_flags = 0u32;
-        if self.is_last {
-            extra_flags |= TXDESC_0_TER;
-        }
+        let extra_flags = 0u32;
 
         unsafe {
             self.desc.write(
                 0,
-                TXDESC_0_OWN
-                    | TXDESC_0_TCH
-                    | TXDESC_0_FS
-                    | TXDESC_0_LS
-                    | TXDESC_0_CIC0
-                    | TXDESC_0_CIC1
-                    | TXDESC_0_IC
-                    | extra_flags,
+                TXDESC_0_OWN | TXDESC_0_TCH | TXDESC_0_FS | TXDESC_0_LS | TXDESC_0_IC | extra_flags,
             );
         }
 
-        core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+        cortex_m::asm::dsb();
     }
 
     fn set_buffer1_len(&mut self, len: usize) {
@@ -91,20 +82,18 @@ impl TxDescriptor {
 pub type TxRingEntry = RingEntry<TxDescriptor>;
 
 impl RingDescriptor for TxDescriptor {
-    fn setup(&mut self, buffer: *const u8, _len: usize, next: Option<&Self>) {
+    fn setup(&mut self, buffer: *const u8, _len: usize, next: *const Self) {
         unsafe {
             self.desc.clear();
         }
 
-        let next_desc_addr = if let Some(next) = next {
-            &next.desc as *const Descriptor as *const u8 as u32
-        } else {
-            self.is_last = true;
-            0
-        };
+        let next_desc_addr = unsafe { &(*next).desc as *const Descriptor as *const u8 as u32 };
 
         self.buffer1 = buffer as u32;
         self.next_descriptor = next_desc_addr;
+
+        // is_last is no longer needed since we form a true ring via next_descriptor.
+        self.is_last = false;
     }
 }
 

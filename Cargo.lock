@@ -884,6 +884,7 @@ version = "0.1.0"
 dependencies = [
  "defmt 1.1.0",
  "rand_core",
+ "rugus-hal",
  "sha2",
 ]
 
@@ -906,6 +907,7 @@ version = "0.1.0"
 dependencies = [
  "aligned",
  "cortex-m",
+ "defmt 1.1.0",
  "ieee802_3_miim",
  "rugus-hal",
  "rugus-net",

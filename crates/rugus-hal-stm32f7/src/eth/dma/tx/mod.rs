@@ -31,15 +31,17 @@ impl<'ring> TxRing<'ring> {
     /// Start the Tx DMA engine
     pub(crate) fn start(&mut self, eth_dma: &ETHERNET_DMA) {
         {
+            let first_ptr = self.entries[0].desc() as *const TxDescriptor;
             let mut previous: Option<&mut TxRingEntry> = None;
             for entry in self.entries.iter_mut() {
+                let current_ptr = entry.desc() as *const TxDescriptor;
                 if let Some(prev_entry) = &mut previous {
-                    prev_entry.setup(Some(entry));
+                    prev_entry.setup(current_ptr);
                 }
                 previous = Some(entry);
             }
             if let Some(entry) = &mut previous {
-                entry.setup(None);
+                entry.setup(first_ptr);
             }
         }
 
@@ -115,6 +117,7 @@ impl<'ring> TxRing<'ring> {
 
     pub(crate) fn demand_poll(&self) {
         let eth_dma = unsafe { &*ETHERNET_DMA::ptr() };
+        eth_dma.dmasr.write(|w| w.tbus().set_bit());
         eth_dma.dmatpdr.write(|w| unsafe { w.tpd().bits(1) });
     }
 }
