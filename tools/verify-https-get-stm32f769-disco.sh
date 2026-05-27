@@ -62,7 +62,8 @@ fi
 echo
 echo "=== Flash + RTT (${RTT_TIMEOUT}s) ==="
 set +e
-PROBE_RS_PROBE="$PROBE" timeout "$RTT_TIMEOUT" probe-rs run --chip "$CHIP" --log-format full --rtt-scan-memory "$ELF" \
+PROBE_RS_PROBE="$PROBE" timeout "$RTT_TIMEOUT" probe-rs run \
+  --connect-under-reset --chip "$CHIP" --log-format full --rtt-scan-memory "$ELF" \
   >"$LOG" 2>&1
 probe_exit=$?
 set -e

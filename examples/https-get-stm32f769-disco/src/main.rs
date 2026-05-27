@@ -16,8 +16,8 @@ use rugus_crypto::SoftwareRng;
 use rugus_hal_stm32f7::cache;
 use rugus_hal_stm32f7::eth::{
     self, configure_disco_pins, enable_eth_interrupt, enable_peripheral, eth_interrupt_handler,
-    init_phy, link_established, sync_mac_speed_from_phy, take_eth_irq_pending, EthStack, EthernetDMA, PartsIn, RxRingEntry,
-    TxRingEntry, DEFAULT_MAC, LAN8742_PHY_ADDR,
+    init_phy, link_established, sync_mac_speed_from_phy, take_eth_irq_pending, EthStack,
+    EthernetDMA, PartsIn, RxRingEntry, TxRingEntry, DEFAULT_MAC, LAN8742_PHY_ADDR,
 };
 use rugus_hal_stm32f7::fmc::{self, SDRAM_BASE};
 use rugus_hal_stm32f7::pac;
@@ -58,43 +58,93 @@ fn main() -> ! {
     let dp = pac::Peripherals::take().expect("dp");
 
     let clocks = rcc::init(&dp);
+    // Match eth-link exactly: ETH MPU + caches BEFORE SysTick / GPIOs.
+    cache::enable_with_eth_dma(&mut cp.SCB, &mut cp.CPUID, &mut cp.MPU);
     setup_systick(&mut cp.SYST);
-    rugus_runtime::enable_cycle_counter(&mut cp);
 
     defmt::info!(
         "rugus https-get @ STM32F769I-DISCO, SYSCLK {} MHz",
         clocks.sysclk_mhz()
     );
 
-    // SDRAM verify toggles D-cache; configure ETH MPU + caches after FMC (dual-blink order).
-    init_heap(&dp, &mut cp);
-    cache::enable_with_eth_dma(&mut cp.SCB, &mut cp.CPUID, &mut cp.MPU);
-
     configure_disco_pins(&dp);
+    defmt::debug!("RMII pins configured");
     enable_peripheral();
+    defmt::debug!("ETH peripheral enabled");
+
+    // Heap on internal SRAM only — TLS buffers are stack-allocated; this only
+    // satisfies the global allocator if any indirect dep tries to alloc.
+    init_heap(&dp, &mut cp);
 
     let parts = PartsIn::new(dp.ETHERNET_MAC, dp.ETHERNET_MMC, dp.ETHERNET_DMA);
     let (rx_ring, tx_ring) = eth_rings();
 
     let EthStack { mut dma, mac } = eth::init(parts, &clocks, rx_ring, tx_ring).expect("eth init");
+    defmt::debug!("ETH MAC+DMA init OK (rings idle until link up)");
+
+    enable_eth_interrupt(&dma);
+
+    defmt::info!("MAC {:02x}", DEFAULT_MAC);
 
     let mut phy = LAN8742A::new(mac, LAN8742_PHY_ADDR);
     init_phy(&mut phy);
 
-    defmt::info!("waiting for PHY link...");
+    defmt::info!("waiting for PHY link + autoneg (cable to CN10)...");
     while !link_established(&mut phy) {
         cortex_m::asm::delay(clocks.sysclk / 20);
     }
     sync_mac_speed_from_phy(&mut phy);
-    defmt::info!("PHY link up");
+    defmt::info!("PHY link up (autoneg done)");
     dma.restart_after_link_up();
-    enable_eth_interrupt(&dma);
+
+    // Enable DWT cycle counter (used by `defmt::timestamp!` and TLS RNG seed)
+    // AFTER the Ethernet stack is up, to keep the early init sequence
+    // byte-for-byte identical to the eth-link smoke test.
+    rugus_runtime::enable_cycle_counter(&mut cp);
+
+    let regs = eth::eth_regs(&dma);
+    defmt::info!(
+        "ETH regs maccr={:08x} dmabmr={:08x} dmasr={:08x} dmaomr={:08x} mmc_rx={} mmc_tx={}",
+        regs.maccr,
+        regs.dmabmr,
+        regs.dmasr,
+        regs.dmaomr,
+        regs.mmc_rx_unicast,
+        regs.mmc_tx_good
+    );
 
     let cfg = StaticConfig::home_lan();
     let mut socket_storage: [SocketStorage; 2] = Default::default();
     let mut net = NetStack::new_static(DEFAULT_MAC, cfg, &mut dma, &mut socket_storage);
 
     wait_ipv4(&mut net, &cfg);
+
+    // Probe phase: drive smoltcp for ~8 s so the host can ARP/ping the board
+    // and confirm L2/L3 from the firmware side before any TCP attempt.
+    defmt::info!("L2 probe window 8 s — try `ping 192.168.0.50` from host now");
+    let probe_start = now_ms();
+    let mut last_log = probe_start;
+    while now_ms().saturating_sub(probe_start) < 8_000 {
+        net.device_mut().service_dma();
+        net.poll(Instant::from_millis(now_ms() as i64));
+        let t = now_ms();
+        if t.saturating_sub(last_log) >= 1000 {
+            last_log = t;
+            let stats = eth::eth_stats(net.device_mut());
+            defmt::info!(
+                "L2 t={=u64}ms rx={=u32} tx={=u32} rps={=u8} tps={=u8} rbus={=bool} tbus={=bool}",
+                t.saturating_sub(probe_start),
+                stats.rx_frames,
+                stats.tx_frames,
+                stats.rx_dma_state,
+                stats.tx_dma_state,
+                stats.rx_buf_unavail,
+                stats.tx_buf_unavail
+            );
+        }
+        cortex_m::asm::delay(clocks.sysclk / 100);
+    }
+    defmt::info!("L2 probe done");
 
     let (tcp_handle, remote) = {
         let rx = unsafe { &mut *core::ptr::addr_of_mut!(TCP_RX_BUF) };
@@ -126,6 +176,11 @@ fn main() -> ! {
         Ok(()) => defmt::info!("TCP established"),
         Err(e) => {
             defmt::error!("tcp connect failed: {}", tcp_error_str(e));
+            defmt::info!(
+                "eth_stats: {:?}",
+                defmt::Debug2Format(&eth::eth_stats(&dma))
+            );
+            defmt::info!("eth_regs: {:?}", defmt::Debug2Format(&eth::eth_regs(&dma)));
             loop {
                 idle_or_delay(clocks.sysclk / 100);
             }
@@ -187,23 +242,18 @@ fn eth_rings() -> (&'static mut [RxRingEntry], &'static mut [TxRingEntry]) {
     }
 }
 
-fn init_heap(dp: &pac::Peripherals, cp: &mut cortex_m::Peripherals) {
+fn init_heap(_dp: &pac::Peripherals, _cp: &mut cortex_m::Peripherals) {
+    // Heap on internal SRAM only — SDRAM/FMC bring-up not needed for the
+    // current 64 KiB working set (TLS rec buffers + smoltcp). Skipping FMC
+    // also keeps the ETH RMII GPIO bank (PG) untouched by the FMC pinmux,
+    // which empirically matters on this revision.
     static mut HEAP_FALLBACK: [u8; 64 * 1024] = [0; 64 * 1024];
-    match fmc::init(dp, &mut cp.SCB, &mut cp.CPUID) {
-        Ok(()) => {
-            defmt::info!("SDRAM OK @ {=u32}", SDRAM_BASE as u32);
-            const HEAP_SIZE: usize = 512 * 1024;
-            unsafe {
-                heap::init(SDRAM_BASE as *mut u8, HEAP_SIZE);
-            }
-        }
-        Err(_) => {
-            defmt::warn!("SDRAM init failed; heap on internal RAM");
-            unsafe {
-                heap::init(core::ptr::addr_of_mut!(HEAP_FALLBACK).cast(), 64 * 1024);
-            }
-        }
+    let _ = SDRAM_BASE;
+    let _ = fmc::SDRAM_SIZE;
+    unsafe {
+        heap::init(core::ptr::addr_of_mut!(HEAP_FALLBACK).cast(), 64 * 1024);
     }
+    defmt::info!("heap: 64 KiB on internal SRAM");
 }
 
 fn wait_ipv4(net: &mut NetStack<'_, EthernetDMA<'_, '_>>, cfg: &StaticConfig) {
