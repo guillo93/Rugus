@@ -15,25 +15,40 @@ const MPU_RASR_ENABLE: u32 = 1;
 const MPU_ATTR_NORMAL_NONCACHE: u32 = (1 << 19) | (1 << 18); // TEX=001, S=1, C=0, B=0
 /// AP=011 — full access (privileged + unprivileged RW).
 const MPU_AP_FULL: u32 = 0b011 << 24;
+/// XN (eXecute Never) — DMA buffers must never be executed as code.
+const MPU_RASR_XN: u32 = 1 << 28;
 
 /// Marca la región ETH DMA como no cacheable (MPU región 1).
 ///
 /// Llamar **antes** de [`enable`]. Los buffers en `.eth_dma` deben estar en
-/// [`ETH_DMA_BASE`].
+/// [`ETH_DMA_BASE`] (16 KiB @ `0x2007_8000`, ver `memory.x` de los ejemplos G4).
+///
+/// Secuencia BSP ST + Cortex-M7 ARMv7-M ARM B3.5:
+/// 1. MPU off (`CTRL=0`) para reconfigurar sin race con Mem/Bus fault.
+/// 2. Programar región 1 (RBAR/RASR) como Normal-Non-Cacheable, full access, XN.
+/// 3. MPU on con `PRIVDEFENA` para que el resto del mapa siga gobernado por
+///    los atributos por defecto.
 pub fn configure_eth_mpu(mpu: &mut MPU) {
-    // SAFETY: región 1 reservada para `.eth_dma` en ejemplos G4.
+    // SAFETY: MPU es singleton vía `&mut MPU`; ETH_DMA_BASE alineado a 16 KiB
+    // por linker (ver `memory.x` de eth-link / https-get).
     unsafe {
+        mpu.ctrl.write(0);
+        cortex_m::asm::dsb();
+        cortex_m::asm::isb();
+
         mpu.rnr.write(1);
         mpu.rbar.write(ETH_DMA_BASE);
         mpu.rasr.write(
             MPU_RASR_ENABLE
                 | MPU_AP_FULL
                 | MPU_ATTR_NORMAL_NONCACHE
+                | MPU_RASR_XN
                 | ((ETH_DMA_MPU_SIZE as u32) << 1),
         );
-        if mpu.ctrl.read() == 0 {
-            mpu.ctrl.write(1 | (1 << 2)); // ENABLE | PRIVDEFENA
-        }
+
+        mpu.ctrl.write(1 | (1 << 2)); // ENABLE | PRIVDEFENA
+        cortex_m::asm::dsb();
+        cortex_m::asm::isb();
     }
 }
 

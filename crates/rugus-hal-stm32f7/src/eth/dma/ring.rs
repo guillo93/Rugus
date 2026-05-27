@@ -1,7 +1,8 @@
 use super::{rx::RxDescriptor, tx::TxDescriptor, MTU};
 
 pub trait RingDescriptor {
-    fn setup(&mut self, buffer: *const u8, len: usize, next: Option<&Self>);
+    /// Setup this descriptor
+    fn setup(&mut self, buffer: *const u8, len: usize, next: *const Self);
 }
 
 #[repr(C, align(8))]
@@ -72,11 +73,10 @@ impl RingEntry<RxDescriptor> {
 }
 
 impl<T: RingDescriptor> RingEntry<T> {
-    pub(crate) fn setup(&mut self, next: Option<&Self>) {
+    pub(crate) fn setup(&mut self, next: *const T) {
         let buffer = self.buffer.as_ptr();
         let len = self.buffer.len();
-        self.desc_mut()
-            .setup(buffer, len, next.map(|next| next.desc()));
+        self.desc.setup(buffer, len, next);
     }
 
     #[inline]

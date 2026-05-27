@@ -26,8 +26,8 @@ use crate::rcc::Clocks;
 
 static ETH_IRQ_PENDING: AtomicBool = AtomicBool::new(false);
 
-/// Default locally-administered MAC for Rugus F769 examples.
-pub const DEFAULT_MAC: [u8; 6] = [0x02, 0x00, 0x52, 0x55, 0x47, 0x01];
+/// Default MAC for Rugus F769 examples (matches ST examples).
+pub const DEFAULT_MAC: [u8; 6] = [0x00, 0x80, 0xE1, 0x11, 0x22, 0x33];
 
 /// Initialized Ethernet MAC + DMA + MII (MDIO/MDC configured).
 pub struct EthStack<'rx, 'tx> {
