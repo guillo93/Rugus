@@ -153,22 +153,19 @@ impl<'rx, 'tx> EthernetDMA<'rx, 'tx> {
                 .set_bit()
         });
 
-        eth_dma.dmabmr.modify(|_, w| {
-            let w = w.edfe().set_bit();
-            unsafe {
-                w.aab()
-                    .set_bit()
-                    .fb()
-                    .set_bit()
-                    .rdp()
-                    .bits(32)
-                    .pbl()
-                    .bits(32)
-                    .pm()
-                    .bits(0b01)
-                    .usp()
-                    .set_bit()
-            }
+        eth_dma.dmabmr.modify(|_, w| unsafe {
+            w.aab()
+                .set_bit()
+                .fb()
+                .set_bit()
+                .rdp()
+                .bits(32)
+                .pbl()
+                .bits(32)
+                .pm()
+                .bits(0b01)
+                .usp()
+                .set_bit()
         });
 
         let dma = EthernetDMA {

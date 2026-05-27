@@ -85,16 +85,29 @@ pub fn tcp_connect<D: Device>(
     }
 
     let start = now_ms();
+    let mut last_log = start;
     loop {
         stack.poll(Instant::from_millis(now_ms() as i64));
         let socket = stack.sockets_mut().get_mut::<tcp::Socket>(handle);
-        if socket.state() == tcp::State::Established {
+        let state = socket.state();
+        let is_open = socket.is_open();
+        if state == tcp::State::Established {
+            defmt::info!("tcp connect: established");
             return Ok(());
         }
-        if !socket.is_open() {
+        if !is_open {
             return Err(TcpError::Closed);
         }
-        if now_ms().saturating_sub(start) >= timeout_ms {
+        let now = now_ms();
+        if now.saturating_sub(last_log) >= 1000 {
+            last_log = now;
+            defmt::info!(
+                "tcp connect: t={=u64}ms state={}",
+                now.saturating_sub(start),
+                defmt::Debug2Format(&state)
+            );
+        }
+        if now.saturating_sub(start) >= timeout_ms {
             return Err(TcpError::Timeout);
         }
     }

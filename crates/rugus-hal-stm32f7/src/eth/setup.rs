@@ -15,6 +15,7 @@ pub fn enable_peripheral() {
         let syscfg = &*pac::SYSCFG::ptr();
 
         rcc.apb2enr.modify(|_, w| w.syscfgen().set_bit());
+        let _ = rcc.apb2enr.read(); // Dummy read to stabilize clock
 
         if rcc.ahb1enr.read().ethmacen().bit_is_set() {
             rcc.ahb1enr.modify(|_, w| w.ethmacen().clear_bit());

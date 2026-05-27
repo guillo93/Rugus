@@ -109,3 +109,12 @@ impl RngCore for SoftwareRng {
 }
 
 impl CryptoRng for SoftwareRng {}
+
+impl rugus_hal::CryptoRng for SoftwareRng {
+    type Error = core::convert::Infallible;
+
+    fn fill(&mut self, buf: &mut [u8]) -> Result<(), Self::Error> {
+        RngCore::fill_bytes(self, buf);
+        Ok(())
+    }
+}
