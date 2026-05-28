@@ -63,7 +63,14 @@ impl TxDescriptor {
         unsafe {
             self.desc.write(
                 0,
-                TXDESC_0_OWN | TXDESC_0_TCH | TXDESC_0_FS | TXDESC_0_LS | TXDESC_0_CIC0 | TXDESC_0_CIC1 | TXDESC_0_IC | extra_flags,
+                TXDESC_0_OWN
+                    | TXDESC_0_TCH
+                    | TXDESC_0_FS
+                    | TXDESC_0_LS
+                    | TXDESC_0_CIC0
+                    | TXDESC_0_CIC1
+                    | TXDESC_0_IC
+                    | extra_flags,
             );
         }
 
