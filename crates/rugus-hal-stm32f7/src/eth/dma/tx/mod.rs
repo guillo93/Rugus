@@ -50,8 +50,10 @@ impl<'ring> TxRing<'ring> {
             .dmatdlar
             .write(|w| unsafe { w.stl().bits(ring_ptr as u32) });
 
+        self.next_entry = 0;
         core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
         eth_dma.dmaomr.modify(|_, w| w.st().set_bit());
+        self.demand_poll();
     }
 
     /// Stop the TX DMA
@@ -62,6 +64,9 @@ impl<'ring> TxRing<'ring> {
 
     /// If this returns `true`, the next `send` will succeed.
     pub fn next_entry_available(&self) -> bool {
+        if !self.is_running() {
+            self.demand_poll();
+        }
         self.entries[self.next_entry].is_available()
     }
 
