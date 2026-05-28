@@ -99,7 +99,10 @@ en bajo, ST-Link externo). Documentación:
 - [x] `examples/blink-stm32f103c8-bluepill` + verify script.
 - [x] CI matrix: `thumbv7m-none-eabi` (Cortex-M3).
 - [x] HW verificado en placa real (external ST-Link) — **10/10 PASS** verify script (2026-05-27).
-- [ ] Scheduler / dual-blink “lite” (post-kickoff).
+- [x] `examples/dual-blink-stm32f103c8-bluepill` — scheduler cooperativo, heap 4 KiB SRAM.
+- [x] `tools/verify-dual-blink-stm32f103c8-bluepill.sh`.
+
+✅ **Rugus lite (F103) cerrado.** Próximo: G5 o ampliaciones opcionales (PLL 72 MHz, HSE).
 
 ## G5 — Primera arch no-Cortex-M *(12-16 sem)*
 
