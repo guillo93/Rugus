@@ -9,5 +9,5 @@ components = ["rustfmt", "clippy", "llvm-tools-preview"]
 # - riscv32imac-unknown-none-elf (ESP32-C3)
 # - aarch64-unknown-none    (Cortex-A: Raspberry Pi)
 # - avr-unknown-gnu-atmega328 (AVR; requiere nightly + avr-gcc)
-targets = ["thumbv7em-none-eabihf"]
+targets = ["thumbv7em-none-eabihf", "thumbv7m-none-eabi"]
 profile = "minimal"

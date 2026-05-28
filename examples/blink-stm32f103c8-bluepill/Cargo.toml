@@ -1,0 +1,23 @@
+[package]
+name        = "blink-stm32f103c8-bluepill"
+description = "Rugus blink example for the STM32F103C8T6 Blue Pill board."
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+authors.workspace      = true
+repository.workspace   = true
+publish     = false
+
+[[bin]]
+name = "blink-stm32f103c8-bluepill"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+cortex-m            = { workspace = true }
+defmt               = { workspace = true }
+rugus-runtime       = { workspace = true }
+rugus-hal           = { workspace = true }
+rugus-hal-stm32f1   = { workspace = true, features = ["stm32f103"] }

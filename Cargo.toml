@@ -4,6 +4,7 @@ members = [
   "crates/rugus-core",
   "crates/rugus-arch-cortex-m",
   "crates/rugus-hal",
+  "crates/rugus-hal-stm32f1",
   "crates/rugus-hal-stm32f4",
   "crates/rugus-hal-stm32f7",
   "crates/rugus-net",
@@ -11,6 +12,7 @@ members = [
   "crates/rugus-tls",
   "crates/rugus-runtime",
   "examples/https-get-stm32f769-disco",
+  "examples/blink-stm32f103c8-bluepill",
   "examples/blink-stm32f407g-disco",
   "examples/blink-stm32f769-disco",
   "examples/dual-blink-stm32f407g-disco",
@@ -35,6 +37,7 @@ cortex-m-rt       = "0.7.5"
 
 # Vendor PAC (svd2rust) — sólo para los crates rugus-hal-stm32f7 y consumidores.
 # Feature `stm32f7x9` cubre las variantes F769/F779 (mismo die).
+stm32f1           = { version = "0.15.1", features = ["stm32f103", "rt"] }
 stm32f4           = { version = "0.15.1", features = ["stm32f407", "rt"] }
 stm32f7           = { version = "0.15.1", features = ["stm32f7x9", "rt"] }
 
@@ -61,6 +64,7 @@ aligned           = "0.4"
 rugus-core          = { path = "crates/rugus-core",          version = "0.1.0" }
 rugus-arch-cortex-m = { path = "crates/rugus-arch-cortex-m", version = "0.1.0" }
 rugus-hal           = { path = "crates/rugus-hal",           version = "0.1.0" }
+rugus-hal-stm32f1   = { path = "crates/rugus-hal-stm32f1",   version = "0.1.0" }
 rugus-hal-stm32f4   = { path = "crates/rugus-hal-stm32f4",   version = "0.1.0" }
 rugus-hal-stm32f7   = { path = "crates/rugus-hal-stm32f7",   version = "0.1.0" }
 rugus-net           = { path = "crates/rugus-net",           version = "0.1.0" }

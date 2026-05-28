@@ -18,7 +18,7 @@ the MCU part number.
 |-------|-----|------|--------------|-----|
 | [STM32F769I-DISCO](stm32f769-disco.md) | STM32F769NIH6 | Cortex-M7 | Supported (G0–G4) | [stm32f769-disco.md](stm32f769-disco.md) |
 | [STM32F407G-DISC1](stm32f407g-disco.md) | STM32F407VGT6 | Cortex-M4 | In progress (G3) | [stm32f407g-disco.md](stm32f407g-disco.md) |
-| [STM32F103C8 Blue Pill](stm32f103c8-bluepill.md) | STM32F103C8T6 | Cortex-M3 | Planned (post-G3) | [stm32f103c8-bluepill.md](stm32f103c8-bluepill.md) |
+| [STM32F103C8 Blue Pill](stm32f103c8-bluepill.md) | STM32F103C8T6 | Cortex-M3 | In progress (Rugus lite) | [stm32f103c8-bluepill.md](stm32f103c8-bluepill.md) |
 
 ## Adding a board
 

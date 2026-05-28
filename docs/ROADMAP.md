@@ -86,6 +86,21 @@ Tier mínimo futuro (post-G3, sin MPU): STM32F103 Blue Pill — ver
 la HAL; los 9 fixes firmware-side están validados por `eth-link` que
 ejercita los mismos caminos). **Próximo: G5 o F103 downscale.**
 
+## Rugus lite — STM32F103 Blue Pill *(weekend scope)*
+
+**Entregable:** `examples/blink-stm32f103c8-bluepill` parpadea PC13 con logs
+`defmt` RTT. Demuestra el tier mínimo sin MPU/FPU.
+
+Placa de referencia: **STM32F103C8T6 Blue Pill** (HSI 8 MHz, LED PC13 activo
+en bajo, ST-Link externo). Documentación:
+[`docs/boards/stm32f103c8-bluepill.md`](boards/stm32f103c8-bluepill.md).
+
+- [x] `rugus-hal-stm32f1`: GPIO + RCC HSI 8 MHz para Blue Pill.
+- [x] `examples/blink-stm32f103c8-bluepill` + verify script.
+- [x] CI matrix: `thumbv7m-none-eabi` (Cortex-M3).
+- [ ] HW verificado en placa real (external ST-Link).
+- [ ] Scheduler / dual-blink “lite” (post-kickoff).
+
 ## G5 — Primera arch no-Cortex-M *(12-16 sem)*
 
 **Entregable:** Cortex-A o RISC-V parpadeando.

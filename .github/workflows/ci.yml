@@ -28,7 +28,7 @@ jobs:
       fail-fast: false
       matrix:
         # Una entrada por target soportado. Crecer con el roadmap.
-        target: [thumbv7em-none-eabihf]
+        target: [thumbv7em-none-eabihf, thumbv7m-none-eabi]
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
@@ -45,7 +45,7 @@ jobs:
       fail-fast: false
       matrix:
         profile: [dev, release]
-        target: [thumbv7em-none-eabihf]
+        target: [thumbv7em-none-eabihf, thumbv7m-none-eabi]
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
