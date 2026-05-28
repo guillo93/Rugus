@@ -3,6 +3,9 @@
 Estimaciones a **ritmo fines-de-semana** (~8 h/sem). En dedicación full-time
 divídelo por 4. Cada hito (G*) implica al menos un ejemplo en HW funcional.
 
+Visión de capas del kernel (metáfora del edificio, personalidades, TCB):
+[`RUGUS-KERNEL-VISION.md`](RUGUS-KERNEL-VISION.md).
+
 ## G0 — Génesis *(2-3 sem)*
 
 **Entregable:** workspace compila, `examples/blink-stm32f769-disco` flashea
