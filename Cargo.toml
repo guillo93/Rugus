@@ -101,4 +101,3 @@ codegen-units    = 4
 [profile.release.package.appliance-stm32f103c8-bluepill]
 opt-level        = "z"
 debug            = false
-strip            = "symbols"

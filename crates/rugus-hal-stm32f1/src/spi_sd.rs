@@ -119,9 +119,21 @@ impl Spi1Sd {
     }
 
     fn transfer(&mut self, byte: u8) -> u8 {
-        while !self.spi.sr.read().txe().bit() {}
+        let mut t = 200_000;
+        while !self.spi.sr.read().txe().bit() {
+            t -= 1;
+            if t == 0 {
+                return 0xFF;
+            }
+        }
         self.spi.dr.write(|w| w.dr().bits(u16::from(byte)));
-        while !self.spi.sr.read().rxne().bit() {}
+        t = 200_000;
+        while !self.spi.sr.read().rxne().bit() {
+            t -= 1;
+            if t == 0 {
+                return 0xFF;
+            }
+        }
         self.spi.dr.read().dr().bits() as u8
     }
 }

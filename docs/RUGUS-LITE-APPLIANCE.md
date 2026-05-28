@@ -23,7 +23,7 @@ Complementa [`RUGUS-KERNEL-VISION.md`](RUGUS-KERNEL-VISION.md) y
 | Módulos (LoRa, HM-10) | USART2 | PA2 TX, PA3 RX | Bus serie 115200 |
 | Tarjeta SD | SPI1 | PA4 NSS, PA5 SCK, PA6 MISO, PA7 MOSI | Config `.rfn` / apps `.afr` |
 | Sensores | I2C1 | PB6 SCL, PB7 SDA | Escaneo `scout` |
-| LED onboard | GPIO | PC13 | Heartbeat + GPIO CLI |
+| LED onboard | GPIO | PC13 | Heartbeat consciente de actividad + GPIO CLI |
 | Debug (dev) | RTT | SWD | `defmt`; no producción |
 
 **BOOT0** = GND para flash/run normal.
@@ -94,6 +94,31 @@ Verify automatizado:
 export PROBE_RS_PROBE=0483:3748:55C3BF6B0648C2875752685117C287
 ./tools/verify-appliance-stm32f103c8-bluepill.sh
 ```
+
+Verificación UART opcional (adaptador USB-TTL en PA9/PA10):
+
+```bash
+export RUGUS_UART_PORT=/dev/ttyUSB0   # o /dev/ttyACM0 según el adaptador
+./tools/verify-appliance-stm32f103c8-bluepill.sh
+```
+
+El script envía `cosmos` por serie y comprueba respuesta con banner/personalidad.
+Requiere `python3` y `pyserial` (`pip install pyserial`).
+
+## Heartbeat PC13 (actividad del kernel)
+
+PC13 es **activo en bajo**. El LED ya no parpadea a 1 Hz fijo: el patrón refleja
+carga del firmware:
+
+| Nivel | Patrón | Disparadores |
+|-------|--------|--------------|
+| Idle | Pulso lento ~0,4 Hz | Sin UART, CLI ni buses |
+| Activo | Parpadeo medio ~2 Hz | I2C (`scout`), SD al boot |
+| UART | Parpadeo rápido ~8 Hz | Bytes RX en USART1 |
+| CLI | Ráfaga triple | Comando procesado (`cosmos`, etc.) |
+
+Implementación: `examples/appliance-stm32f103c8-bluepill/src/heartbeat.rs` — contador
+atómico con decaimiento, tarea cooperativa de baja prioridad, sin bloquear el kernel.
 
 ## Consola UART (minicom)
 

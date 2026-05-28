@@ -1,5 +1,25 @@
 ---
 
+## 2026-05-27 — Agent — F103 appliance CLI: verify, defmt, heartbeat (PR #31)
+
+**Scope:** Cierre appliance F103 — verify script desde ejemplo, enlace defmt, heartbeat PC13 consciente de actividad, docs.
+
+**Entregado:**
+
+- `tools/verify-appliance-stm32f103c8-bluepill.sh` — build desde `examples/appliance-stm32f103c8-bluepill/` (defmt.x); chequeo UART opcional vía `RUGUS_UART_PORT`.
+- `use rugus_runtime as _;` + logs de tareas CLI/heartbeat en RTT.
+- `heartbeat.rs` — PC13 activo en bajo: idle lento, UART rápido, ráfaga triple en CLI, I2C/SD en boot.
+- `docs/RUGUS-LITE-APPLIANCE.md` — heartbeat, `RUGUS_UART_PORT`.
+
+**Verificación HW (2026-05-27):**
+
+- `./tools/verify-appliance-stm32f103c8-bluepill.sh` — **9/9 PASS**.
+- Probe: `0483:3748:55C3BF6B0648C2875752685117C287`; BOOT0=GND.
+- RTT: boot, services ok, cli + heartbeat tasks; defmt `_defmt_version_` OK (sin `strip=symbols`).
+- Fixes: build desde ejemplo (defmt.x), IWDG kick al arranque + arm tardío, SPI SD transfer con timeout.
+
+**Próximo agente:** Merge PR #31; UART cosmos con `RUGUS_UART_PORT`; PLL 72 MHz opcional.
+
 ## 2026-05-27 — Agent — F103 Rugus lite completo: dual-blink (PR feat/f103-lite-complete)
 
 **Scope:** Cierre Rugus lite — scheduler cooperativo en Cortex-M3, dual-blink, verify script.

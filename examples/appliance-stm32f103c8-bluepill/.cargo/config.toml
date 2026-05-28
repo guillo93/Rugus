@@ -10,4 +10,4 @@ rustflags = [
 ]
 
 [env]
-DEFMT_LOG = "warn"
+DEFMT_LOG = "info"
