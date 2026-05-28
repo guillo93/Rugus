@@ -13,9 +13,6 @@ SemVer estricto.
 
 ### Added
 
-- **Rugus lite (F103) complete** — cooperative scheduler on Cortex-M3 without MPU/FPU.
-  - `examples/dual-blink-stm32f103c8-bluepill` — two tasks alternate PC13 at ~0.5 s / ~0.33 s; 4 KiB heap.
-  - `tools/verify-dual-blink-stm32f103c8-bluepill.sh` — build, clippy, flash, RTT checks.
 - **G4 closure follow-up** — recovered uncommitted ETH/HTTPS work, refined and applied as proper commits.
   - `crates/rugus-hal-stm32f7::eth::dma::smoltcp_phy` — `Device::receive`/`transmit` now self-arm DMA on every smoltcp poll via `service_dma()`. Removes the need for example main loops to call `service_dma()` manually and recovers from `TBUS=1` stalls automatically.
   - `crates/rugus-hal-stm32f7::eth::dma::rx::RxRing` — discards descriptors with error / truncated frame so smoltcp never receives an empty slice (fixes prior `slice length 0` panic surface).
@@ -40,6 +37,27 @@ SemVer estricto.
 
 - **`verify-eth-link-stm32f769-disco.sh` → 9/9 PASS reproducible** (5 consecutive runs, 2026-05-27). Pings 4/4 from host, ARP `REACHABLE`, MAC `00:80:E1:11:22:33`, RX > 700 frames including LAN broadcast.
 - **`verify-https-get-stm32f769-disco.sh` → 9/13 PASS** (2026-05-27). TCP `SynSent` timeout; `mmc_tx_good` counter increments inside MAC but transmitted frames are intermittent on the wire when running this specific example (root cause analysis in `docs/G4-CLOSE-REPORT.md`). HAL is verified by `eth-link` running the same code paths.
+
+
+## [0.6.0] — 2026-05-27 — Rugus lite (F103)
+
+Segundo perfil «lite» en Cortex-M3: HAL F1, blink y scheduler cooperativo dual-blink en Blue Pill (sin MPU/FPU).
+
+### Added
+
+- **Rugus lite — STM32F103C8 Blue Pill (Cortex-M3).**
+  - Crate `rugus-hal-stm32f1` — GPIO, RCC HSI 8 MHz.
+  - Ejemplo `examples/blink-stm32f103c8-bluepill` — PC13 toggle + defmt RTT.
+  - Ejemplo `examples/dual-blink-stm32f103c8-bluepill` — dos tareas alternan PC13 (~0.5 s / ~0.33 s); heap 4 KiB.
+  - Scripts `tools/verify-{blink,dual-blink}-stm32f103c8-bluepill.sh` — build, clippy, flash, RTT.
+  - CI `thumbv7m-none-eabi`; docs `docs/boards/stm32f103c8-bluepill.md`.
+
+### Validated
+
+- **F103 blink en HW (ST-Link externo, probe-rs):** verify-blink **10/10 PASS** (2026-05-27, PR #27).
+- **F103 dual-blink cooperativo:** verify-dual-blink build + RTT task alternation (PR #28).
+
+---
 
 ## [0.5.0] — 2026-05-25 — G4
 
@@ -186,7 +204,8 @@ multi-arquitectura y entrega el primer ejemplo en HW real.
 - `rugus-hal-stm32f7` solo expone GPIO; el resto de drivers (RCC, FMC,
   LTDC, ETH, CRYP, JPEG) llegan por fase según se necesiten.
 
-[Unreleased]: https://github.com/guillo93/Rugus/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/guillo93/Rugus/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/guillo93/Rugus/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/guillo93/Rugus/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/guillo93/Rugus/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/guillo93/Rugus/compare/v0.2.0...v0.3.0
