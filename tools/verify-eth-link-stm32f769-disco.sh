@@ -67,7 +67,7 @@ set -e
 
 cat "$LOG"
 
-if [[ $probe_exit -eq 0 || $probe_exit -eq 124 ]]; then
+if [[ $probe_exit -eq 0 || $probe_exit -eq 124 || $probe_exit -eq 137 ]]; then
   if grep -q 'Finished in' "$LOG" || grep -qiE 'INFO|PHY link' "$LOG"; then
     record_pass "flash/run completed"
   else

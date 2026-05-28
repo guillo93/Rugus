@@ -2,7 +2,7 @@ use super::rx::RxRing;
 use super::tx::TxRing;
 use super::EthernetDMA;
 
-use smoltcp::phy::{Device, DeviceCapabilities, RxToken, TxToken};
+use smoltcp::phy::{ChecksumCapabilities, Device, DeviceCapabilities, RxToken, TxToken};
 use smoltcp::time::Instant;
 
 impl<'rx, 'tx> Device for &mut EthernetDMA<'rx, 'tx> {
@@ -43,6 +43,7 @@ impl<'rx, 'tx> Device for EthernetDMA<'rx, 'tx> {
         let mut caps = DeviceCapabilities::default();
         caps.max_transmission_unit = super::MTU;
         caps.max_burst_size = Some(1);
+        caps.checksum = ChecksumCapabilities::ignored();
         caps
     }
 
