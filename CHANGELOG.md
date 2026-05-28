@@ -13,6 +13,9 @@ SemVer estricto.
 
 ### Added
 
+- **Rugus lite (F103) complete** — cooperative scheduler on Cortex-M3 without MPU/FPU.
+  - `examples/dual-blink-stm32f103c8-bluepill` — two tasks alternate PC13 at ~0.5 s / ~0.33 s; 4 KiB heap.
+  - `tools/verify-dual-blink-stm32f103c8-bluepill.sh` — build, clippy, flash, RTT checks.
 - **G4 closure follow-up** — recovered uncommitted ETH/HTTPS work, refined and applied as proper commits.
   - `crates/rugus-hal-stm32f7::eth::dma::smoltcp_phy` — `Device::receive`/`transmit` now self-arm DMA on every smoltcp poll via `service_dma()`. Removes the need for example main loops to call `service_dma()` manually and recovers from `TBUS=1` stalls automatically.
   - `crates/rugus-hal-stm32f7::eth::dma::rx::RxRing` — discards descriptors with error / truncated frame so smoltcp never receives an empty slice (fixes prior `slice length 0` panic surface).

@@ -375,6 +375,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "dual-blink-stm32f103c8-bluepill"
+version = "0.1.0"
+dependencies = [
+ "cortex-m",
+ "defmt 1.1.0",
+ "rugus-arch-cortex-m",
+ "rugus-core",
+ "rugus-hal",
+ "rugus-hal-stm32f1",
+ "rugus-runtime",
+]
+
+[[package]]
 name = "dual-blink-stm32f407g-disco"
 version = "0.1.0"
 dependencies = [

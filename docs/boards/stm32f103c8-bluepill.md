@@ -79,11 +79,15 @@ cargo run --release
 | Memory | Tight (20 KB RAM) — “lite” kernel: fewer tasks, no SDRAM, minimal heap |
 | G2 features | Syscalls/sched may run; domain isolation is cooperative only |
 
-## HAL and example
+## HAL and examples
 
 - HAL crate: `rugus-hal-stm32f1` (`gpio`, `rcc`).
-- Example: `blink-stm32f103c8-bluepill` — PC13 toggle @ HSI 8 MHz + defmt RTT.
-- Verify: `./tools/verify-blink-stm32f103c8-bluepill.sh`.
+- `blink-stm32f103c8-bluepill` — PC13 toggle @ HSI 8 MHz + defmt RTT.
+- `dual-blink-stm32f103c8-bluepill` — dos tareas cooperativas alternan PC13
+  (~0.5 s / ~0.33 s); heap 4 KiB; sin MPU.
+- Verify:
+  - `./tools/verify-blink-stm32f103c8-bluepill.sh`
+  - `./tools/verify-dual-blink-stm32f103c8-bluepill.sh`
 
 ## Related
 

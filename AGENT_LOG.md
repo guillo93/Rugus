@@ -1,5 +1,23 @@
 ---
 
+## 2026-05-27 — Agent — F103 Rugus lite completo: dual-blink (PR feat/f103-lite-complete)
+
+**Scope:** Cierre Rugus lite — scheduler cooperativo en Cortex-M3, dual-blink, verify script.
+
+**Entregado:**
+
+- `examples/dual-blink-stm32f103c8-bluepill` — task A/B alternan PC13, heap 4 KiB, stacks 2 KiB.
+- `tools/verify-dual-blink-stm32f103c8-bluepill.sh`.
+- ROADMAP F103 cerrado; docs/boards actualizados.
+
+**Verificación HW (2026-05-27):**
+
+- `./tools/verify-dual-blink-stm32f103c8-bluepill.sh` — **10/10 PASS**.
+- Probe: `0483:3748:55C3BF6B0648C2875752685117C287`; BOOT0=GND.
+- RTT: SYSCLK 8 MHz, heap 4 KiB, task A/B alternan PC13 sin HardFault.
+
+**Próximo agente:** G5 (Cortex-A / RISC-V) o F103 opcional (PLL 72 MHz).
+
 ## 2026-05-27 — Agent — F103 Rugus lite kickoff: Blue Pill blink (PR feat/f103-bluepill-blink)
 
 **Scope:** Rugus lite inicio — `rugus-hal-stm32f1`, `examples/blink-stm32f103c8-bluepill`,
