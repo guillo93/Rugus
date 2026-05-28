@@ -25,3 +25,6 @@ the MCU part number.
 Follow `docs/PORTING.md` (case B — new chip, same arch). Add a row here and a
 dedicated markdown file with MCU, probe-rs chip string, clock source, LEDs, and
 debug adapter notes before merging the first HW-verified example.
+
+Kernel vision and personality tiers (lite/full/power):
+[`../RUGUS-KERNEL-VISION.md`](../RUGUS-KERNEL-VISION.md).
