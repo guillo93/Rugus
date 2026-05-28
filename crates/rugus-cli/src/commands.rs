@@ -301,10 +301,7 @@ pub fn execute(cmd: Command, line: &str, out: &mut dyn Write) {
         }
         Command::Seal => exec_seal(out),
         Command::Nest => exec_nest(out),
-        Command::Hatch {
-            name_off,
-            name_len,
-        } => {
+        Command::Hatch { name_off, name_len } => {
             let name = &line.as_bytes()[name_off..name_off + name_len];
             exec_hatch(out, name);
         }
@@ -321,7 +318,12 @@ fn extract_key(line: &str, key_len: usize) -> &[u8] {
     let trimmed = line.trim();
     let start = trimmed
         .find(' ')
-        .map(|i| trimmed[i + 1..].find(' ').map(|j| i + 1 + j).unwrap_or(i + 1))
+        .map(|i| {
+            trimmed[i + 1..]
+                .find(' ')
+                .map(|j| i + 1 + j)
+                .unwrap_or(i + 1)
+        })
         .unwrap_or(0);
     &trimmed.as_bytes()[start..start + key_len.min(trimmed.len() - start)]
 }
@@ -357,7 +359,11 @@ fn exec_gpio_write(out: &mut dyn Write, port: u8, pin: u8, high: bool, label: &s
     if ret == 0 {
         let _ = out.write_str(label);
         let _ = write_port_pin(out, port, pin);
-        let _ = out.write_str(if high { " → high\r\n" } else { " → low\r\n" });
+        let _ = out.write_str(if high {
+            " → high\r\n"
+        } else {
+            " → low\r\n"
+        });
     } else {
         let _ = out.write_str(label);
         let _ = out.write_str(": error\r\n");

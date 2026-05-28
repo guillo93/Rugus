@@ -105,7 +105,9 @@ fn configure_usart(usart: &pac::USART1, pclk2: u32, baud: u32) {
     let div = (pclk2 + baud / 2) / baud;
     let mantissa = div / 16;
     let fraction = div % 16;
-    usart.brr.write(|w| unsafe { w.bits(mantissa << 4 | fraction) });
+    usart
+        .brr
+        .write(|w| unsafe { w.bits(mantissa << 4 | fraction) });
     usart.cr1.write(|w| {
         w.te().set_bit();
         w.re().set_bit();

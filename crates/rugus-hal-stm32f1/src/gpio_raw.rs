@@ -66,13 +66,11 @@ pub fn configure_output(rcc: &pac::RCC, port: u8, pin: u8) -> Option<()> {
     unsafe {
         let g = &*ptr;
         if reg == 0 {
-            g.crl.modify(|r, w| {
-                w.bits((r.bits() & !(0xF << shift)) | (OUT_PP_2MHZ << shift))
-            });
+            g.crl
+                .modify(|r, w| w.bits((r.bits() & !(0xF << shift)) | (OUT_PP_2MHZ << shift)));
         } else {
-            g.crh.modify(|r, w| {
-                w.bits((r.bits() & !(0xF << shift)) | (OUT_PP_2MHZ << shift))
-            });
+            g.crh
+                .modify(|r, w| w.bits((r.bits() & !(0xF << shift)) | (OUT_PP_2MHZ << shift)));
         }
     }
     Some(())
