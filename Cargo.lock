@@ -73,6 +73,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "appliance-stm32f103c8-bluepill"
+version = "0.1.0"
+dependencies = [
+ "cortex-m",
+ "critical-section",
+ "defmt 1.1.0",
+ "heapless 0.9.3",
+ "rugus-arch-cortex-m",
+ "rugus-cli",
+ "rugus-core",
+ "rugus-hal",
+ "rugus-hal-stm32f1",
+ "rugus-rfn",
+ "rugus-runtime",
+]
+
+[[package]]
 name = "as-slice"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -894,6 +911,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "rugus-cli"
+version = "0.1.0"
+dependencies = [
+ "heapless 0.9.3",
+ "rugus-core",
+]
+
+[[package]]
 name = "rugus-core"
 version = "0.1.0"
 dependencies = [
@@ -956,6 +981,13 @@ dependencies = [
  "defmt 1.1.0",
  "embedded-io",
  "smoltcp",
+]
+
+[[package]]
+name = "rugus-rfn"
+version = "0.1.0"
+dependencies = [
+ "heapless 0.9.3",
 ]
 
 [[package]]
