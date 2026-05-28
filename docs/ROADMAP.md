@@ -98,7 +98,7 @@ en bajo, ST-Link externo). Documentación:
 - [x] `rugus-hal-stm32f1`: GPIO + RCC HSI 8 MHz para Blue Pill.
 - [x] `examples/blink-stm32f103c8-bluepill` + verify script.
 - [x] CI matrix: `thumbv7m-none-eabi` (Cortex-M3).
-- [ ] HW verificado en placa real (external ST-Link).
+- [x] HW verificado en placa real (external ST-Link) — **10/10 PASS** verify script (2026-05-27).
 - [ ] Scheduler / dual-blink “lite” (post-kickoff).
 
 ## G5 — Primera arch no-Cortex-M *(12-16 sem)*

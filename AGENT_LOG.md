@@ -15,11 +15,12 @@ docs/boards, ROADMAP F103 section, verify script, CI `thumbv7m-none-eabi`.
 
 - `probe-rs list` → STLink V2-1 `0483:374b` (F769) + STLink V2 `0483:3748` (external Blue Pill).
 - DBGMCU_IDCODE → **chipid 0x410** (STM32F103).
-- `./tools/verify-blink-stm32f103c8-bluepill.sh` — **6/8 PASS** (build/clippy/defmt/flash OK).
-- RTT vacío; PC en **0x1FFFF3B6** (system memory) → **BOOT0 probablemente alto**; jumper a GND
-  y repetir verify. Cableado SWD documentado en `docs/boards/stm32f103c8-bluepill.md`.
+- Primera pasada: **6/8 PASS** — RTT vacío; PC en **0x1FFFF3B6** (system memory) → **BOOT0 alto**.
+- Usuario movió jumper **BOOT0→GND**, reset + re-flash.
+- Verificación final: `./tools/verify-blink-stm32f103c8-bluepill.sh` — **10/10 PASS**.
+- PC13 parpadea ~1 Hz (activo en bajo); RTT: SYSCLK 8 MHz OK; PC = **0x0800023c** (flash).
 
-**Próximo agente:** BOOT0→GND, confirmar blink PC13 + RTT 8 MHz; cerrar checkbox HW en ROADMAP.
+**Próximo agente:** Merge PR #27; scheduler / dual-blink “lite” (post-kickoff).
 
 ## 2026-05-26 / 2026-05-27 — Agent — G4 closure: recovery + L2 fix + honest gap
 
