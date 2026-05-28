@@ -1,6 +1,8 @@
 [workspace]
 resolver = "2"
 members = [
+  "crates/rugus-cli",
+  "crates/rugus-rfn",
   "crates/rugus-core",
   "crates/rugus-arch-cortex-m",
   "crates/rugus-hal",
@@ -14,6 +16,7 @@ members = [
   "examples/https-get-stm32f769-disco",
   "examples/blink-stm32f103c8-bluepill",
   "examples/dual-blink-stm32f103c8-bluepill",
+  "examples/appliance-stm32f103c8-bluepill",
   "examples/blink-stm32f407g-disco",
   "examples/blink-stm32f769-disco",
   "examples/dual-blink-stm32f407g-disco",
@@ -72,6 +75,8 @@ rugus-net           = { path = "crates/rugus-net",           version = "0.1.0" }
 rugus-crypto        = { path = "crates/rugus-crypto",        version = "0.1.0" }
 rugus-tls           = { path = "crates/rugus-tls",           version = "0.1.0" }
 rugus-runtime       = { path = "crates/rugus-runtime",       version = "0.1.0" }
+rugus-cli           = { path = "crates/rugus-cli",           version = "0.1.0" }
+rugus-rfn           = { path = "crates/rugus-rfn",           version = "0.1.0" }
 
 [profile.dev]
 opt-level        = 1
@@ -92,3 +97,8 @@ overflow-checks  = false
 inherits         = "release"
 lto              = "thin"
 codegen-units    = 4
+
+[profile.release.package.appliance-stm32f103c8-bluepill]
+opt-level        = "z"
+debug            = false
+strip            = "symbols"

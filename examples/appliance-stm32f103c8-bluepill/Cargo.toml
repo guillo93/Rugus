@@ -1,0 +1,29 @@
+[package]
+name        = "appliance-stm32f103c8-bluepill"
+description = "Rugus lite appliance — UART CLI, I2C, SD/RFN, scheduler, modules."
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+authors.workspace      = true
+repository.workspace   = true
+publish     = false
+
+[[bin]]
+name = "appliance-stm32f103c8-bluepill"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+cortex-m            = { workspace = true }
+critical-section    = { workspace = true }
+defmt               = { workspace = true }
+heapless            = { workspace = true }
+rugus-runtime       = { workspace = true }
+rugus-hal           = { workspace = true }
+rugus-hal-stm32f1   = { workspace = true, features = ["stm32f103"] }
+rugus-core          = { workspace = true }
+rugus-arch-cortex-m = { workspace = true }
+rugus-cli           = { workspace = true }
+rugus-rfn           = { workspace = true }

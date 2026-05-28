@@ -17,4 +17,10 @@
 pub use stm32f1::stm32f103 as pac;
 
 pub mod gpio;
+pub mod gpio_raw;
+pub mod i2c;
 pub mod rcc;
+pub mod spi_sd;
+pub mod uart;
+pub mod uart2;
+pub mod wdt;

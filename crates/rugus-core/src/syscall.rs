@@ -1,5 +1,7 @@
 //! Syscall ABI v0.1 — dispatch y trampolines userland. Ver `docs/SYSCALL_ABI.md`.
 
+pub mod lite;
+
 use crate::sched::TaskId;
 use crate::Errno;
 

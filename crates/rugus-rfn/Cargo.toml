@@ -1,0 +1,16 @@
+[package]
+name        = "rugus-rfn"
+description = "Rugus Field Notation (.rfn) parser — userland, no kernel."
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+authors.workspace      = true
+repository.workspace   = true
+
+[lib]
+test = false
+bench = false
+
+[dependencies]
+heapless = { workspace = true }
