@@ -45,16 +45,17 @@ cd "$ROOT"
 run_check "build (workspace release)" \
   cargo build --workspace --release --target "$TARGET"
 
-run_check "build (appliance release)" \
-  cargo build --release --target "$TARGET" -p appliance-stm32f103c8-bluepill
-
 run_check "clippy (workspace, -D warnings)" \
   cargo clippy --workspace --all-targets --target "$TARGET" -- -D warnings
 
-if readelf -S "$ELF" 2>/dev/null | grep -qE '\.defmt(\.end)? '; then
-  record_pass "ELF has defmt section"
+# Re-build from example dir so release ELF keeps defmt.x after workspace/clippy.
+run_check "build (appliance + defmt link, post-clippy)" \
+  bash -c "cd \"$EXAMPLE\" && cargo build --release"
+
+if readelf -S "$ELF" 2>/dev/null | grep -q '\.defmt '; then
+  record_pass "ELF has .defmt section"
 else
-  record_fail "ELF missing defmt section"
+  record_fail "ELF missing .defmt section"
 fi
 
 echo
@@ -83,7 +84,7 @@ else
   record_fail "RTT: appliance boot"
 fi
 
-if grep -qiE 'cli task|heartbeat task' "$LOG"; then
+if grep -qiE 'cli task started|heartbeat task' "$LOG"; then
   record_pass "RTT: scheduler tasks"
 else
   record_fail "RTT: scheduler tasks"

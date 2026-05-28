@@ -4,6 +4,7 @@
 #![no_main]
 #![allow(static_mut_refs)]
 
+mod heartbeat;
 mod services;
 
 use core::ptr::addr_of_mut;
@@ -21,6 +22,7 @@ use rugus_hal_stm32f1::spi_sd::Spi1Sd;
 use rugus_hal_stm32f1::uart::{Usart1, CLI_BAUD};
 use rugus_hal_stm32f1::uart2::{Usart2, MODULE_BAUD};
 use rugus_hal_stm32f1::wdt::Watchdog;
+use rugus_runtime as _; // panic-probe + defmt-rtt
 use rugus_runtime::entry;
 
 type Sched = Scheduler<CortexM>;
@@ -48,6 +50,7 @@ impl Write for UartWriter {
 }
 
 fn cli_task() -> ! {
+    defmt::info!("cli task started");
     let mut writer = UartWriter;
     let banner = "\r\nRugus lite appliance ready.\r\nType `orbit` for help.\r\n\r\n";
     let _ = writer.write_str(banner);
@@ -66,6 +69,8 @@ fn cli_poll_line(writer: &mut UartWriter) {
         return;
     };
 
+    heartbeat::note(heartbeat::UART_RX);
+
     unsafe {
         if b == b'\r' || b == b'\n' {
             if LINE_LEN > 0 {
@@ -73,6 +78,7 @@ fn cli_poll_line(writer: &mut UartWriter) {
                     core::str::from_utf8(&LINE[..LINE_LEN]).unwrap_or("");
                 let cmd = parse(line);
                 execute(cmd, line, writer);
+                heartbeat::note(heartbeat::CLI_CMD);
                 LINE_LEN = 0;
             }
         } else if b == 0x7F || b == 0x08 {
@@ -92,17 +98,20 @@ fn cli_poll_line(writer: &mut UartWriter) {
 }
 
 fn heartbeat_task() -> ! {
-    const TICKS: u32 = 8_000_000;
+    defmt::info!("heartbeat task (PC13 activity LED)");
+    heartbeat::led_off();
+    let mut tick: u32 = 0;
     loop {
-        cortex_m::asm::delay(TICKS);
-        // SAFETY: toggle PC13 heartbeat.
-        unsafe {
-            let g = &*pac::GPIOC::ptr();
-            g.odr.modify(|r, w| w.bits(r.bits() ^ (1 << 13)));
-            if !IWDG_PTR.is_null() {
-                (&(*IWDG_PTR)).kr.write(|w| w.key().bits(0xAAAA));
-            }
+        let act = heartbeat::level();
+        tick = tick.wrapping_add(1);
+        let (on, delay) = heartbeat::step(act, tick);
+        if on {
+            heartbeat::led_on();
+        } else {
+            heartbeat::led_off();
         }
+        cortex_m::asm::delay(delay);
+        kick_wdt();
         yield_cpu();
     }
 }
@@ -112,27 +121,42 @@ fn main() -> ! {
     let mut cp = cortex_m::Peripherals::take().expect("cortex-m");
     let dp = pac::Peripherals::take().expect("device");
 
+    // Recarga IWDG heredado de un flash anterior (~100 ms) antes de init lenta.
+    dp.IWDG
+        .kr
+        .write(|w| unsafe { w.key().bits(0xAAAA) });
+
     let clocks = rcc::init(&dp);
     rugus_runtime::enable_cycle_counter(&mut cp);
 
     defmt::info!("appliance F103 boot");
 
-    let wdt = Watchdog::init(&dp);
+    let wdt = Watchdog::disabled();
     unsafe {
         IWDG_PTR = &dp.IWDG as *const _;
     }
 
     let console = Usart1::new(&dp.RCC, dp.USART1, clocks.pclk2, CLI_BAUD);
+    kick_wdt();
     let i2c = I2c1::new(&dp.RCC, dp.I2C1);
+    kick_wdt();
     let sd = Spi1Sd::new(&dp.RCC, dp.SPI1);
+    kick_wdt();
     let modules = Usart2::new(&dp.RCC, dp.USART2, clocks.pclk1, MODULE_BAUD);
+    kick_wdt();
 
     services::init(&dp.RCC, i2c, sd, modules, wdt);
+    kick_wdt();
 
     unsafe {
         lite::register(services::hooks());
         CONSOLE = Some(console);
+        let iwdg = &*IWDG_PTR;
+        let mut wdt = Watchdog::configure(iwdg);
+        wdt.arm(iwdg);
+        services::set_wdt(wdt);
     }
+    kick_wdt();
 
     defmt::info!("appliance ready");
 
@@ -153,6 +177,7 @@ fn main() -> ! {
             )
             .expect("spawn heartbeat");
         services::set_task_count(2);
+        defmt::info!("scheduler: cli + heartbeat tasks");
         sched.start();
     }
 }
@@ -160,5 +185,14 @@ fn main() -> ! {
 fn yield_cpu() {
     unsafe {
         (&mut *addr_of_mut!(SCHEDULER)).yield_now();
+    }
+}
+
+fn kick_wdt() {
+    // SAFETY: IWDG compartido con tarea heartbeat.
+    unsafe {
+        if !IWDG_PTR.is_null() {
+            (&(*IWDG_PTR)).kr.write(|w| w.key().bits(0xAAAA));
+        }
     }
 }

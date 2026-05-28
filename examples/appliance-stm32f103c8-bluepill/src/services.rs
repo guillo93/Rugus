@@ -1,5 +1,6 @@
 //! Estado y hooks del appliance — capa servicio (no CLI).
 
+use crate::heartbeat;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use heapless::String;
@@ -47,9 +48,11 @@ pub fn init(
             parse_rfn(DEFAULT_RFN, cfg);
             if let Some(sd) = SD.as_mut() {
                 if sd.status() == SdStatus::Ready {
+                    heartbeat::note(heartbeat::SD);
                     let mut sector = [0u8; 512];
                     let n = sd.read_boot_sector(&mut sector);
                     if n > 0 {
+                        heartbeat::note(heartbeat::SD);
                         if let Ok(text) = core::str::from_utf8(&sector[..n]) {
                             parse_rfn(text, cfg);
                         }
@@ -67,6 +70,12 @@ pub fn init(
 pub fn set_task_count(n: u32) {
     unsafe {
         SCHED_TASK_COUNT = n;
+    }
+}
+
+pub fn set_wdt(wdt: Watchdog) {
+    unsafe {
+        WDT = Some(wdt);
     }
 }
 
@@ -177,6 +186,7 @@ fn hook_bus_scan(bus: u8, out: &mut [u8]) -> i32 {
         if let Some(i2c) = I2C.as_mut() {
             let mut addrs = [0u8; 16];
             let n = i2c.scan(&mut addrs);
+            heartbeat::note(heartbeat::I2C);
             let mut pos = 0;
             for addr in &addrs[..n] {
                 let line = format_addr(*addr);
