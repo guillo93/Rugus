@@ -1,5 +1,26 @@
 ---
 
+## 2026-05-27 — Agent — F103 Rugus lite kickoff: Blue Pill blink (PR feat/f103-bluepill-blink)
+
+**Scope:** Rugus lite inicio — `rugus-hal-stm32f1`, `examples/blink-stm32f103c8-bluepill`,
+docs/boards, ROADMAP F103 section, verify script, CI `thumbv7m-none-eabi`.
+
+**Entregado:**
+
+- Crate `rugus-hal-stm32f1`: GPIO (PC13 active low), RCC HSI 8 MHz.
+- Ejemplo `blink-stm32f103c8-bluepill`: PC13 toggle + defmt RTT.
+- `tools/verify-blink-stm32f103c8-bluepill.sh`, docs actualizados.
+
+**Verificación HW (2026-05-27):**
+
+- `probe-rs list` → STLink V2-1 `0483:374b` (F769) + STLink V2 `0483:3748` (external Blue Pill).
+- DBGMCU_IDCODE → **chipid 0x410** (STM32F103).
+- `./tools/verify-blink-stm32f103c8-bluepill.sh` — **6/8 PASS** (build/clippy/defmt/flash OK).
+- RTT vacío; PC en **0x1FFFF3B6** (system memory) → **BOOT0 probablemente alto**; jumper a GND
+  y repetir verify. Cableado SWD documentado en `docs/boards/stm32f103c8-bluepill.md`.
+
+**Próximo agente:** BOOT0→GND, confirmar blink PC13 + RTT 8 MHz; cerrar checkbox HW en ROADMAP.
+
 ## 2026-05-26 / 2026-05-27 — Agent — G4 closure: recovery + L2 fix + honest gap
 
 **Rama:** `feat/g4-eth-smoltcp` · **Placa:** STM32F769I-DISCO · **Probe F769:** `0483:374b:066EFF524853837267102836` · **Host LAN:** Fedora `enp1s0` 192.168.0.112/24

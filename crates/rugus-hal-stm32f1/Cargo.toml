@@ -1,0 +1,23 @@
+[package]
+name        = "rugus-hal-stm32f1"
+description = "Rugus HAL implementation for STMicroelectronics STM32F1 family (F103 Blue Pill reference)."
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+authors.workspace      = true
+repository.workspace   = true
+
+[lib]
+test = false
+bench = false
+
+[dependencies]
+cortex-m  = { workspace = true }
+stm32f1   = { workspace = true }
+rugus-hal = { workspace = true }
+
+# PAC `stm32f1` selects die via feature gate. `stm32f103` covers F103 variants.
+[features]
+default = ["stm32f103"]
+stm32f103 = []
