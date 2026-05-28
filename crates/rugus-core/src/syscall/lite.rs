@@ -248,10 +248,7 @@ pub mod user {
 
     /// Escribe GPIO (`spark`/`mute`).
     pub fn gpio_write(port: u8, pin: u8, high: bool) -> i32 {
-        dispatch(
-            Id::GpioWrite,
-            [port as u32, pin as u32, u32::from(high), 0],
-        )
+        dispatch(Id::GpioWrite, [port as u32, pin as u32, u32::from(high), 0])
     }
 
     /// Invierte GPIO (`ripple`).

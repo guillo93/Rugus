@@ -25,7 +25,7 @@ impl Usart2 {
         // PA2/PA3 in CRL: pin2 bits 8-11, pin3 bits 12-15.
         const TX: u32 = 0b1011; // AF push-pull
         const RX: u32 = 0b0100; // floating in
-        // SAFETY: solo CRL PA2/PA3.
+                                // SAFETY: solo CRL PA2/PA3.
         unsafe {
             let g = &*pac::GPIOA::ptr();
             g.crl.modify(|r, w| {
@@ -88,7 +88,9 @@ impl SerialPort for Usart2 {
 fn configure_usart(usart: &pac::USART2, pclk: u32, baud: u32) {
     usart.cr1.write(|w| w.ue().clear_bit());
     let div = (pclk + baud / 2) / baud;
-    usart.brr.write(|w| unsafe { w.bits((div / 16) << 4 | (div % 16)) });
+    usart
+        .brr
+        .write(|w| unsafe { w.bits((div / 16) << 4 | (div % 16)) });
     usart.cr1.write(|w| {
         w.te().set_bit();
         w.re().set_bit();

@@ -6,6 +6,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use heapless::String;
 use rugus_core::syscall::lite::{GpioLevel, Hooks};
 use rugus_core::Errno;
+use rugus_hal::SerialPort;
 use rugus_hal_stm32f1::gpio_raw;
 use rugus_hal_stm32f1::i2c::I2c1;
 use rugus_hal_stm32f1::pac;
@@ -13,10 +14,10 @@ use rugus_hal_stm32f1::spi_sd::{SdStatus, Spi1Sd};
 use rugus_hal_stm32f1::uart2::Usart2;
 use rugus_hal_stm32f1::wdt::Watchdog;
 use rugus_rfn::{parse_afr_header, parse_rfn, ConfigMap, MAX_FIELD};
-use rugus_hal::SerialPort;
 
 /// Config RFN embebida por defecto (sin SD).
-const DEFAULT_RFN: &str = "# Rugus lite appliance default\nboard = bluepill\npersonality = lite\nled = C13\n";
+const DEFAULT_RFN: &str =
+    "# Rugus lite appliance default\nboard = bluepill\npersonality = lite\nled = C13\n";
 
 static FAILSAFE: AtomicBool = AtomicBool::new(false);
 static mut CONFIG: Option<ConfigMap> = None;
@@ -29,13 +30,7 @@ static mut MODULE_PRESENT: bool = false;
 static mut APP_NAME: Option<String<{ MAX_FIELD }>> = None;
 
 /// Inicializa servicios y config staging.
-pub fn init(
-    rcc: &pac::RCC,
-    i2c: I2c1,
-    sd: Spi1Sd,
-    modules: Usart2,
-    wdt: Watchdog,
-) {
+pub fn init(rcc: &pac::RCC, i2c: I2c1, sd: Spi1Sd, modules: Usart2, wdt: Watchdog) {
     let _ = gpio_raw::configure_output(rcc, b'C', 13);
     unsafe {
         I2C = Some(i2c);
@@ -107,7 +102,11 @@ fn hook_sys_info(out: &mut [u8]) -> usize {
 
 fn hook_sys_status(out: &mut [u8]) -> usize {
     let fs = FAILSAFE.load(Ordering::Relaxed);
-    let sd_ok = unsafe { SD.as_ref().map(|s| s.status() == SdStatus::Ready).unwrap_or(false) };
+    let sd_ok = unsafe {
+        SD.as_ref()
+            .map(|s| s.status() == SdStatus::Ready)
+            .unwrap_or(false)
+    };
     let mod_ok = unsafe { MODULE_PRESENT };
     let tasks = unsafe { SCHED_TASK_COUNT };
     let mut line: String<128> = String::new();

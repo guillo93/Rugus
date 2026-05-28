@@ -104,9 +104,7 @@ pub fn parse_afr_header(input: &str) -> Option<AfrHeader> {
     let mut map = ConfigMap::new();
     parse_rfn(input, &mut map);
     let name = map.get("app.name")?;
-    let version = map
-        .get("app.version")
-        .unwrap_or("0.0.0");
+    let version = map.get("app.version").unwrap_or("0.0.0");
     Some(AfrHeader {
         name: String::try_from(name).ok()?,
         version: String::try_from(version).ok()?,

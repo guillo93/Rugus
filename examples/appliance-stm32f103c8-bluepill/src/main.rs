@@ -74,8 +74,7 @@ fn cli_poll_line(writer: &mut UartWriter) {
     unsafe {
         if b == b'\r' || b == b'\n' {
             if LINE_LEN > 0 {
-                let line =
-                    core::str::from_utf8(&LINE[..LINE_LEN]).unwrap_or("");
+                let line = core::str::from_utf8(&LINE[..LINE_LEN]).unwrap_or("");
                 let cmd = parse(line);
                 execute(cmd, line, writer);
                 heartbeat::note(heartbeat::CLI_CMD);
@@ -122,9 +121,7 @@ fn main() -> ! {
     let dp = pac::Peripherals::take().expect("device");
 
     // Recarga IWDG heredado de un flash anterior (~100 ms) antes de init lenta.
-    dp.IWDG
-        .kr
-        .write(|w| unsafe { w.key().bits(0xAAAA) });
+    dp.IWDG.kr.write(|w| unsafe { w.key().bits(0xAAAA) });
 
     let clocks = rcc::init(&dp);
     rugus_runtime::enable_cycle_counter(&mut cp);
@@ -163,18 +160,10 @@ fn main() -> ! {
     unsafe {
         let sched = &mut *addr_of_mut!(SCHEDULER);
         sched
-            .spawn(
-                &mut *addr_of_mut!(STACK_CLI),
-                cli_task,
-                Priority::App,
-            )
+            .spawn(&mut *addr_of_mut!(STACK_CLI), cli_task, Priority::App)
             .expect("spawn cli");
         sched
-            .spawn(
-                &mut *addr_of_mut!(STACK_HB),
-                heartbeat_task,
-                Priority::App,
-            )
+            .spawn(&mut *addr_of_mut!(STACK_HB), heartbeat_task, Priority::App)
             .expect("spawn heartbeat");
         services::set_task_count(2);
         defmt::info!("scheduler: cli + heartbeat tasks");
