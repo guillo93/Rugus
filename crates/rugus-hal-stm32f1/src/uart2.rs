@@ -40,6 +40,21 @@ impl Usart2 {
         Self { usart }
     }
 
+    /// Lee un byte si RXNE está activo; no bloquea.
+    pub fn try_read_byte(&mut self) -> Option<u8> {
+        if self.usart.sr.read().rxne().bit() {
+            Some(self.usart.dr.read().dr().bits() as u8)
+        } else {
+            None
+        }
+    }
+
+    /// Escribe un byte (polling TXE).
+    pub fn write_byte(&mut self, b: u8) {
+        while !self.usart.sr.read().txe().bit() {}
+        self.usart.dr.write(|w| w.dr().bits(u16::from(b)));
+    }
+
     /// Escribe AT probe y retorna true si hay eco RX (módulo presente).
     pub fn probe_module(&mut self) -> bool {
         let _ = self.write(b"AT\r\n");

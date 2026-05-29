@@ -1,9 +1,9 @@
-//! USART1 — PA9 TX, PA10 RX @ 115200 (rugus-cli console).
+//! USART1 — PA9 TX, PA10 RX @ 115200 (consola de la shell `rush`).
 
 use crate::pac;
 use rugus_hal::SerialPort;
 
-/// Baud rate por defecto de la consola rugus-cli.
+/// Baud rate por defecto de la consola `rush`.
 pub const CLI_BAUD: u32 = 115_200;
 
 /// Error de UART (infallible en operaciones bloqueantes actuales).

@@ -1,6 +1,7 @@
 //! Comandos CLI v1 — léxico Rugus (ver docs/RUGUS-KERNEL-VISION.md).
 
 use crate::ansi::{self, Write};
+use crate::identify;
 use heapless::String;
 use rugus_core::syscall::lite::user;
 
@@ -97,6 +98,8 @@ pub enum Command {
         /// 0=status, 1=kick
         action: u8,
     },
+    /// `IDENTIFY` → firma del protocolo de descubrimiento (host serie/BLE).
+    Identify,
     /// Línea vacía o desconocida.
     Unknown,
 }
@@ -152,6 +155,7 @@ pub fn parse(line: &str) -> Command {
             };
             Command::Ward { action }
         }
+        "IDENTIFY" => Command::Identify,
         _ => Command::Unknown,
     }
 }
@@ -308,6 +312,7 @@ pub fn execute(cmd: Command, line: &str, out: &mut dyn Write) {
         Command::Coil => exec_coil(out),
         Command::Anchor => exec_anchor(out),
         Command::Ward { action } => exec_ward(out, action),
+        Command::Identify => identify::write_signature(out, identify::TIER, identify::CHIP),
         Command::Unknown => {
             let _ = out.write_str("?\r\n");
         }

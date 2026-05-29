@@ -85,8 +85,8 @@ cargo run --release
 - `blink-stm32f103c8-bluepill` — PC13 toggle @ HSI 8 MHz + defmt RTT.
 - `dual-blink-stm32f103c8-bluepill` — dos tareas cooperativas alternan PC13
   (~0.5 s / ~0.33 s); heap 4 KiB; sin MPU.
-- `appliance-stm32f103c8-bluepill` — UART CLI rugus-cli (fases 1–6), I2C, SD/RFN,
-  scheduler, USART2 módulos. Ver [`docs/RUGUS-LITE-APPLIANCE.md`](../RUGUS-LITE-APPLIANCE.md).
+- `appliance-stm32f103c8-bluepill` — UART shell `rush` (fases 1–6) + IDENTIFY, I2C,
+  SD/RFN, scheduler, USART2 módulos. Ver [`docs/RUGUS-LITE-APPLIANCE.md`](../RUGUS-LITE-APPLIANCE.md).
 - Verify:
   - `./tools/verify-blink-stm32f103c8-bluepill.sh`
   - `./tools/verify-dual-blink-stm32f103c8-bluepill.sh`

@@ -8,7 +8,7 @@ Complementa [`RUGUS-KERNEL-VISION.md`](RUGUS-KERNEL-VISION.md) y
 
 | Fase | Contenido | Comandos CLI |
 |------|-----------|--------------|
-| 1 | UART rugus-cli @ 115200 | `cosmos`, `orbit`, `ecosystem`, `pulso`, `spark`, `mute`, `ripple` |
+| 1 | UART `rush` @ 115200 | `cosmos`, `orbit`, `ecosystem`, `pulso`, `spark`, `mute`, `ripple` |
 | 2 | I2C1 + mapa GPIO | `scout`, `moor` |
 | 3 | SD SPI + RFN/AFR staging | `schema`, `scribe`, `seal`, `hatch` |
 | 4 | Scheduler cooperativo | `coil` |
@@ -19,8 +19,8 @@ Complementa [`RUGUS-KERNEL-VISION.md`](RUGUS-KERNEL-VISION.md) y
 
 | Función | Periférico | Pines | Notas |
 |---------|------------|-------|-------|
-| `rugus-cli` | USART1 | PA9 TX, PA10 RX | Consola principal 115200 8N1 |
-| Módulos (LoRa, HM-10) | USART2 | PA2 TX, PA3 RX | Bus serie 115200 |
+| `rush` (shell) | USART1 | PA9 TX, PA10 RX | Consola principal 115200 8N1 |
+| Módulos (LoRa, HM-10) | USART2 | PA2 TX, PA3 RX | Bus serie 115200 (IDENTIFY) |
 | Tarjeta SD | SPI1 | PA4 NSS, PA5 SCK, PA6 MISO, PA7 MOSI | Config `.rfn` / apps `.afr` |
 | Sensores | I2C1 | PB6 SCL, PB7 SDA | Escaneo `scout` |
 | LED onboard | GPIO | PC13 | Heartbeat consciente de actividad + GPIO CLI |
@@ -31,7 +31,7 @@ Complementa [`RUGUS-KERNEL-VISION.md`](RUGUS-KERNEL-VISION.md) y
 ## Arquitectura por capas
 
 ```
-rugus-cli (ANSI, parser, léxico)
+rush (ANSI, parser, léxico, IDENTIFY)
         ↓ syscall::lite::user
 rugus-core/syscall/lite (hooks, sin hardware)
         ↓ hooks registrados
@@ -41,7 +41,26 @@ services (ejemplo) + rugus-hal-stm32f1
 El parser y los banners **no** están en `rugus-core`. Ver regla de oro en
 [`RUGUS-KERNEL-VISION.md`](RUGUS-KERNEL-VISION.md).
 
-## Léxico rugus-cli v1
+## Protocolo IDENTIFY
+
+`rush` responde al descubrimiento de un host (cliente `rugus-cli` de escritorio)
+por **cualquier** transporte serie. Dispara con:
+
+- La línea `IDENTIFY\r\n`, **o**
+- El byte de control `ENQ` (`0x05`).
+
+Respuesta: **exactamente una línea**
+
+```text
+RUGUS;tier=lite;chip=f103;proto=1;shell=rush;cli=1.0.0\r\n
+```
+
+Cableado: respondido tanto en **USART1** (consola) como en **USART2** (bus de
+módulos, p. ej. puente BLE HM-10). Es una respuesta barata, sin lógica pesada:
+el kernel sigue serio; el host hace el resto. Especificación completa del
+handshake y el flujo de auto-detección en [`RUGUS-CLI-HOST.md`](RUGUS-CLI-HOST.md).
+
+## Léxico rush v1
 
 | Comando | Syscall | Descripción |
 |---------|---------|-------------|
@@ -63,6 +82,7 @@ El parser y los banners **no** están en `rugus-core`. Ver regla de oro en
 | `coil` | `task_list` | Tareas del scheduler |
 | `anchor` | `sys_failsafe` | Modo fail-safe |
 | `ward` | `wdt` | Estado / kick watchdog |
+| `IDENTIFY` | (local) | Firma de descubrimiento (host serie/BLE) |
 
 ## RFN / AFR (resumen)
 
@@ -141,7 +161,7 @@ Enter para el banner ANSI + info del sistema.
 
 | Crate | Rol |
 |-------|-----|
-| `rugus-cli` | Presentación CLI (ANSI + comandos) |
+| `rush` | Shell on-device (ANSI + comandos + IDENTIFY) |
 | `rugus-rfn` | Parser RFN/AFR userland |
 | `rugus-core::syscall::lite` | ABI appliance (hooks) |
 | `rugus-hal-stm32f1` | `uart`, `uart2`, `i2c`, `spi_sd`, `gpio_raw`, `wdt` |

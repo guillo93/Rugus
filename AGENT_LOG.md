@@ -1,5 +1,37 @@
 ---
 
+## 2026-05-28 — Agent — Rename `rugus-cli` → `rush` + protocolo IDENTIFY (feat/rush-identify)
+
+**Scope:** Renombrar la shell on-device y añadir el protocolo de descubrimiento
+`IDENTIFY` para que un host (cliente `rugus-cli` de escritorio) detecte dispositivos
+Rugus por serie/BLE.
+
+**Entregado:**
+
+- Crate `crates/rugus-cli/` → `crates/rush/` (`name = "rush"`); workspace members y
+  `workspace.dependencies` actualizados; imports `rugus_cli` → `rush` en el appliance.
+- `rush::identify` — `write_signature(out, tier, chip)`, `ENQ` (0x05), `PROTO_VERSION`,
+  `SHELL_NAME`, consts `TIER`/`CHIP`. Firma exacta:
+  `RUGUS;tier=lite;chip=f103;proto=1;shell=rush;cli=1.0.0\r\n`.
+- `Command::Identify` en la tabla de comandos (`parse("IDENTIFY")`), enrutado en `execute`.
+- Appliance F103: respuesta IDENTIFY en **USART1** (línea + ENQ fast-path) y **USART2**
+  (`services::poll_identify_usart2`, no bloqueante; `Usart2::try_read_byte`/`write_byte`).
+- Docs: `RUGUS-LITE-APPLIANCE.md` (sección IDENTIFY), `RUGUS-KERNEL-VISION.md`,
+  `boards/stm32f103c8-bluepill.md` (naming `rush`).
+
+**Verificación:**
+
+- `cargo fmt --all`; `cargo build --workspace --target thumbv7m-none-eabi` OK.
+- `cargo clippy --workspace --all-targets` para `thumbv7m-none-eabi` y
+  `thumbv7em-none-eabihf` — sin warnings (`-D warnings`).
+- HW: build release + enlace defmt + sección `.defmt` PASS. Flash/RTT **bloqueado**:
+  ST-Link `0483:3748:...C287` presente por USB pero `JtagNoDeviceConnected` /
+  `JtagGetIdcodeError` → Blue Pill no alcanzable por SWD (sin alimentar, sin cablear o
+  BOOT0 alto). No es regresión de software; pendiente reconectar target.
+
+**Próximo agente:** PART 2 — host `rugus-cli` (rugus-proto + binario desktop con
+auto-detect serie/BLE y TUI ratatui).
+
 ## 2026-05-27 — Agent — F103 appliance CLI: verify, defmt, heartbeat (PR #31)
 
 **Scope:** Cierre appliance F103 — verify script desde ejemplo, enlace defmt, heartbeat PC13 consciente de actividad, docs.
