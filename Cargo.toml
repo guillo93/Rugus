@@ -26,6 +26,15 @@ members = [
   "examples/eth-link-stm32f769-disco",
 ]
 
+# Crates host-side (std, triple del PC). Se EXCLUYEN del workspace embebido para
+# que `cargo build --workspace --target thumbv7m-*` (CI) NO los compile. Son
+# crates independientes; `rugus-cli` depende de `rugus-proto` por `path`. Se
+# construyen/testean en el job `host` del CI sobre el triple nativo.
+exclude = [
+  "crates/rugus-proto",
+  "crates/rugus-cli",
+]
+
 [workspace.package]
 version      = "0.1.0"
 edition      = "2021"

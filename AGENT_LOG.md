@@ -1,5 +1,42 @@
 ---
 
+## 2026-05-28 — Agent — Host `rugus-cli` desktop: rugus-proto + auto-detect serie/BLE + TUI (feat/rugus-cli-host)
+
+**Scope:** Cliente de escritorio Rugus (Stack A: core Rust + frontend nativo). Núcleo
+de protocolo `rugus-proto` + binario `rugus-cli` con auto-detección por serie y BLE
+vía IDENTIFY y TUI ratatui. Crates host **excluidos** del workspace embebido.
+
+**Entregado:**
+
+- `crates/rugus-proto` (std, lib): `identify` (parse/validación de firma `RUGUS;…`,
+  rechazo de no-Rugus, `ENQ`, `IDENTIFY_REQUEST`), `frame` (`LineAssembler`),
+  `command` (léxico `rush` + `to_wire`), `render` (ANSI SGR → spans). **22 tests**.
+- `crates/rugus-cli` (std, bin): transportes serie (`serialport`, hilos) y BLE
+  (`btleplug`, tokio en hilo dedicado; perfiles HM-10 `FFE0/FFE1` y Nordic UART);
+  auto-detect (enumera serie + escanea BLE, envía IDENTIFY, lista solo firmas válidas;
+  0→ayuda, 1→conecta, N→menú); TUI `ratatui`+`crossterm` (consola estilada, panel de
+  léxico, input). Flags `--list/--no-ble/--no-serial/--serial`.
+- Workspace: `exclude = ["crates/rugus-proto", "crates/rugus-cli"]` en `Cargo.toml`
+  raíz → el CI embebido (`--workspace --target thumbv7m-*`) NO los compila.
+- CI: nuevo job `host` (ubuntu) instala `libudev-dev libdbus-1-dev pkg-config` y corre
+  fmt + clippy + test (proto) + clippy + build (cli).
+- `docs/RUGUS-CLI-HOST.md`: spec IDENTIFY, flujo auto-detect, stack, uso PC, plan
+  Android (BLE-first, reutilizar `rugus-proto` vía UniFFI).
+- Deps añadidas con `cargo add` (últimas estables): serialport 4.9, btleplug 0.12,
+  ratatui 0.29, crossterm 0.29, tokio 1.x, futures 0.3, uuid 1.x, anyhow 1.x.
+
+**Verificación (host):**
+
+- `rugus-proto`: `cargo test` 22/22, `cargo clippy --all-targets -D warnings` limpio.
+- `rugus-cli`: `cargo build` y `cargo clippy --all-targets -D warnings` limpios
+  (serie + BLE + TUI). Local sin `-devel`: shim pkg-config sobre `libudev.so.1` /
+  `libdbus-1.so.3`; el CI usa los paquetes `-dev` reales.
+- Embebido intacto: `cargo build --workspace --target thumbv7m-none-eabi` OK; los
+  crates host no aparecen en `cargo metadata`.
+
+**Próximo agente:** frontend Android (UniFFI sobre `rugus-proto`, BLE nativo);
+prueba de auto-detect con HW real (USB-TTL + HM-10).
+
 ## 2026-05-28 — Agent — Rename `rugus-cli` → `rush` + protocolo IDENTIFY (feat/rush-identify)
 
 **Scope:** Renombrar la shell on-device y añadir el protocolo de descubrimiento

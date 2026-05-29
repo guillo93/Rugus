@@ -1,0 +1,12 @@
+[package]
+name        = "rugus-proto"
+description = "Rugus host-side protocol core — IDENTIFY handshake, frame/command/render models."
+version     = "0.1.0"
+edition     = "2021"
+rust-version = "1.75"
+license     = "MIT OR Apache-2.0"
+authors     = ["Luis Guillermo Hernandez <luiguihez93@gmail.com>"]
+repository  = "https://github.com/guillo93/Rugus"
+
+[lib]
+name = "rugus_proto"
