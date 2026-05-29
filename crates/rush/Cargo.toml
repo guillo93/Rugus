@@ -1,6 +1,6 @@
 [package]
-name        = "rugus-cli"
-description = "Rugus CLI presentation layer — ANSI banners, command lexicon, no_std."
+name        = "rush"
+description = "Rugus on-device shell — ANSI banners, command lexicon, IDENTIFY, no_std."
 version.workspace      = true
 edition.workspace      = true
 rust-version.workspace = true

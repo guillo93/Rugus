@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
-  "crates/rugus-cli",
+  "crates/rush",
   "crates/rugus-rfn",
   "crates/rugus-core",
   "crates/rugus-arch-cortex-m",
@@ -75,7 +75,7 @@ rugus-net           = { path = "crates/rugus-net",           version = "0.1.0" }
 rugus-crypto        = { path = "crates/rugus-crypto",        version = "0.1.0" }
 rugus-tls           = { path = "crates/rugus-tls",           version = "0.1.0" }
 rugus-runtime       = { path = "crates/rugus-runtime",       version = "0.1.0" }
-rugus-cli           = { path = "crates/rugus-cli",           version = "0.1.0" }
+rush                = { path = "crates/rush",                version = "0.1.0" }
 rugus-rfn           = { path = "crates/rugus-rfn",           version = "0.1.0" }
 
 [profile.dev]

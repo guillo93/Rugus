@@ -14,6 +14,7 @@ use rugus_hal_stm32f1::spi_sd::{SdStatus, Spi1Sd};
 use rugus_hal_stm32f1::uart2::Usart2;
 use rugus_hal_stm32f1::wdt::Watchdog;
 use rugus_rfn::{parse_afr_header, parse_rfn, ConfigMap, MAX_FIELD};
+use rush::{identify, Write};
 
 /// Config RFN embebida por defecto (sin SD).
 const DEFAULT_RFN: &str =
@@ -28,6 +29,59 @@ static mut WDT: Option<Watchdog> = None;
 static mut SCHED_TASK_COUNT: u32 = 0;
 static mut MODULE_PRESENT: bool = false;
 static mut APP_NAME: Option<String<{ MAX_FIELD }>> = None;
+static mut IDENT_LINE: [u8; 16] = [0; 16];
+static mut IDENT_LEN: usize = 0;
+
+/// Escritor IDENTIFY sobre USART2 (bus de módulos).
+struct ModuleWriter;
+
+impl Write for ModuleWriter {
+    fn write_str(&mut self, s: &str) -> Result<(), ()> {
+        // SAFETY: solo la tarea CLI cooperativa toca USART2 fuera de los hooks.
+        unsafe {
+            if let Some(u) = MODULES.as_mut() {
+                for &b in s.as_bytes() {
+                    u.write_byte(b);
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Poll no bloqueante del bus de módulos (USART2) para el protocolo IDENTIFY.
+///
+/// Permite que un host conectado por serie/BLE a través del puente de módulos
+/// descubra el dispositivo. Responde a `IDENTIFY\r\n` y al byte de control ENQ.
+pub fn poll_identify_usart2() {
+    // SAFETY: invocado solo desde la tarea CLI cooperativa.
+    let byte = unsafe { MODULES.as_mut().and_then(|u| u.try_read_byte()) };
+    let Some(b) = byte else {
+        return;
+    };
+
+    if b == identify::ENQ {
+        identify::write_signature(&mut ModuleWriter, identify::TIER, identify::CHIP);
+        return;
+    }
+
+    unsafe {
+        if b == b'\r' || b == b'\n' {
+            if IDENT_LEN > 0 {
+                if &IDENT_LINE[..IDENT_LEN] == b"IDENTIFY" {
+                    identify::write_signature(&mut ModuleWriter, identify::TIER, identify::CHIP);
+                }
+                IDENT_LEN = 0;
+            }
+        } else if IDENT_LEN < IDENT_LINE.len() {
+            IDENT_LINE[IDENT_LEN] = b;
+            IDENT_LEN += 1;
+        } else {
+            // Línea sobredimensionada: descartar para evitar falsos positivos.
+            IDENT_LEN = 0;
+        }
+    }
+}
 
 /// Inicializa servicios y config staging.
 pub fn init(rcc: &pac::RCC, i2c: I2c1, sd: Spi1Sd, modules: Usart2, wdt: Watchdog) {

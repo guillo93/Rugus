@@ -32,9 +32,11 @@ appliance. Pueden fallar, reiniciarse o sustituirse sin reescribir el sótano.
 
 ### Cima — experiencia de usuario
 
-En la parte alta: **`rugus-cli`** (comandos con léxico propio), GUI futura,
-apps nativas en `.afr`. Objetivo: **fluido y bonito** — cosmética, ergonomía,
-textos amigables. Nada de esto debe filtrarse al kernel.
+En la parte alta: **`rush`** (la shell on-device, con léxico propio y ANSI),
+GUI futura, apps nativas en `.afr`. Objetivo: **fluido y bonito** — cosmética,
+ergonomía, textos amigables. Nada de esto debe filtrarse al kernel. El cliente
+de escritorio `rugus-cli` (host) habla con `rush` por serie/BLE vía el
+protocolo `IDENTIFY` (ver [`RUGUS-CLI-HOST.md`](RUGUS-CLI-HOST.md)).
 
 ### Regla de oro
 
@@ -46,7 +48,7 @@ Separación estricta de responsabilidades (*separation of concerns*):
 |------|---------------------|--------------------------|
 | Capa 0 (kernel) | syscalls, MPU/MMU, WDT, validación | parsear SD, BLE stack, UI |
 | Media | RFN parser, drivers, red | lógica de presentación |
-| Alta | rugus-cli, GUI, apps | acceso directo a hardware sin syscall |
+| Alta | rush (shell), GUI, apps | acceso directo a hardware sin syscall |
 
 Un parser de `.rfn` **nunca** corre en handler de IRQ. Un stack BLE **nunca**
 se mergea en `rugus-core` “por comodidad”.
@@ -139,10 +141,10 @@ Detalle verificable en [`INVARIANTS.md`](INVARIANTS.md).
 
 ---
 
-## Léxico `rugus-cli` v1
+## Léxico `rush` v1
 
 Comandos de usuario con nombres evocadores; cada uno mapea a una operación
-del sistema (syscall o servicio). La capa CLI es **cosmética** — el kernel
+del sistema (syscall o servicio). La shell `rush` es **cosmética** — el kernel
 solo ve IDs y argumentos validados.
 
 | Comando CLI | Operación | Descripción breve |
@@ -197,7 +199,7 @@ Asignación prevista para el tier **lite** como placa appliance (CLI + módulos
 
 | Función | Periférico | Pines | Notas |
 |---------|------------|-------|-------|
-| `rugus-cli` | USART1 | PA9 TX, PA10 RX | Consola principal |
+| `rush` (shell) | USART1 | PA9 TX, PA10 RX | Consola principal |
 | Módulos (LoRa, HM-10 BLE) | USART2 | PA2 TX, PA3 RX | Bus de módulos serie |
 | Expansión | USART3 | PB10 TX, PB11 RX | UART adicional |
 | Tarjeta SD | SPI1 | PA4 NSS, PA5 SCK, PA6 MISO, PA7 MOSI | Config RFN / logs |

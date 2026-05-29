@@ -25,5 +25,5 @@ rugus-hal           = { workspace = true }
 rugus-hal-stm32f1   = { workspace = true, features = ["stm32f103"] }
 rugus-core          = { workspace = true }
 rugus-arch-cortex-m = { workspace = true }
-rugus-cli           = { workspace = true }
+rush                = { workspace = true }
 rugus-rfn           = { workspace = true }

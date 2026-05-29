@@ -10,8 +10,6 @@ mod services;
 use core::ptr::addr_of_mut;
 
 use rugus_arch_cortex_m::CortexM;
-use rugus_cli::Write;
-use rugus_cli::{execute, parse};
 use rugus_core::sched::{Priority, Scheduler};
 use rugus_core::syscall::lite;
 use rugus_hal::SerialPort;
@@ -24,6 +22,8 @@ use rugus_hal_stm32f1::uart2::{Usart2, MODULE_BAUD};
 use rugus_hal_stm32f1::wdt::Watchdog;
 use rugus_runtime as _; // panic-probe + defmt-rtt
 use rugus_runtime::entry;
+use rush::Write;
+use rush::{execute, identify, parse};
 
 type Sched = Scheduler<CortexM>;
 
@@ -57,6 +57,7 @@ fn cli_task() -> ! {
 
     loop {
         cli_poll_line(&mut writer);
+        services::poll_identify_usart2();
         yield_cpu();
     }
 }
@@ -70,6 +71,13 @@ fn cli_poll_line(writer: &mut UartWriter) {
     };
 
     heartbeat::note(heartbeat::UART_RX);
+
+    // Fast-path: byte de control ENQ (0x05) → respuesta IDENTIFY inmediata.
+    if b == identify::ENQ {
+        identify::write_signature(writer, identify::TIER, identify::CHIP);
+        heartbeat::note(heartbeat::CLI_CMD);
+        return;
+    }
 
     unsafe {
         if b == b'\r' || b == b'\n' {
