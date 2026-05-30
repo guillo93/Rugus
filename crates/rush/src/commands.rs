@@ -91,8 +91,11 @@ pub enum Command {
     },
     /// `coil` → task_list
     Coil,
-    /// `anchor` → sys_failsafe
-    Anchor,
+    /// `anchor [off|release]` → sys_failsafe
+    Anchor {
+        /// 0=on, 1=off
+        action: u8,
+    },
     /// `ward [kick]` → wdt
     Ward {
         /// 0=status, 1=kick
@@ -147,7 +150,14 @@ pub fn parse(line: &str) -> Command {
         "nest" => Command::Nest,
         "hatch" => parse_hatch(trimmed),
         "coil" => Command::Coil,
-        "anchor" => Command::Anchor,
+        "anchor" => {
+            let action = match parts.next() {
+                Some("off") | Some("release") => 1,
+                Some(_) => return Command::Unknown,
+                None => 0,
+            };
+            Command::Anchor { action }
+        }
         "ward" => {
             let action = match parts.next() {
                 Some("kick") => 1,
@@ -310,7 +320,7 @@ pub fn execute(cmd: Command, line: &str, out: &mut dyn Write) {
             exec_hatch(out, name);
         }
         Command::Coil => exec_coil(out),
-        Command::Anchor => exec_anchor(out),
+        Command::Anchor { action } => exec_anchor(out, action),
         Command::Ward { action } => exec_ward(out, action),
         Command::Identify => identify::write_signature(out, identify::TIER, identify::CHIP),
         Command::Unknown => {
@@ -480,9 +490,13 @@ fn exec_coil(out: &mut dyn Write) {
     }
 }
 
-fn exec_anchor(out: &mut dyn Write) {
-    if user::sys_failsafe() == 0 {
-        let _ = out.write_str("anchor: fail-safe ACTIVE\r\n");
+fn exec_anchor(out: &mut dyn Write, action: u8) {
+    if user::sys_failsafe(action) == 0 {
+        let _ = out.write_str(if action == 0 {
+            "anchor: fail-safe ACTIVE\r\n"
+        } else {
+            "anchor: fail-safe OFF\r\n"
+        });
     } else {
         let _ = out.write_str("anchor: error\r\n");
     }

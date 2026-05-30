@@ -376,9 +376,14 @@ fn hook_app_reload(name: &[u8]) -> i32 {
     Errno::Einval as i32
 }
 
-fn hook_sys_failsafe() -> i32 {
-    FAILSAFE.store(true, Ordering::Relaxed);
-    let _ = gpio_raw::write(b'C', 13, true);
+fn hook_sys_failsafe(action: u8) -> i32 {
+    if action == 0 {
+        FAILSAFE.store(true, Ordering::Relaxed);
+        let _ = gpio_raw::write(b'C', 13, true);
+    } else {
+        FAILSAFE.store(false, Ordering::Relaxed);
+        let _ = gpio_raw::write(b'C', 13, false);
+    }
     0
 }
 
