@@ -11,6 +11,19 @@ SemVer estricto.
 
 ## [Unreleased]
 
+### Fixed (robustez)
+
+- **RX de la consola USART1 (F103) por interrupción + ring buffer (raíz)** — la
+  recepción era polled sobre el registro RX de 1 byte sin FIFO, así que en
+  ráfaga (a 115200 un byte llega cada ~87 µs y el scheduler cooperativo podía no
+  sondear a tiempo) se perdían bytes: comandos como `ward` solo veían `w`. Ahora
+  un ISR `USART1` (RXNEIE) drena cada byte a un ring buffer SPSC lock-free de
+  256 B; `try_read_byte` lo consume desde la tarea CLI. Se cuentan los descartes
+  (`rx_overruns`) por ring lleno u overrun HW. Validado en HW: ráfagas de
+  `ecosystem`/`orbit`/`ward` enviadas sin pacing eco-completas y ejecutan
+  correctamente. (USART2/HM-20 sigue polled; su tráfico AT es tolerante a
+  tiempos y se sondea fuera del scheduler.)
+
 ### Changed
 
 - **Layout de la MPU parametrizado por placa (`MpuLayout`)** — `mpu::init` y
