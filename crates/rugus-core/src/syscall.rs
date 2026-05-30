@@ -94,6 +94,27 @@ pub fn current_domain() -> crate::Domain {
 }
 
 /// Dispatch central invocado desde el SVC handler (arch backend).
+///
+/// # Contrato de validación de punteros (CRÍTICO para seguridad del kernel)
+///
+/// Los `args` provienen del frame de excepción de una tarea **potencialmente
+/// userland** y NO son de confianza. Cualquier syscall que en el futuro reciba
+/// un puntero/longitud en `args` (p. ej. `Log`, `IpcSend/Recv`, `NetSend/Recv`,
+/// `CryptoSign`, `RngFill`) DEBE, antes de desreferenciarlo:
+///
+/// 1. Validar que el rango `[ptr, ptr+len)` no se desborda (`checked_add`).
+/// 2. Comprobar que ese rango cae **completo** dentro de la región MPU de la
+///    tarea llamante (su stack App-RW), o de una región explícitamente
+///    compartida — nunca en RAM del kernel, periféricos ni flash.
+/// 3. Rechazar con [`Errno::Efault`] si la comprobación falla; jamás copiar a/de
+///    un puntero sin validar (TOCTOU: copiar a buffer del kernel y validar solo
+///    el puntero base no basta — validar el rango entero).
+///
+/// La frontera de confianza es ESTE punto: una vez que el SVC handler entra en
+/// modo privilegiado, el MPU ya no protege contra accesos del propio kernel, así
+/// que la validación es responsabilidad del dispatch, no del hardware. Las
+/// syscalls actuales (`YieldNow`, `TaskId`) no toman punteros, por eso aún no
+/// hay helper de validación; el primer syscall con puntero debe introducirlo.
 pub fn dispatch(id: Id, args: [u32; 4]) -> i32 {
     match id {
         Id::YieldNow => {

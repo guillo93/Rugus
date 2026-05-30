@@ -18,6 +18,11 @@ pub enum SpawnError {
     TooManyTasks,
     /// Stack demasiado pequeño (mínimo 256 bytes).
     StackTooSmall,
+    /// Stack userland no apto para la región MPU: la región App-RW de ARMv7-M
+    /// exige tamaño potencia de 2 (≥32 B) y base alineada a ese tamaño. Si no se
+    /// cumple, la región redondeada cubriría RAM del kernel adyacente → escape
+    /// del sandbox. Solo aplica a [`Scheduler::spawn_user`].
+    UnalignedUserStack,
 }
 
 /// Modo de ejecución de la tarea.
@@ -99,6 +104,18 @@ impl<A: Arch> Scheduler<A> {
         }
         if self.count >= MAX_TASKS {
             return Err(SpawnError::TooManyTasks);
+        }
+        // Invariante del sandbox: una tarea userland obtiene una región MPU
+        // dedicada (App-RW) sobre su stack. ARMv7-M exige que esa región sea
+        // potencia de 2 y esté alineada a su tamaño. Si el stack no lo cumple,
+        // el remapeo redondearía la región y cubriría RAM del kernel vecina,
+        // dando acceso de escritura fuera del sandbox. Se rechaza en origen.
+        if mode == TaskMode::User {
+            let base = stack.as_ptr() as u32;
+            let len = stack.len() as u32;
+            if len < 32 || !len.is_power_of_two() || base % len != 0 {
+                return Err(SpawnError::UnalignedUserStack);
+            }
         }
         let ctx = A::init_task_stack(stack, entry, mode == TaskMode::Privileged);
         let base = stack.as_ptr() as u32;
