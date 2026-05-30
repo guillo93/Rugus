@@ -915,7 +915,6 @@ name = "rugus-core"
 version = "0.1.0"
 dependencies = [
  "defmt 1.1.0",
- "heapless 0.9.3",
  "linked_list_allocator",
 ]
 
