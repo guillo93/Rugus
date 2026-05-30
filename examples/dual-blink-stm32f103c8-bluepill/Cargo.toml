@@ -21,5 +21,5 @@ defmt               = { workspace = true }
 rugus-runtime       = { workspace = true }
 rugus-hal           = { workspace = true }
 rugus-hal-stm32f1   = { workspace = true, features = ["stm32f103"] }
-rugus-core          = { workspace = true }
+rugus-core          = { workspace = true, features = ["alloc"] }
 rugus-arch-cortex-m = { workspace = true }
