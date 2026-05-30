@@ -13,6 +13,24 @@ SemVer estricto.
 
 ### Fixed
 
+- **Política de fault del kernel lite (raíz)** — en el appliance F103 el hook de
+  fault del kernel nunca se registraba (`set_fault_hook`) ni se habilitaban los
+  handlers dedicados (`enable_fault_handlers`), así que una tarea que faulteaba
+  caía en `fault_panic` → **panic global** que tumbaba todo el dispositivo, en
+  vez de matar solo la tarea culpable. Ahora `main` habilita los handlers
+  BusFault/UsageFault/HardFault y registra un hook que loguea el `FaultReport`
+  (kind/dominio/pc/task) y llama a `kill_current_and_resume`: la tarea faultante
+  muere y el scheduler reanuda la siguiente, manteniendo vivos heartbeat y
+  watchdog. Validado en HW: `UsageFault` inyectado en la tarea CLI → kill+resume
+  sin reset del dispositivo. También se registran los hooks de scheduler
+  (`current_task_id`/`current_domain`) para que el reporte de fault sea preciso.
+- **Código muerto en el TCB** — `Scheduler::kill_current_and_resume` tenía logs
+  bajo `#[cfg(feature = "log")]`, una feature inexistente en `rugus-core` → el
+  kill era silencioso. Eliminado; la observabilidad del fault vive en el hook de
+  la plataforma (capa app), manteniendo el TCB mínimo y agnóstico del transporte.
+- **Lint en `rugus-arch-cortex-m`** — `fault_panic` dejaba `kind/domain/pc` sin
+  usar al compilar sin la feature `defmt`, rompiendo `clippy -D warnings` en el
+  target M3. Corregido.
 - **HM-20 BLE en F103 (raíz)** — el init forzaba el módulo a 115200 con sintaxis
   AT incoherente (`AT+NAME=` con `=` vs `AT+BAUD4` sin `=`), dejando MCU y módulo
   en baudios distintos sobre un HSI de 8 MHz sin calibrar → enlace BLE mudo.

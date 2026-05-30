@@ -7,9 +7,10 @@
 mod heartbeat;
 mod services;
 
-use core::ptr::addr_of_mut;
+use core::ptr::{addr_of, addr_of_mut};
 
-use rugus_arch_cortex_m::CortexM;
+use rugus_arch_cortex_m::{enable_fault_handlers, set_fault_hook, CortexM};
+use rugus_core::fault::FaultReport;
 use rugus_core::sched::{Priority, Scheduler};
 use rugus_core::syscall::lite;
 use rugus_hal::SerialPort;
@@ -163,7 +164,19 @@ fn main() -> ! {
     services::init(&dp.RCC, i2c, sd, modules, wdt);
     kick_wdt();
 
+    // Failsafe del kernel: handlers de fault dedicados + hook que mata la tarea
+    // faultante (no panic global). En el Cortex-M3 del F103 no hay MPU, así que
+    // MemManage nunca dispara; BusFault/UsageFault/HardFault sí, y el hook los
+    // contiene matando solo la tarea culpable.
+    enable_fault_handlers(&mut cp.SCB);
     unsafe {
+        set_fault_hook(fault_hook);
+        // Reporte de fault preciso: task id y dominio desde el scheduler vivo.
+        rugus_core::syscall::register(rugus_core::syscall::Hooks {
+            yield_now: yield_cpu,
+            current_task_id: || (&*addr_of!(SCHEDULER)).current_id(),
+            current_domain: || (&*addr_of!(SCHEDULER)).current_domain(),
+        });
         lite::register(services::hooks());
         CONSOLE = Some(console);
         let iwdg = &*IWDG_PTR;
@@ -187,6 +200,23 @@ fn main() -> ! {
         defmt::info!("scheduler: cli + heartbeat tasks");
         sched.start();
     }
+}
+
+/// Política de fault del kernel lite: registra el fault, mata SOLO la tarea
+/// faultante y reanuda la siguiente lista. El appliance sobrevive (watchdog +
+/// heartbeat siguen vivos) en vez de tumbar todo el dispositivo con un panic
+/// global. Si no quedan tareas vivas, el scheduler hace WFI y el IWDG resetea.
+fn fault_hook(report: FaultReport) -> ! {
+    defmt::error!(
+        "task fault {} domain={} pc={=u32:#x} task={=u8} -> kill+resume",
+        report.kind.name(),
+        report.domain.name(),
+        report.pc,
+        report.task_id.0
+    );
+    // SAFETY: en contexto de fault (handler mode), single-threaded; el scheduler
+    // está activo y `current` es la tarea faultante.
+    unsafe { (&mut *addr_of_mut!(SCHEDULER)).kill_current_and_resume(report) }
 }
 
 fn yield_cpu() {

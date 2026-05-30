@@ -73,7 +73,10 @@ fn fault_panic(kind: FaultKind, domain: Domain, pc: u32) -> ! {
         pc
     );
     #[cfg(not(feature = "defmt"))]
-    core::panic!("rugus fault");
+    {
+        let _ = (kind, domain, pc);
+        core::panic!("rugus fault");
+    }
 }
 
 fn clear_fault_status(kind: FaultKind) {
