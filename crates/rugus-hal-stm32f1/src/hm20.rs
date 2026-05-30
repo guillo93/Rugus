@@ -44,13 +44,47 @@ pub enum InitResult {
 
 /// Envía `AT\r\n` y espera eco con `OK`/`ERROR` (poll no bloqueante).
 pub fn probe(uart: &mut Usart2) -> bool {
+    probe_with_kick(uart, || {})
+}
+
+fn probe_with_kick(uart: &mut Usart2, kick: fn()) -> bool {
     drain_rx(uart);
     let _ = uart.write(b"AT\r\n");
-    wait_ok(uart, 120_000)
+    wait_ok_with_kick(uart, 120_000, kick)
 }
 
 /// Baud de fábrica habitual en HM-10/HM-20 DSD Tech.
 const FACTORY_BAUD: u32 = 9600;
+
+/// Factory reset explícito: `AT+RENEW`, `AT+RESET`, luego [`init`].
+///
+/// `kick` se invoca en cada iteración de espera (p. ej. WDT del appliance).
+/// Destructivo: borra nombre/baud/PIN del módulo. Solo para recuperación en campo.
+pub fn factory_renew(uart: &mut Usart2, cfg: Hm20Config, kick: fn()) -> InitResult {
+    uart.set_baud(FACTORY_BAUD);
+    let mut at_ok = probe_with_kick(uart, kick);
+    if !at_ok {
+        uart.set_baud(DEFAULT_BAUD);
+        at_ok = probe_with_kick(uart, kick);
+    }
+    if !at_ok {
+        return InitResult::NoResponse;
+    }
+
+    if !send_at_with_kick(uart, b"AT+RENEW\r\n", 250_000, kick) {
+        return InitResult::AtError;
+    }
+    if !send_at_with_kick(uart, b"AT+RESET\r\n", 250_000, kick) {
+        return InitResult::AtError;
+    }
+
+    kick();
+    cortex_m::asm::delay(3_000_000);
+    kick();
+
+    uart.set_baud(FACTORY_BAUD);
+    init(uart, cfg)
+}
 
 /// Configura nombre y baud AT; prueba 9600 (fábrica) y luego 115200.
 pub fn init(uart: &mut Usart2, cfg: Hm20Config) -> InitResult {
@@ -116,16 +150,21 @@ fn set_baud(uart: &mut Usart2, baud: u32) -> bool {
 }
 
 fn send_at(uart: &mut Usart2, cmd: &[u8], delay_cycles: u32) -> bool {
-    drain_rx(uart);
-    let _ = uart.write(cmd);
-    wait_ok(uart, delay_cycles)
+    send_at_with_kick(uart, cmd, delay_cycles, || {})
 }
 
-fn wait_ok(uart: &mut Usart2, delay_cycles: u32) -> bool {
+fn send_at_with_kick(uart: &mut Usart2, cmd: &[u8], delay_cycles: u32, kick: fn()) -> bool {
+    drain_rx(uart);
+    let _ = uart.write(cmd);
+    wait_ok_with_kick(uart, delay_cycles, kick)
+}
+
+fn wait_ok_with_kick(uart: &mut Usart2, delay_cycles: u32, kick: fn()) -> bool {
     cortex_m::asm::delay(delay_cycles);
     let mut buf = [0u8; 32];
     let mut pos = 0usize;
     for _ in 0..4_000 {
+        kick();
         if let Some(b) = uart.try_read_byte() {
             if pos < buf.len() {
                 buf[pos] = b;

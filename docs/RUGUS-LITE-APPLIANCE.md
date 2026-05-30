@@ -78,6 +78,7 @@ handshake y el flujo de auto-detección en [`RUGUS-CLI-HOST.md`](RUGUS-CLI-HOST.
 | `scribe` | `config_set` | Escribir clave RFN staging |
 | `seal` | `config_commit` | Validar/persistir config |
 | `nest` | `module_list` | Listar módulos |
+| `nest renew` | `module_renew` | Factory reset HM-20 + re-init (destructivo) |
 | `hatch` | `app_reload` | Recargar `.afr` |
 | `coil` | `task_list` | Tareas del scheduler |
 | `anchor` | `sys_failsafe(0)` | Activar fail-safe |
@@ -179,6 +180,7 @@ Comandos útiles en consola USART1:
 
 ```text
 nest        → slot0: usart2 (hm20-ble)
+nest renew  → factory reset AT+RENEW/+RESET + re-init (solo si USART2 presente)
 sonar 0     → probe AT (respuesta del módulo; no bloquea ni resetea)
 ecosystem   → usart2: hm20-ready | hm20-at-warn | no-at-response | idle
 IDENTIFY    → firma RUGUS (también en USART2 para host BLE)
@@ -203,6 +205,29 @@ IDENTIFY    → firma RUGUS (también en USART2 para host BLE)
 | `ecosystem` → `hm20-at-warn` | Módulo responde AT pero falló nombre/baud | Revisar alimentación 3.3 V estable; `sonar 0` manual |
 | `sonar 0` resetea la placa | Bug corregido: lectura bloqueante sin kick WDT | Reflashear firmware actual |
 | BLE no anuncia **RUGUS** | Init falló o KEY sin 3.3 V | Tras fix: `ecosystem` debe mostrar `hm20-ready` |
+| BLE anuncia nombre ajeno (p. ej. **sopesa**) y `no-at-response` | Módulo usado en otro proyecto; baud/nombre viejos | Factory reset AT (ver abajo); desempareja BLE del teléfono |
+
+### Factory reset HM-10 / HM-20 (módulo usado en otro proyecto)
+
+Con **KEY a 3.3 V** y sin enlace BLE activo (desconecta el teléfono del módulo):
+
+```text
+AT+RENEW      → OK+RENEW   (restaura fábrica: nombre HMSoft, baud 9600, PIN 000000)
+AT+RESET      → OK+RESET   (reinicia; tras esto el UART vuelve a 9600)
+AT            → OK         (verificación)
+```
+
+**Bench (host):** script [`tools/provision-hm20.sh`](../tools/provision-hm20.sh)
+— prueba 9600/115200, `AT+RENEW`, `AT+RESET`, verifica `AT+NAME?` / `AT+BAUD?`.
+Opcional `--provision` fija `AT+NAME=RUGUS` y `AT+BAUD4` antes de flashear Rugus.
+Requiere `python3` + `pyserial` (igual que verify-appliance UART).
+
+**Campo (Rugus consola):** `nest renew` — mismo reset destructivo vía firmware
+(sin auto-renew al boot). Desempareja BLE del teléfono antes.
+
+Prueba AT con minicom directo al módulo (USB-TTL ↔ HM-20) si el script no aplica.
+Tras reset + reinicio/reflash del appliance, el driver `hm20` renombra a **RUGUS**
+y sube a 115200. El nombre BLE antiguo persiste hasta que `AT+NAME` tenga éxito.
 
 La mayoría de HM-10/HM-20 DSD salen de fábrica a **9600 baud**; el firmware
 detecta y sube a 115200 automáticamente. Solo si el init falla, reprograma con

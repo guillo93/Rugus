@@ -19,7 +19,7 @@ pub const LEXICON: &[(&str, &str)] = &[
     ("schema", "leer clave RFN — schema clave"),
     ("scribe", "escribir clave RFN — scribe clave valor"),
     ("seal", "validar/persistir config"),
-    ("nest", "listar módulos"),
+    ("nest", "listar módulos — nest | nest renew (factory reset HM-20)"),
     ("hatch", "recargar app — hatch nombre"),
     ("coil", "listar tareas del scheduler"),
     ("anchor", "modo fail-safe"),
