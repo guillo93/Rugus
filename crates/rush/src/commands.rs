@@ -356,6 +356,7 @@ fn exec_orbit(out: &mut dyn Write) {
     ansi::orbit_banner(out);
     let _ = out.write_str("cosmos orbit ecosystem moor pulso spark mute ripple\r\n");
     let _ = out.write_str("scout sonar schema scribe seal nest hatch coil anchor ward\r\n");
+    let _ = out.write_str("anchor — fail-safe ON | anchor off|release — fail-safe OFF\r\n");
 }
 
 fn exec_pulso(out: &mut dyn Write, port: u8, pin: u8) {
