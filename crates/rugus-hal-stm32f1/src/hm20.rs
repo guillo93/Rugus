@@ -4,6 +4,7 @@
 //! 3.3 V y GND. El módulo hace de puente serie↔BLE; el firmware habla AT por
 //! USART2 antes de pasar a modo transparente.
 
+use crate::uart2::Usart2;
 use rugus_hal::SerialPort;
 
 /// Nombre BLE anunciado por defecto en el appliance Rugus.
@@ -41,15 +42,15 @@ pub enum InitResult {
     AtError,
 }
 
-/// Envía `AT\r\n` y espera eco con `OK`/`ERROR` (no bloqueante prolongado).
-pub fn probe(uart: &mut impl SerialPort) -> bool {
+/// Envía `AT\r\n` y espera eco con `OK`/`ERROR` (poll no bloqueante).
+pub fn probe(uart: &mut Usart2) -> bool {
     drain_rx(uart);
     let _ = uart.write(b"AT\r\n");
     wait_ok(uart, 120_000)
 }
 
 /// Configura nombre y baud AT; tolera módulos ya en 115200.
-pub fn init(uart: &mut impl SerialPort, cfg: Hm20Config) -> InitResult {
+pub fn init(uart: &mut Usart2, cfg: Hm20Config) -> InitResult {
     if !probe(uart) {
         return InitResult::NoResponse;
     }
@@ -68,7 +69,7 @@ pub fn init(uart: &mut impl SerialPort, cfg: Hm20Config) -> InitResult {
     InitResult::Ready
 }
 
-fn set_name(uart: &mut impl SerialPort, name: &str) -> bool {
+fn set_name(uart: &mut Usart2, name: &str) -> bool {
     let prefix = b"AT+NAME=";
     let suffix = b"\r\n";
     let name_bytes = name.as_bytes();
@@ -83,7 +84,7 @@ fn set_name(uart: &mut impl SerialPort, name: &str) -> bool {
     send_at(uart, &cmd[..len], 100_000)
 }
 
-fn set_baud(uart: &mut impl SerialPort, baud: u32) -> bool {
+fn set_baud(uart: &mut Usart2, baud: u32) -> bool {
     let code = match baud {
         9600 => b'1',
         115_200 => b'4',
@@ -95,21 +96,20 @@ fn set_baud(uart: &mut impl SerialPort, baud: u32) -> bool {
     send_at(uart, &cmd, 100_000)
 }
 
-fn send_at(uart: &mut impl SerialPort, cmd: &[u8], delay_cycles: u32) -> bool {
+fn send_at(uart: &mut Usart2, cmd: &[u8], delay_cycles: u32) -> bool {
     drain_rx(uart);
     let _ = uart.write(cmd);
     wait_ok(uart, delay_cycles)
 }
 
-fn wait_ok(uart: &mut impl SerialPort, delay_cycles: u32) -> bool {
+fn wait_ok(uart: &mut Usart2, delay_cycles: u32) -> bool {
     cortex_m::asm::delay(delay_cycles);
     let mut buf = [0u8; 32];
     let mut pos = 0usize;
-    for _ in 0..64 {
-        let mut b = [0u8; 1];
-        if uart.read(&mut b).ok() == Some(1) {
+    for _ in 0..4_000 {
+        if let Some(b) = uart.try_read_byte() {
             if pos < buf.len() {
-                buf[pos] = b[0];
+                buf[pos] = b;
                 pos += 1;
             }
             if window_has_ok(&buf[..pos]) {
@@ -119,7 +119,7 @@ fn wait_ok(uart: &mut impl SerialPort, delay_cycles: u32) -> bool {
                 return false;
             }
         } else {
-            cortex_m::asm::delay(2_000);
+            cortex_m::asm::delay(500);
         }
     }
     window_has_ok(&buf[..pos])
@@ -133,11 +133,6 @@ fn window_has_error(buf: &[u8]) -> bool {
     buf.windows(5).any(|w| w == b"ERROR")
 }
 
-fn drain_rx(uart: &mut impl SerialPort) {
-    let mut b = [0u8; 1];
-    for _ in 0..32 {
-        if uart.read(&mut b).ok() != Some(1) {
-            break;
-        }
-    }
+fn drain_rx(uart: &mut Usart2) {
+    while uart.try_read_byte().is_some() {}
 }
