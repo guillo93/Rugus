@@ -1,10 +1,80 @@
 //! USART1 — PA9 TX, PA10 RX @ 115200 (consola de la shell `rush`).
+//!
+//! La recepción es por interrupción (RXNE) hacia un ring buffer SPSC: el ISR
+//! `USART1` es el único productor y la tarea CLI el único consumidor. El RX
+//! polled de 1 byte sin FIFO perdía bytes en ráfaga (a 115200 un byte llega
+//! cada ~87 µs y el scheduler cooperativo podía no sondear a tiempo); el ring
+//! desacopla la llegada del consumo y absorbe la ráfaga.
+
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::pac;
+use pac::interrupt;
 use rugus_hal::SerialPort;
 
 /// Baud rate por defecto de la consola `rush`.
 pub const CLI_BAUD: u32 = 115_200;
+
+/// Capacidad del ring RX (potencia de 2 para el índice módulo barato).
+const RX_BUF_LEN: usize = 256;
+static mut RX_BUF: [u8; RX_BUF_LEN] = [0; RX_BUF_LEN];
+/// Índice de escritura (solo ISR productor).
+static RX_HEAD: AtomicUsize = AtomicUsize::new(0);
+/// Índice de lectura (solo tarea consumidora).
+static RX_TAIL: AtomicUsize = AtomicUsize::new(0);
+/// Bytes descartados por ring lleno / overrun HW (diagnóstico).
+static RX_OVERRUNS: AtomicUsize = AtomicUsize::new(0);
+
+/// Empuja un byte al ring (productor único: ISR USART1).
+fn rx_push(b: u8) {
+    let head = RX_HEAD.load(Ordering::Relaxed);
+    let next = (head + 1) % RX_BUF_LEN;
+    // Ring lleno: descarta el byte nuevo y cuenta el overrun (no se pisa al
+    // consumidor). Preferible perder el más reciente a corromper el índice.
+    if next == RX_TAIL.load(Ordering::Acquire) {
+        RX_OVERRUNS.fetch_add(1, Ordering::Relaxed);
+        return;
+    }
+    // SAFETY: `head` < RX_BUF_LEN y el ISR es el único escritor de RX_BUF/RX_HEAD.
+    unsafe {
+        (*core::ptr::addr_of_mut!(RX_BUF))[head] = b;
+    }
+    RX_HEAD.store(next, Ordering::Release);
+}
+
+/// Saca un byte del ring (consumidor único: tarea CLI).
+fn rx_pop() -> Option<u8> {
+    let tail = RX_TAIL.load(Ordering::Relaxed);
+    if tail == RX_HEAD.load(Ordering::Acquire) {
+        return None;
+    }
+    // SAFETY: `tail` < RX_BUF_LEN y la tarea es la única lectora de RX_TAIL.
+    let b = unsafe { (*core::ptr::addr_of!(RX_BUF))[tail] };
+    RX_TAIL.store((tail + 1) % RX_BUF_LEN, Ordering::Release);
+    Some(b)
+}
+
+/// Total de bytes RX descartados desde el arranque (ring lleno u overrun HW).
+pub fn rx_overruns() -> usize {
+    RX_OVERRUNS.load(Ordering::Relaxed)
+}
+
+/// ISR de USART1: drena DR a ring en cada RXNE; leer DR limpia RXNE y ORE.
+#[interrupt]
+fn USART1() {
+    // SAFETY: handler exclusivo de USART1; solo lee SR/DR del periférico.
+    let usart = unsafe { &*pac::USART1::ptr() };
+    let sr = usart.sr.read();
+    if sr.ore().bit() {
+        // Overrun HW: el dato previo se perdió en el shift register. Leer DR
+        // limpia ORE; contamos el byte perdido.
+        RX_OVERRUNS.fetch_add(1, Ordering::Relaxed);
+    }
+    if sr.rxne().bit() || sr.ore().bit() {
+        let b = usart.dr.read().dr().bits() as u8;
+        rx_push(b);
+    }
+}
 
 /// Error de UART (infallible en operaciones bloqueantes actuales).
 pub type UartError = core::convert::Infallible;
@@ -16,20 +86,23 @@ pub struct Usart1 {
 
 impl Usart1 {
     /// Inicializa USART1: PA9 TX, PA10 RX, 8N1 @ `baud` con `pclk2` Hz.
+    /// Habilita RX por interrupción hacia el ring buffer SPSC.
     pub fn new(rcc: &pac::RCC, usart: pac::USART1, pclk2: u32, baud: u32) -> Self {
         enable_clocks(rcc);
         configure_pins();
         configure_usart(&usart, pclk2, baud);
+        // RXNEIE: cada byte recibido genera IRQ que lo drena al ring.
+        usart.cr1.modify(|_, w| w.rxneie().set_bit());
+        // SAFETY: única habilitación del vector USART1; el handler está definido.
+        unsafe {
+            cortex_m::peripheral::NVIC::unmask(pac::Interrupt::USART1);
+        }
         Self { usart }
     }
 
-    /// Lee byte si RXNE; no bloquea.
+    /// Saca el siguiente byte recibido del ring; no bloquea.
     pub fn try_read_byte(&mut self) -> Option<u8> {
-        if self.usart.sr.read().rxne().bit() {
-            Some(self.read_byte())
-        } else {
-            None
-        }
+        rx_pop()
     }
 
     /// Escribe un byte (polling TXE).
@@ -39,10 +112,13 @@ impl Usart1 {
         self.usart.dr.write(|w| w.dr().bits(u16::from(b)));
     }
 
-    /// Lee un byte (polling RXNE). Bloquea hasta recibir.
+    /// Lee un byte del ring; bloquea (spin) hasta que haya uno.
     pub fn read_byte(&mut self) -> u8 {
-        while !self.usart.sr.read().rxne().bit() {}
-        self.usart.dr.read().dr().bits() as u8
+        loop {
+            if let Some(b) = rx_pop() {
+                return b;
+            }
+        }
     }
 }
 
