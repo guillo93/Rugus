@@ -11,6 +11,20 @@ SemVer estricto.
 
 ## [Unreleased]
 
+### Fixed
+
+- **HM-20 BLE en F103 (raíz)** — el init forzaba el módulo a 115200 con sintaxis
+  AT incoherente (`AT+NAME=` con `=` vs `AT+BAUD4` sin `=`), dejando MCU y módulo
+  en baudios distintos sobre un HSI de 8 MHz sin calibrar → enlace BLE mudo.
+  Ahora `hm20::init` **adopta el baud nativo del módulo** (9600 fábrica, error
+  <0.1 % desde HSI), nombre/`NOTI1` son best-effort, y el sondeo de arranque
+  alimenta el watchdog (`init_with_kick`). Eliminada la ruta de cambio de baud y
+  el `set_baud` huérfano.
+- **Sintaxis AT del HM-20** — corregida contra el datasheet oficial: los comandos
+  van **sin terminador `\r\n`** y el nombre **sin `=`** (`AT+NAMERUGUS`, no
+  `AT+NAME=...\r\n`); el código de baud 115200 es `AT+BAUD7` (no `AT+BAUD4`).
+  Afecta driver `hm20`, `sonar`/lectura de módulo y `tools/provision-hm20.sh`.
+
 ## [0.7.0] — 2026-05-30 — Rugus lite appliance + rush + eco HM-20
 
 Release del tier **lite** como appliance completo: shell `rush`, cliente host

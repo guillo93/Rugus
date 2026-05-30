@@ -10,8 +10,14 @@ use rugus_hal::SerialPort;
 /// Nombre BLE anunciado por defecto en el appliance Rugus.
 pub const DEFAULT_NAME: &str = "RUGUS";
 
-/// Baud del bus USART2 (debe coincidir con `AT+BAUD` del módulo).
-pub const DEFAULT_BAUD: u32 = 115_200;
+/// Baud de fábrica del HM-20 DSD Tech. El firmware ADOPTA el baud actual del
+/// módulo durante el sondeo en vez de forzarlo: 9600 desde el HSI de 8 MHz del
+/// F103 tiene <0.1 % de error (vs +0.64 % a 115200 sobre un HSI sin calibrar),
+/// y elimina el modo de fallo "MCU y módulo en baudios distintos" que deja el
+/// BLE sin enlace. La provisión a otra velocidad se hace en banco con
+/// `tools/provision-hm20.sh`; aquí solo nos sincronizamos a lo que el módulo ya
+/// usa.
+pub const DEFAULT_BAUD: u32 = 9600;
 
 /// Configuración mínima para inicializar un HM-10/HM-20.
 #[derive(Clone, Copy, Debug)]
@@ -42,16 +48,17 @@ pub enum InitResult {
     AtError,
 }
 
-/// Envía `AT\r\n` y espera eco con `OK`/`ERROR` (poll no bloqueante).
+/// Envía `AT` (sin `\r\n`, según datasheet HM-20) y espera `OK` (poll no
+/// bloqueante).
 pub fn probe(uart: &mut Usart2) -> bool {
     probe_with_kick(uart, || {})
 }
 
 fn probe_with_kick(uart: &mut Usart2, kick: fn()) -> bool {
     drain_rx(uart);
-    let _ = uart.write(b"AT\r\n");
+    let _ = uart.write(b"AT");
     let _ = uart.flush();
-    wait_ok_with_kick(uart, 120_000, kick)
+    wait_ok_with_kick(uart, kick)
 }
 
 /// Baud de fábrica habitual en HM-10/HM-20 DSD Tech.
@@ -79,10 +86,10 @@ pub fn factory_renew(uart: &mut Usart2, cfg: Hm20Config, kick: fn()) -> InitResu
         return InitResult::NoResponse;
     }
 
-    if !send_at_with_kick(uart, b"AT+RENEW\r\n", 250_000, kick) {
+    if !send_at_with_kick(uart, b"AT+RENEW", kick) {
         return InitResult::AtError;
     }
-    if !send_at_with_kick(uart, b"AT+RESET\r\n", 250_000, kick) {
+    if !send_at_with_kick(uart, b"AT+RESET", kick) {
         return InitResult::AtError;
     }
 
@@ -94,76 +101,67 @@ pub fn factory_renew(uart: &mut Usart2, cfg: Hm20Config, kick: fn()) -> InitResu
     init(uart, cfg)
 }
 
-/// Configura nombre y baud AT; prueba 9600, 57600 y 115200.
+/// Inicializa el módulo adoptando su baud actual (prueba 9600, 57600 y 115200).
+///
+/// No fuerza un cambio de baud: tras el sondeo el USART2 queda sincronizado a la
+/// velocidad real del módulo, que es la que usará el puente BLE transparente.
+/// Esto elimina la condición de carrera/desajuste de baudios que dejaba el
+/// enlace mudo. Nombre y `AT+NOTI1` son best-effort: si el `AT` respondió, el
+/// enlace de datos ya sirve y devolvemos `Ready` aunque el setter cosmético
+/// falle por dialecto de firmware.
 pub fn init(uart: &mut Usart2, cfg: Hm20Config) -> InitResult {
-    let Some(found) = probe_bauds(uart, || {}) else {
-        return InitResult::NoResponse;
-    };
-    finish_init(uart, cfg, found != cfg.baud)
+    init_with_kick(uart, cfg, || {})
 }
 
-fn finish_init(uart: &mut Usart2, cfg: Hm20Config, upgrade_baud: bool) -> InitResult {
-    if !set_name(uart, cfg.name) {
-        return InitResult::AtError;
+/// Igual que [`init`] pero invoca `kick` en cada espera (alimenta el watchdog
+/// durante el sondeo de arranque, que puede tardar ~1 s si el módulo está a un
+/// baud distinto al primero probado).
+pub fn init_with_kick(uart: &mut Usart2, cfg: Hm20Config, kick: fn()) -> InitResult {
+    if probe_bauds(uart, kick).is_none() {
+        // Dejar el bus en el baud de fábrica para que `sonar`/`nest renew`
+        // manuales hablen a 9600 en vez de quedar en el último baud probado.
+        uart.set_baud(FACTORY_BAUD);
+        return InitResult::NoResponse;
     }
 
-    if upgrade_baud {
-        if !set_baud(uart, cfg.baud) {
-            return InitResult::AtError;
-        }
-        uart.set_baud(cfg.baud);
-        if !probe(uart) {
-            return InitResult::AtError;
-        }
-    }
-
-    // Notificaciones de enlace BLE (opcional, ignora error).
-    let _ = send_at(uart, b"AT+NOTI1\r\n", 80_000);
+    // Best-effort: el enlace transparente funciona aunque estos fallen.
+    let _ = set_name(uart, cfg.name);
+    let _ = send_at_with_kick(uart, b"AT+NOTI1", kick);
 
     InitResult::Ready
 }
 
 fn set_name(uart: &mut Usart2, name: &str) -> bool {
-    let prefix = b"AT+NAME=";
-    let suffix = b"\r\n";
+    // Datasheet HM-20: `AT+NAMEname` (sin `=`, sin `\r\n`) → `OK+Set:name`.
+    // Nombre máx. 18 chars; el módulo lo trunca si excede.
+    let prefix = b"AT+NAME";
     let name_bytes = name.as_bytes();
     let mut cmd = [0u8; 32];
-    let len = prefix.len() + name_bytes.len() + suffix.len();
+    let len = prefix.len() + name_bytes.len();
     if len > cmd.len() {
         return false;
     }
     cmd[..prefix.len()].copy_from_slice(prefix);
-    cmd[prefix.len()..prefix.len() + name_bytes.len()].copy_from_slice(name_bytes);
-    cmd[prefix.len() + name_bytes.len()..len].copy_from_slice(suffix);
-    send_at(uart, &cmd[..len], 100_000)
+    cmd[prefix.len()..len].copy_from_slice(name_bytes);
+    send_at(uart, &cmd[..len])
 }
 
-fn set_baud(uart: &mut Usart2, baud: u32) -> bool {
-    // HM-10/HM-20 DSD: AT+BAUD0→9600, AT+BAUD3→57600, AT+BAUD4→115200 (sin '=').
-    let code = match baud {
-        9600 => b'0',
-        57_600 => b'3',
-        115_200 => b'4',
-        _ => return false,
-    };
-    // DSD HM-10/HM-20: AT+BAUD4 (sin '='); ver datasheet AT+BAUD[P].
-    let cmd = [b'A', b'T', b'+', b'B', b'A', b'U', b'D', code, b'\r', b'\n'];
-    send_at(uart, &cmd, 100_000)
+fn send_at(uart: &mut Usart2, cmd: &[u8]) -> bool {
+    send_at_with_kick(uart, cmd, || {})
 }
 
-fn send_at(uart: &mut Usart2, cmd: &[u8], delay_cycles: u32) -> bool {
-    send_at_with_kick(uart, cmd, delay_cycles, || {})
-}
-
-fn send_at_with_kick(uart: &mut Usart2, cmd: &[u8], delay_cycles: u32, kick: fn()) -> bool {
+fn send_at_with_kick(uart: &mut Usart2, cmd: &[u8], kick: fn()) -> bool {
     drain_rx(uart);
     let _ = uart.write(cmd);
     let _ = uart.flush();
-    wait_ok_with_kick(uart, delay_cycles, kick)
+    wait_ok_with_kick(uart, kick)
 }
 
-fn wait_ok_with_kick(uart: &mut Usart2, delay_cycles: u32, kick: fn()) -> bool {
-    cortex_m::asm::delay(delay_cycles);
+fn wait_ok_with_kick(uart: &mut Usart2, kick: fn()) -> bool {
+    // Sin retardo de bloqueo previo: sondear desde ya. El registro RX del F103
+    // es de 1 byte; un `delay` aquí desborda la respuesta `OK\r\n` antes de
+    // leerla. La ventana total del bucle (~250 ms) cubre de sobra la latencia
+    // AT del HM-20.
     let mut buf = [0u8; 32];
     let mut pos = 0usize;
     for _ in 0..4_000 {

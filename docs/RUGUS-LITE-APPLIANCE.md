@@ -20,7 +20,7 @@ Complementa [`RUGUS-KERNEL-VISION.md`](RUGUS-KERNEL-VISION.md) y
 | Función | Periférico | Pines | Notas |
 |---------|------------|-------|-------|
 | `rush` (shell) | USART1 | PA9 TX, PA10 RX | Consola principal 115200 8N1 |
-| Módulos (LoRa, HM-10/HM-20 BLE) | USART2 | PA2 TX, PA3 RX | Bus serie 115200 8N1 (IDENTIFY) |
+| Módulos (LoRa, HM-10/HM-20 BLE) | USART2 | PA2 TX, PA3 RX | Bus serie 8N1, baud adoptado del módulo (9600 fábrica HM-20) — IDENTIFY |
 | Tarjeta SD | SPI1 | PA4 NSS, PA5 SCK, PA6 MISO, PA7 MOSI | Config `.rfn` / apps `.afr` |
 | Sensores | I2C1 | PB6 SCL, PB7 SDA | Escaneo `scout` |
 | LED onboard | GPIO | PC13 | Heartbeat consciente de actividad + GPIO CLI |
@@ -171,10 +171,14 @@ Adaptador DSD Tech HM-10 o HM-20 (UART transparente BLE):
 | GND       | GND          |
 | 3.3 V     | KEY (modo AT; sin KEY el módulo no responde AT) |
 
-El firmware inicializa el módulo al boot con `rugus-hal-stm32f1::hm20`: prueba
-**9600 baud** (fábrica DSD Tech) y, si responde, configura `AT+NAME=RUGUS` y
-`AT+BAUD4` (115200). Si ya está a 115200, solo renombra. Descriptor de
-capacidad: [`examples/eco/hm20-ble.eco`](../examples/eco/hm20-ble.eco).
+El firmware inicializa el módulo al boot con `rugus-hal-stm32f1::hm20`: sondea
+9600/57600/115200 y **adopta el baud al que el módulo responde** (sin forzar
+cambio), luego intenta `AT+NAMERUGUS` y `AT+NOTI1` (best-effort: si el `AT`
+respondió, el enlace transparente ya sirve). No se fuerza 115200 porque el HSI
+de 8 MHz del F103 genera 9600 con error <0.1 % y elimina el desajuste de
+baudios MCU↔módulo que dejaba el BLE mudo. Para fijar otro baud/nombre de forma
+persistente, usar `tools/provision-hm20.sh` en banco. Descriptor de capacidad:
+[`examples/eco/hm20-ble.eco`](../examples/eco/hm20-ble.eco).
 
 Comandos útiles en consola USART1:
 
@@ -219,7 +223,8 @@ AT            → OK         (verificación)
 
 **Bench (host):** script [`tools/provision-hm20.sh`](../tools/provision-hm20.sh)
 — prueba 9600/115200, `AT+RENEW`, `AT+RESET`, verifica `AT+NAME?` / `AT+BAUD?`.
-Opcional `--provision` fija `AT+NAME=RUGUS` y `AT+BAUD4` antes de flashear Rugus.
+Opcional `--provision` fija `AT+NAMERUGUS` y `AT+BAUD7` (115200) antes de flashear Rugus.
+Comandos AT del HM-20 van **sin `=` y sin `\r\n`** (ver datasheet).
 Requiere `python3` + `pyserial` (igual que verify-appliance UART).
 
 **Campo (Rugus consola):** `nest renew` — mismo reset destructivo vía firmware
@@ -227,11 +232,15 @@ Requiere `python3` + `pyserial` (igual que verify-appliance UART).
 
 Prueba AT con minicom directo al módulo (USB-TTL ↔ HM-20) si el script no aplica.
 Tras reset + reinicio/reflash del appliance, el driver `hm20` renombra a **RUGUS**
-y sube a 115200. El nombre BLE antiguo persiste hasta que `AT+NAME` tenga éxito.
+(`AT+NAMERUGUS`) y adopta el baud actual del módulo. El nombre BLE antiguo
+persiste hasta que `AT+NAME` tenga éxito.
 
-La mayoría de HM-10/HM-20 DSD salen de fábrica a **9600 baud**; el firmware
-detecta y sube a 115200 automáticamente. Solo si el init falla, reprograma con
-terminal AT directo (`AT+BAUD4` → 115200) o revisa KEY/cableado.
+Los HM-10/HM-20 DSD salen de fábrica a **9600 baud** (`AT+BAUD?` → `3`); el
+firmware se sincroniza a ese baud sin forzar cambio. Para fijar 115200 de forma
+persistente usa `AT+BAUD7` en terminal AT o `provision-hm20.sh --provision`.
+Recuerda: los comandos AT del HM-20 van **sin `=` y sin `\r\n`**, solo en TTL
+3.3 V (un adaptador RS-232 daña el módulo) y solo cuando NO hay conexión BLE
+activa.
 
 ## Crates nuevos
 

@@ -25,7 +25,7 @@ pub enum Id {
     AppReload = 0x5D,
     SysFailsafe = 0x5E,
     Wdt = 0x5F,
-    /// Factory reset HM-20 + re-init (`nest renew`).
+    /// Factory reset del módulo del slot + re-init (`nest renew`).
     ModuleRenew = 0x60,
 }
 
@@ -100,7 +100,8 @@ pub struct Hooks {
     pub sys_failsafe: fn(action: u8) -> i32,
     /// Watchdog status/kick (`ward`). action: 0=status, 1=kick.
     pub wdt: fn(action: u8) -> i32,
-    /// Factory reset HM-20 en USART2 y re-init (`nest renew`).
+    /// Factory reset del módulo del slot y re-init (`nest renew`). El driver
+    /// concreto (proveedor, bus) lo resuelve la capa de servicio, no el kernel.
     pub module_renew: fn() -> i32,
 }
 
@@ -356,7 +357,7 @@ pub mod user {
         dispatch(Id::Wdt, [action as u32, 0, 0, 0])
     }
 
-    /// Factory reset HM-20 (`nest renew`).
+    /// Factory reset del módulo del slot (`nest renew`).
     pub fn module_renew() -> i32 {
         dispatch(Id::ModuleRenew, [0; 4])
     }

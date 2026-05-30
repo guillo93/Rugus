@@ -132,7 +132,7 @@ pub fn init(rcc: &pac::RCC, i2c: I2c1, sd: Spi1Sd, modules: Usart2, wdt: Watchdo
             }
         }
         if let Some(u) = MODULES.as_mut() {
-            match hm20::init(u, Hm20Config::default()) {
+            match hm20::init_with_kick(u, Hm20Config::default(), kick_wdt) {
                 InitResult::Ready => {
                     MODULE_ECO = Some("hm20-ble");
                     MODULE_STATUS = ModuleStatus::Hm20Ready;
@@ -390,7 +390,7 @@ fn hook_module_read(slot: u8, out: &mut [u8]) -> i32 {
     }
     unsafe {
         if let Some(u) = MODULES.as_mut() {
-            let _ = u.write(b"AT\r\n");
+            let _ = u.write(b"AT");
             let mut pos = 0;
             for _ in 0..500 {
                 kick_wdt();
