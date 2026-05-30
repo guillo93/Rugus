@@ -11,6 +11,18 @@ SemVer estricto.
 
 ## [Unreleased]
 
+### Changed
+
+- **Layout de la MPU parametrizado por placa (`MpuLayout`)** — `mpu::init` y
+  `platform_init` tenían el mapa de memoria del STM32F769 hardcodeado (SDRAM
+  16 M, SRAM 512 K, flash 2 M), de modo que el ejemplo del F407 programaba
+  regiones MPU con bases/tamaños de otra placa (SDRAM externa inexistente, RAM
+  sobredimensionada). Ahora `platform_init(cp, &MpuLayout)` recibe el mapa de la
+  placa; se proveen `MpuLayout::STM32F769` y `MpuLayout::STM32F407` (este último
+  sin región SDRAM y con flash 1 M). La región SDRAM se deshabilita cuando
+  `sdram_size == 0`. El F103 (sin MPU) no usa esta ruta. Build+clippy limpios en
+  F407/F769; validación en HW pendiente de placa F4/F7 conectada.
+
 ### Security
 
 - **Invariante del sandbox MPU forzada en el spawn (raíz)** — `spawn_user` no

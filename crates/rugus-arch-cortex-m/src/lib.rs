@@ -15,7 +15,9 @@ mod switch;
 
 pub use exceptions::enable_fault_handlers;
 pub use fault::set_fault_hook;
-pub use mpu::{init as mpu_init, layout as mpu_layout, region as mpu_region, remap_app_stack};
+pub use mpu::{
+    init as mpu_init, layout as mpu_layout, region as mpu_region, remap_app_stack, MpuLayout,
+};
 
 use rugus_core::arch::{Arch, CriticalGuard};
 use rugus_core::sched::TaskMode;
@@ -102,8 +104,9 @@ impl Arch for CortexM {
     }
 }
 
-/// Inicializa MPU + fault handlers. Llamar desde `main` antes del scheduler.
-pub fn platform_init(cp: &mut cortex_m::Peripherals) {
-    mpu::init(&mut cp.MPU);
+/// Inicializa MPU + fault handlers para la placa dada. Llamar desde `main`
+/// antes del scheduler. Cada placa con MPU pasa su [`MpuLayout`].
+pub fn platform_init(cp: &mut cortex_m::Peripherals, layout: &MpuLayout) {
+    mpu::init(&mut cp.MPU, layout);
     enable_fault_handlers(&mut cp.SCB);
 }
