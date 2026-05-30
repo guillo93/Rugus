@@ -8,17 +8,37 @@ license     = "MIT OR Apache-2.0"
 authors     = ["Luis Guillermo Hernandez <luiguihez93@gmail.com>"]
 repository  = "https://github.com/guillo93/Rugus"
 
+# El binario se invoca como `rugus` (la palabra que pidió el usuario).
 [[bin]]
-name = "rugus-cli"
+name = "rugus"
 path = "src/main.rs"
 
 [dependencies]
 anyhow = "1.0.102"
-btleplug = "0.12.0"
 crossterm = "0.29.0"
-futures = "0.3.32"
 ratatui = "0.29.0"
 rugus-proto = { path = "../rugus-proto" }
-serialport = "4.9.0"
-tokio = { version = "1.52.3", features = ["rt-multi-thread", "macros", "time", "sync"] }
-uuid = "1.20.0"
+# `default-features = false` evita `libudev-sys` (requiere libudev-dev/systemd-devel
+# en Linux). La enumeración de puertos sigue funcionando vía /sys; solo se pierde
+# metadata extra de USB (fabricante/serie) que no necesitamos para abrir por nombre.
+serialport = { version = "4.9.0", default-features = false }
+# El transporte serie usa `tokio::sync::mpsc` (sin runtime async); por eso solo
+# la feature `sync` en el build por defecto.
+tokio = { version = "1.52.3", features = ["sync"] }
+
+# BLE opcional: `btleplug` arrastra `libdbus-sys` (requiere `libdbus-1-dev` /
+# `dbus-devel` en Linux). Off por defecto para que el build de serie compile sin
+# dependencias de sistema. Actívalo con `--features ble`.
+btleplug = { version = "0.12.0", optional = true }
+futures = { version = "0.3.32", optional = true }
+
+[features]
+default = []
+ble = [
+    "dep:btleplug",
+    "dep:futures",
+    "tokio/rt",
+    "tokio/rt-multi-thread",
+    "tokio/macros",
+    "tokio/time",
+]

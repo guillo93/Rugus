@@ -82,10 +82,12 @@ impl std::error::Error for SignatureError {}
 ///
 /// Rechaza cualquier línea que no empiece por `RUGUS;`.
 pub fn parse_signature(line: &str) -> Result<Signature, SignatureError> {
-    let line = line.trim();
-    if !line.starts_with(SIGNATURE_PREFIX) {
-        return Err(SignatureError::NotRugus);
-    }
+    // La shell embebida (`rush`) hace eco de los bytes recibidos, así que la
+    // respuesta puede llegar precedida por el texto del propio request sin salto
+    // de línea, p. ej. `IDENTIFYRUGUS;tier=...`. Localizamos el prefijo en
+    // cualquier posición en vez de exigirlo al inicio, descartando el eco previo.
+    let start = line.find(SIGNATURE_PREFIX).ok_or(SignatureError::NotRugus)?;
+    let line = line[start..].trim();
 
     // Campos separados por `;`. El primer token es el prefijo `RUGUS`.
     let mut fields: BTreeMap<String, String> = BTreeMap::new();
@@ -145,6 +147,16 @@ mod tests {
                 .unwrap();
         assert_eq!(sig.chip, "f103");
         assert_eq!(sig.shell, "rush");
+    }
+
+    #[test]
+    fn tolerates_shell_echo_prefix() {
+        // `rush` hace eco del request antes de la firma, sin salto de línea.
+        let sig =
+            parse_signature("IDENTIFYRUGUS;tier=lite;chip=f103;proto=1;shell=rush;cli=1.0.0\r\n")
+                .unwrap();
+        assert_eq!(sig.chip, "f103");
+        assert_eq!(sig.cli, "1.0.0");
     }
 
     #[test]

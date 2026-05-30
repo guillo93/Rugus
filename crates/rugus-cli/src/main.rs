@@ -3,6 +3,10 @@
 //! Auto-detecta dispositivos por serie y BLE usando el protocolo `IDENTIFY`
 //! (crate `rugus-proto`), conecta y los maneja desde una TUI (ratatui).
 
+#[cfg(feature = "ble")]
+mod ble;
+#[cfg(not(feature = "ble"))]
+#[path = "ble_stub.rs"]
 mod ble;
 mod detect;
 mod device;
@@ -36,7 +40,8 @@ fn main() -> Result<()> {
 
     let opts = Options {
         serial: !args.no_serial,
-        ble: !args.no_ble,
+        // BLE solo si el binario se compiló con `--features ble`.
+        ble: cfg!(feature = "ble") && !args.no_ble,
     };
 
     eprintln!(
@@ -115,18 +120,24 @@ fn print_devices(candidates: &[Candidate]) {
 }
 
 fn print_help() {
+    let ble_state = if cfg!(feature = "ble") {
+        "compilado: sí"
+    } else {
+        "compilado: no (recompila con --features ble)"
+    };
     println!(
-        "rugus-cli — cliente de escritorio Rugus (serie + BLE)\n\n\
-USO:\n  rugus-cli [OPCIONES]\n\n\
+        "rugus — cliente de escritorio Rugus\n\n\
+USO:\n  rugus [OPCIONES]\n\n\
 OPCIONES:\n  \
 --serial <PUERTO>   Conecta directo a un puerto serie (p. ej. /dev/ttyUSB0)\n  \
 --no-ble            No escanear BLE\n  \
 --no-serial         No sondear puertos serie\n  \
 --list              Detecta y lista dispositivos, luego sale\n  \
 -h, --help          Muestra esta ayuda\n\n\
-Auto-detección: enumera puertos serie y escanea BLE, envía IDENTIFY y lista\n\
-solo los dispositivos que responden una firma RUGUS válida. Si hay uno, conecta;\n\
-si hay varios, ofrece un menú."
+Auto-detección: enumera puertos serie (y BLE si está compilado), envía IDENTIFY\n\
+y lista solo los dispositivos que responden una firma RUGUS válida. Si hay uno,\n\
+conecta; si hay varios, ofrece un menú.\n\n\
+Soporte BLE: {ble_state}."
     );
 }
 
