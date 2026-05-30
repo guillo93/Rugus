@@ -137,6 +137,7 @@ PY
 else
   echo
   echo "[INFO] Set RUGUS_UART_PORT=/dev/ttyUSB0 for UART cosmos verify"
+  echo "[INFO] HM-20 BLE: wire PA2→RX PA3←TX 3.3V GND; minicom → nest / sonar 0 / IDENTIFY"
 fi
 
 echo

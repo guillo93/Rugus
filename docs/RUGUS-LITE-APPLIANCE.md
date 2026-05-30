@@ -20,7 +20,7 @@ Complementa [`RUGUS-KERNEL-VISION.md`](RUGUS-KERNEL-VISION.md) y
 | Función | Periférico | Pines | Notas |
 |---------|------------|-------|-------|
 | `rush` (shell) | USART1 | PA9 TX, PA10 RX | Consola principal 115200 8N1 |
-| Módulos (LoRa, HM-10) | USART2 | PA2 TX, PA3 RX | Bus serie 115200 (IDENTIFY) |
+| Módulos (LoRa, HM-10/HM-20 BLE) | USART2 | PA2 TX, PA3 RX | Bus serie 115200 8N1 (IDENTIFY) |
 | Tarjeta SD | SPI1 | PA4 NSS, PA5 SCK, PA6 MISO, PA7 MOSI | Config `.rfn` / apps `.afr` |
 | Sensores | I2C1 | PB6 SCL, PB7 SDA | Escaneo `scout` |
 | LED onboard | GPIO | PC13 | Heartbeat consciente de actividad + GPIO CLI |
@@ -158,6 +158,43 @@ minicom -D /dev/ttyUSB0 -b 115200
 Tras reset deberías ver `Rugus lite appliance ready.` Escribe `cosmos` y
 Enter para el banner ANSI + info del sistema.
 
+## Módulo BLE HM-10 / HM-20 (USART2)
+
+Adaptador DSD Tech HM-10 o HM-20 (UART transparente BLE):
+
+| Blue Pill | Módulo HM-20 |
+|-----------|--------------|
+| PA2 (TX)  | RX           |
+| PA3 (RX)  | TX           |
+| 3.3 V     | VCC          |
+| GND       | GND          |
+
+El firmware inicializa el módulo al boot con `rugus-hal-stm32f1::hm20` (AT
+`+NAME=RUGUS`, baud 115200). Descriptor de capacidad: [`examples/eco/hm20-ble.eco`](../examples/eco/hm20-ble.eco).
+
+Comandos útiles en consola USART1:
+
+```text
+nest        → slot0: usart2 (hm20-ble)
+sonar 0     → probe AT (respuesta del módulo)
+ecosystem   → usart2: module | idle
+IDENTIFY    → firma RUGUS (también en USART2 para host BLE)
+```
+
+### Prueba BLE desde el PC (minicom + teléfono)
+
+1. Flashea el appliance y conecta HM-20 como arriba.
+2. Consola local: `minicom -D /dev/ttyUSB0 -b 115200` → `nest` debe listar `hm20-ble`.
+3. En el teléfono, app serial BLE (nRF Connect, Serial Bluetooth Terminal): empareja
+   con **RUGUS** (PIN habitual `000000` o `123456` según lote).
+4. Envía `IDENTIFY` desde la app BLE; debe responder
+   `RUGUS;tier=lite;chip=f103;proto=1;shell=rush;cli=1.0.0`.
+5. Opcional: `rugus-cli` en el PC escanea BLE y auto-detecta la firma (ver
+   [`RUGUS-CLI-HOST.md`](RUGUS-CLI-HOST.md)).
+
+Si el módulo viene a 9600 baud de fábrica, reprograma con terminal AT directo
+(`AT+BAUD4` → 115200) o ajusta `Hm20Config` en el firmware.
+
 ## Crates nuevos
 
 | Crate | Rol |
@@ -165,7 +202,7 @@ Enter para el banner ANSI + info del sistema.
 | `rush` | Shell on-device (ANSI + comandos + IDENTIFY) |
 | `rugus-rfn` | Parser RFN/AFR userland |
 | `rugus-core::syscall::lite` | ABI appliance (hooks) |
-| `rugus-hal-stm32f1` | `uart`, `uart2`, `i2c`, `spi_sd`, `gpio_raw`, `wdt` |
+| `rugus-hal-stm32f1` | `uart`, `uart2`, `hm20`, `i2c`, `spi_sd`, `gpio_raw`, `wdt` |
 
 ## Documentos relacionados
 
