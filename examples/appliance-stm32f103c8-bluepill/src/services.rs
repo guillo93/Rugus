@@ -29,9 +29,30 @@ static mut MODULES: Option<Usart2> = None;
 static mut WDT: Option<Watchdog> = None;
 static mut SCHED_TASK_COUNT: u32 = 0;
 static mut MODULE_ECO: Option<&'static str> = None;
+static mut MODULE_STATUS: ModuleStatus = ModuleStatus::Idle;
 static mut APP_NAME: Option<String<{ MAX_FIELD }>> = None;
 static mut IDENT_LINE: [u8; 16] = [0; 16];
 static mut IDENT_LEN: usize = 0;
+
+/// Estado de init HM-20 en USART2 (diagnóstico `ecosystem`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ModuleStatus {
+    Idle,
+    NoAtResponse,
+    Hm20AtWarn,
+    Hm20Ready,
+}
+
+impl ModuleStatus {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Idle => "idle",
+            Self::NoAtResponse => "no-at-response",
+            Self::Hm20AtWarn => "hm20-at-warn",
+            Self::Hm20Ready => "hm20-ready",
+        }
+    }
+}
 
 /// Escritor IDENTIFY sobre USART2 (bus de módulos).
 struct ModuleWriter;
@@ -114,12 +135,15 @@ pub fn init(rcc: &pac::RCC, i2c: I2c1, sd: Spi1Sd, modules: Usart2, wdt: Watchdo
             match hm20::init(u, Hm20Config::default()) {
                 InitResult::Ready => {
                     MODULE_ECO = Some("hm20-ble");
+                    MODULE_STATUS = ModuleStatus::Hm20Ready;
                 }
                 InitResult::NoResponse => {
                     MODULE_ECO = None;
+                    MODULE_STATUS = ModuleStatus::NoAtResponse;
                 }
                 InitResult::AtError => {
                     MODULE_ECO = Some("hm20-ble (AT warn)");
+                    MODULE_STATUS = ModuleStatus::Hm20AtWarn;
                 }
             }
         }
@@ -172,7 +196,7 @@ fn hook_sys_status(out: &mut [u8]) -> usize {
             .map(|s| s.status() == SdStatus::Ready)
             .unwrap_or(false)
     };
-    let mod_ok = unsafe { MODULE_ECO.is_some() };
+    let mod_status = unsafe { MODULE_STATUS.as_str() };
     let tasks = unsafe { SCHED_TASK_COUNT };
     let mut line: String<128> = String::new();
     let _ = line.push_str("uptime: (cycle counter)\r\n");
@@ -181,7 +205,8 @@ fn hook_sys_status(out: &mut [u8]) -> usize {
     let _ = line.push_str("sd: ");
     let _ = line.push_str(if sd_ok { "ready\r\n" } else { "absent\r\n" });
     let _ = line.push_str("usart2: ");
-    let _ = line.push_str(if mod_ok { "module\r\n" } else { "idle\r\n" });
+    let _ = line.push_str(mod_status);
+    let _ = line.push_str("\r\n");
     let _ = line.push_str("tasks: ");
     push_u32(&mut line, tasks);
     let _ = line.push_str("\r\n");
@@ -336,17 +361,16 @@ fn hook_module_read(slot: u8, out: &mut [u8]) -> i32 {
     unsafe {
         if let Some(u) = MODULES.as_mut() {
             let _ = u.write(b"AT\r\n");
-            cortex_m::asm::delay(400_000);
             let mut pos = 0;
-            for _ in 0..64 {
-                let mut b = [0u8; 1];
-                if u.read(&mut b).ok() == Some(1) {
+            for _ in 0..500 {
+                kick_wdt();
+                if let Some(b) = u.try_read_byte() {
                     if pos < out.len() {
-                        out[pos] = b[0];
+                        out[pos] = b;
                         pos += 1;
                     }
                 } else {
-                    break;
+                    cortex_m::asm::delay(500);
                 }
             }
             if pos == 0 {
@@ -356,6 +380,15 @@ fn hook_module_read(slot: u8, out: &mut [u8]) -> i32 {
         }
     }
     Errno::Ebusy as i32
+}
+
+fn kick_wdt() {
+    unsafe {
+        let ptr = crate::IWDG_PTR;
+        if !ptr.is_null() {
+            (&(*ptr)).kr.write(|w| w.key().bits(0xAAAA));
+        }
+    }
 }
 
 fn hook_task_list(out: &mut [u8]) -> i32 {

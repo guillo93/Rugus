@@ -168,22 +168,25 @@ Adaptador DSD Tech HM-10 o HM-20 (UART transparente BLE):
 | PA3 (RX)  | TX           |
 | 3.3 V     | VCC          |
 | GND       | GND          |
+| 3.3 V     | KEY (modo AT; sin KEY el módulo no responde AT) |
 
-El firmware inicializa el módulo al boot con `rugus-hal-stm32f1::hm20` (AT
-`+NAME=RUGUS`, baud 115200). Descriptor de capacidad: [`examples/eco/hm20-ble.eco`](../examples/eco/hm20-ble.eco).
+El firmware inicializa el módulo al boot con `rugus-hal-stm32f1::hm20`: prueba
+**9600 baud** (fábrica DSD Tech) y, si responde, configura `AT+NAME=RUGUS` y
+`AT+BAUD4` (115200). Si ya está a 115200, solo renombra. Descriptor de
+capacidad: [`examples/eco/hm20-ble.eco`](../examples/eco/hm20-ble.eco).
 
 Comandos útiles en consola USART1:
 
 ```text
 nest        → slot0: usart2 (hm20-ble)
-sonar 0     → probe AT (respuesta del módulo)
-ecosystem   → usart2: module | idle
+sonar 0     → probe AT (respuesta del módulo; no bloquea ni resetea)
+ecosystem   → usart2: hm20-ready | hm20-at-warn | no-at-response | idle
 IDENTIFY    → firma RUGUS (también en USART2 para host BLE)
 ```
 
 ### Prueba BLE desde el PC (minicom + teléfono)
 
-1. Flashea el appliance y conecta HM-20 como arriba.
+1. Flashea el appliance y conecta HM-20 como arriba (**KEY a 3.3 V**).
 2. Consola local: `minicom -D /dev/ttyUSB0 -b 115200` → `nest` debe listar `hm20-ble`.
 3. En el teléfono, app serial BLE (nRF Connect, Serial Bluetooth Terminal): empareja
    con **RUGUS** (PIN habitual `000000` o `123456` según lote).
@@ -192,8 +195,18 @@ IDENTIFY    → firma RUGUS (también en USART2 para host BLE)
 5. Opcional: `rugus-cli` en el PC escanea BLE y auto-detecta la firma (ver
    [`RUGUS-CLI-HOST.md`](RUGUS-CLI-HOST.md)).
 
-Si el módulo viene a 9600 baud de fábrica, reprograma con terminal AT directo
-(`AT+BAUD4` → 115200) o ajusta `Hm20Config` en el firmware.
+### Troubleshooting HM-20
+
+| Síntoma | Causa probable | Acción |
+|---------|----------------|--------|
+| `nest` → `(no modules)`, `ecosystem` → `no-at-response` | KEY flotante o baud distinto | Conectar **KEY a 3.3 V**; cableado PA2↔RX, PA3↔TX; reset |
+| `ecosystem` → `hm20-at-warn` | Módulo responde AT pero falló nombre/baud | Revisar alimentación 3.3 V estable; `sonar 0` manual |
+| `sonar 0` resetea la placa | Bug corregido: lectura bloqueante sin kick WDT | Reflashear firmware actual |
+| BLE no anuncia **RUGUS** | Init falló o KEY sin 3.3 V | Tras fix: `ecosystem` debe mostrar `hm20-ready` |
+
+La mayoría de HM-10/HM-20 DSD salen de fábrica a **9600 baud**; el firmware
+detecta y sube a 115200 automáticamente. Solo si el init falla, reprograma con
+terminal AT directo (`AT+BAUD4` → 115200) o revisa KEY/cableado.
 
 ## Crates nuevos
 

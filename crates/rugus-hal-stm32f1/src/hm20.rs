@@ -49,18 +49,37 @@ pub fn probe(uart: &mut Usart2) -> bool {
     wait_ok(uart, 120_000)
 }
 
-/// Configura nombre y baud AT; tolera módulos ya en 115200.
+/// Baud de fábrica habitual en HM-10/HM-20 DSD Tech.
+const FACTORY_BAUD: u32 = 9600;
+
+/// Configura nombre y baud AT; prueba 9600 (fábrica) y luego 115200.
 pub fn init(uart: &mut Usart2, cfg: Hm20Config) -> InitResult {
+    uart.set_baud(FACTORY_BAUD);
+    if probe(uart) {
+        return finish_init(uart, cfg, true);
+    }
+
+    uart.set_baud(DEFAULT_BAUD);
     if !probe(uart) {
         return InitResult::NoResponse;
     }
 
+    finish_init(uart, cfg, false)
+}
+
+fn finish_init(uart: &mut Usart2, cfg: Hm20Config, upgrade_baud: bool) -> InitResult {
     if !set_name(uart, cfg.name) {
         return InitResult::AtError;
     }
 
-    if cfg.baud != DEFAULT_BAUD && !set_baud(uart, cfg.baud) {
-        return InitResult::AtError;
+    if upgrade_baud {
+        if !set_baud(uart, cfg.baud) {
+            return InitResult::AtError;
+        }
+        uart.set_baud(cfg.baud);
+        if !probe(uart) {
+            return InitResult::AtError;
+        }
     }
 
     // Notificaciones de enlace BLE (opcional, ignora error).

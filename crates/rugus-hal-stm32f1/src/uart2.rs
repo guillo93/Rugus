@@ -12,6 +12,7 @@ pub type UartError = core::convert::Infallible;
 /// Handle bloqueante USART2 en PA2/PA3.
 pub struct Usart2 {
     usart: pac::USART2,
+    pclk1: u32,
 }
 
 impl Usart2 {
@@ -37,7 +38,12 @@ impl Usart2 {
         }
 
         configure_usart(&usart, pclk1, baud);
-        Self { usart }
+        Self { usart, pclk1 }
+    }
+
+    /// Reconfigura el baud rate del bus (p. ej. tras `AT+BAUD` en HM-20).
+    pub fn set_baud(&mut self, baud: u32) {
+        configure_usart(&self.usart, self.pclk1, baud);
     }
 
     /// Lee un byte si RXNE está activo; no bloquea.
