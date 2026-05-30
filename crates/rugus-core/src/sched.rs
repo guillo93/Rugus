@@ -152,19 +152,12 @@ impl<A: Arch> Scheduler<A> {
 
     /// Mata la tarea faultante y salta a la siguiente; no retorna.
     ///
-    /// Invocado desde el fault handler del arch backend.
-    #[allow(unused_variables)]
+    /// Invocado desde el fault handler del arch backend. El TCB no registra
+    /// logs (se mantiene mínimo y agnóstico del transporte): la observabilidad
+    /// del fault es responsabilidad del hook registrado por la plataforma, que
+    /// recibe el [`FaultReport`] antes de esta llamada.
     pub fn kill_current_and_resume(&mut self, report: FaultReport) -> ! {
-        #[cfg(feature = "log")]
-        {
-            defmt::error!(
-                "fault {} domain={} pc={=u32} task={=u8} — killing task",
-                report.kind.name(),
-                report.domain.name(),
-                report.pc,
-                report.task_id.0
-            );
-        }
+        let _ = report;
         let idx = self.current;
         // SAFETY: idx válido mientras el scheduler está activo.
         unsafe {
@@ -172,8 +165,8 @@ impl<A: Arch> Scheduler<A> {
         }
         let next_idx = self.pick_next(idx);
         if next_idx == idx || self.all_killed() {
-            #[cfg(feature = "log")]
-            defmt::warn!("all tasks dead after fault; halting");
+            // Sin tareas vivas: WFI hasta que el watchdog de la plataforma
+            // resetee. No hay panic global por diseño.
             loop {
                 A::wait_for_interrupt();
             }
