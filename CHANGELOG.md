@@ -11,6 +11,26 @@ SemVer estricto.
 
 ## [Unreleased]
 
+### Security
+
+- **Invariante del sandbox MPU forzada en el spawn (raíz)** — `spawn_user` no
+  validaba que el stack de una tarea userland fuera apto para su región MPU
+  dedicada (App-RW). ARMv7-M exige que esa región sea potencia de 2 y esté
+  alineada a su tamaño; con un stack que no lo cumpla, el remapeo redondeaba la
+  región y **cubría RAM del kernel adyacente**, dando a la app acceso de
+  escritura fuera de su sandbox. Ahora `spawn_user` rechaza en origen con
+  `SpawnError::UnalignedUserStack` cualquier stack que no sea potencia de 2
+  (≥32 B) y alineado a su tamaño. Las tareas privilegiadas no se ven afectadas
+  (no obtienen región propia). El F103 (Cortex-M3, sin MPU) solo usa tareas
+  privilegiadas, así que su arranque es idéntico — verificado en HW.
+- **Contrato de validación de punteros de syscall documentado** — `syscall::dispatch`
+  recibe `args` no confiables del frame de una tarea potencialmente userland.
+  Se documenta el contrato CRÍTICO: todo syscall futuro que reciba puntero/longitud
+  debe validar el rango completo `[ptr, ptr+len)` contra la región MPU de la tarea
+  llamante (sin overflow, fuera de RAM kernel/periféricos/flash) y rechazar con
+  `Errno::Efault`, ya que en modo privilegiado el MPU no protege al kernel de sí
+  mismo. Los syscalls actuales (`YieldNow`/`TaskId`) no toman punteros.
+
 ### Fixed
 
 - **Política de fault del kernel lite (raíz)** — en el appliance F103 el hook de
