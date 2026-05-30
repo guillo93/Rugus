@@ -7,7 +7,7 @@
 #![no_std]
 #![no_main]
 
-use rugus_arch_cortex_m::{platform_init, set_fault_hook, CortexM};
+use rugus_arch_cortex_m::{platform_init, set_fault_hook, CortexM, MpuLayout};
 use rugus_core::fault::FaultReport;
 use rugus_core::sched::{Priority, Scheduler};
 use rugus_core::syscall::{self, user as svc_user, Hooks};
@@ -94,7 +94,7 @@ fn main() -> ! {
     }
     cache::enable(&mut cp.SCB, &mut cp.CPUID);
 
-    platform_init(&mut cp);
+    platform_init(&mut cp, &MpuLayout::STM32F769);
 
     let _ = LedPin::new(&dp.RCC, DiscoLed::Red);
     let _ = LedPin::new(&dp.RCC, DiscoLed::Green);

@@ -27,7 +27,9 @@ pub mod region {
 
 /// Tamaños de región (campo SIZE del RASR): región cubre `2^(SIZE+1)` bytes.
 mod size {
+    pub const B_256K: u8 = 17;
     pub const B_512K: u8 = 18;
+    pub const B_1M: u8 = 19;
     pub const B_2M: u8 = 20;
     pub const B_16M: u8 = 23;
     pub const B_512M: u8 = 28;
@@ -47,7 +49,9 @@ const ATTR_NORMAL_WB: u32 = (1 << 17) | (1 << 16);
 /// TEX=0, C=1, B=0 — flash normal read-only.
 const ATTR_NORMAL_RO: u32 = 1 << 17;
 
-/// Mapa de memoria STM32F769 usado por los ejemplos Rugus.
+/// Mapa de memoria por defecto (STM32F769), usado por la heurística
+/// `domain_for_pc` y como rango de referencia. La configuración real de la MPU
+/// la decide [`MpuLayout`], que cada placa pasa a [`init`].
 pub mod layout {
     /// Flash interna.
     pub const FLASH_BASE: u32 = 0x0800_0000;
@@ -59,38 +63,96 @@ pub mod layout {
     pub const SDRAM_BASE: u32 = 0xC000_0000;
 }
 
-/// Programa las regiones estáticas y habilita la MPU.
+/// Mapa de memoria y tamaños de región MPU específicos de la placa.
+///
+/// Los campos `*_size` son el campo SIZE del RASR (la región cubre
+/// `2^(size+1)` bytes). Cada personalidad/placa con MPU debe pasar su propio
+/// `MpuLayout` a [`init`] en vez de heredar el de otra placa: un tamaño de RAM
+/// kernel demasiado grande o un base de flash equivocado dejarían huecos de
+/// protección o faults espurios.
+#[derive(Clone, Copy)]
+pub struct MpuLayout {
+    /// Base de la ventana de periféricos.
+    pub periph_base: u32,
+    /// Tamaño de la región de periféricos (campo SIZE).
+    pub periph_size: u8,
+    /// Base de la SDRAM externa (ignorado si `sdram_size == 0`).
+    pub sdram_base: u32,
+    /// Tamaño de la región SDRAM; `0` = sin SDRAM externa (región deshabilitada).
+    pub sdram_size: u8,
+    /// Base de la SRAM interna del kernel.
+    pub ram_base: u32,
+    /// Tamaño de la región de SRAM kernel (campo SIZE).
+    pub ram_size: u8,
+    /// Base de la flash interna.
+    pub flash_base: u32,
+    /// Tamaño de la región de flash (campo SIZE).
+    pub flash_size: u8,
+}
+
+impl MpuLayout {
+    /// STM32F769 (Cortex-M7): 512 K SRAM + SDRAM externa 16 M, flash 2 M.
+    pub const STM32F769: Self = Self {
+        periph_base: 0x4000_0000,
+        periph_size: size::B_512M,
+        sdram_base: 0xC000_0000,
+        sdram_size: size::B_16M,
+        ram_base: 0x2000_0000,
+        ram_size: size::B_512K,
+        flash_base: 0x0800_0000,
+        flash_size: size::B_2M,
+    };
+
+    /// STM32F407 (Cortex-M4): 128 K SRAM (+CCM), sin SDRAM externa, flash 1 M.
+    /// La región de RAM se redondea a 256 K (priv-only, cubrir de más es seguro).
+    pub const STM32F407: Self = Self {
+        periph_base: 0x4000_0000,
+        periph_size: size::B_512M,
+        sdram_base: 0,
+        sdram_size: 0,
+        ram_base: 0x2000_0000,
+        ram_size: size::B_256K,
+        flash_base: 0x0800_0000,
+        flash_size: size::B_1M,
+    };
+}
+
+/// Programa las regiones estáticas y habilita la MPU para la placa dada.
 ///
 /// Debe llamarse una vez desde el kernel antes de arrancar tareas userland.
-pub fn init(mpu: &mut MPU) {
+pub fn init(mpu: &mut MPU, layout: &MpuLayout) {
     disable(mpu);
 
     // Región 0: periféricos — Drivers, solo privilegiado (device, XN).
     configure_region(
         mpu,
         region::DRIVERS,
-        layout::PERIPH_BASE,
-        size::B_512M,
+        layout.periph_base,
+        layout.periph_size,
         ap::PRIV_RW,
         true,
         0,
     );
-    // Región 1: SDRAM — kernel heap, solo privilegiado.
-    configure_region(
-        mpu,
-        region::SDRAM,
-        layout::SDRAM_BASE,
-        size::B_16M,
-        ap::PRIV_RW,
-        false,
-        ATTR_NORMAL_WB,
-    );
+    // Región 1: SDRAM — kernel heap, solo privilegiado (si la placa la tiene).
+    if layout.sdram_size == 0 {
+        disable_region(mpu, region::SDRAM);
+    } else {
+        configure_region(
+            mpu,
+            region::SDRAM,
+            layout.sdram_base,
+            layout.sdram_size,
+            ap::PRIV_RW,
+            false,
+            ATTR_NORMAL_WB,
+        );
+    }
     // Región 2: SRAM — kernel data/stacks, solo privilegiado.
     configure_region(
         mpu,
         region::KERNEL_RAM,
-        layout::RAM_BASE,
-        size::B_512K,
+        layout.ram_base,
+        layout.ram_size,
         ap::PRIV_RW,
         false,
         ATTR_NORMAL_WB,
@@ -99,8 +161,8 @@ pub fn init(mpu: &mut MPU) {
     configure_region(
         mpu,
         region::FLASH,
-        layout::FLASH_BASE,
-        size::B_2M,
+        layout.flash_base,
+        layout.flash_size,
         ap::FULL_RO,
         false,
         ATTR_NORMAL_RO,
