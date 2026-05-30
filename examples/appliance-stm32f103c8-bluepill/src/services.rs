@@ -136,14 +136,17 @@ pub fn init(rcc: &pac::RCC, i2c: I2c1, sd: Spi1Sd, modules: Usart2, wdt: Watchdo
                 InitResult::Ready => {
                     MODULE_ECO = Some("hm20-ble");
                     MODULE_STATUS = ModuleStatus::Hm20Ready;
+                    defmt::info!("hm20 init: ready");
                 }
                 InitResult::NoResponse => {
                     MODULE_ECO = None;
                     MODULE_STATUS = ModuleStatus::NoAtResponse;
+                    defmt::warn!("hm20 init: no-at-response");
                 }
                 InitResult::AtError => {
                     MODULE_ECO = Some("hm20-ble (AT warn)");
                     MODULE_STATUS = ModuleStatus::Hm20AtWarn;
+                    defmt::warn!("hm20 init: at-error");
                 }
             }
         }
@@ -177,6 +180,7 @@ pub fn hooks() -> Hooks {
         config_commit: hook_config_commit,
         module_list: hook_module_list,
         module_read: hook_module_read,
+        module_renew: hook_module_renew,
         task_list: hook_task_list,
         app_reload: hook_app_reload,
         sys_failsafe: hook_sys_failsafe,
@@ -352,6 +356,32 @@ fn hook_module_list(out: &mut [u8]) -> i32 {
         }
     }
     write_bytes(out, b"(no modules)\r\n") as i32
+}
+
+fn hook_module_renew() -> i32 {
+    unsafe {
+        if let Some(u) = MODULES.as_mut() {
+            let result = hm20::factory_renew(u, Hm20Config::default(), kick_wdt);
+            match result {
+                InitResult::Ready => {
+                    MODULE_ECO = Some("hm20-ble");
+                    MODULE_STATUS = ModuleStatus::Hm20Ready;
+                    return 0;
+                }
+                InitResult::NoResponse => {
+                    MODULE_ECO = None;
+                    MODULE_STATUS = ModuleStatus::NoAtResponse;
+                    return Errno::Ebusy as i32;
+                }
+                InitResult::AtError => {
+                    MODULE_ECO = Some("hm20-ble (AT warn)");
+                    MODULE_STATUS = ModuleStatus::Hm20AtWarn;
+                    return Errno::Einval as i32;
+                }
+            }
+        }
+    }
+    Errno::Ebusy as i32
 }
 
 fn hook_module_read(slot: u8, out: &mut [u8]) -> i32 {

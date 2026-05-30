@@ -82,6 +82,8 @@ pub enum Command {
     Seal,
     /// `nest` → module_list
     Nest,
+    /// `nest renew` → module_renew (factory reset HM-20 + re-init)
+    NestRenew,
     /// `hatch name` → app_reload
     Hatch {
         /// Offset del nombre en la línea original.
@@ -147,7 +149,11 @@ pub fn parse(line: &str) -> Command {
         }
         "scribe" => parse_scribe(trimmed),
         "seal" => Command::Seal,
-        "nest" => Command::Nest,
+        "nest" => match parts.next() {
+            Some("renew") => Command::NestRenew,
+            Some(_) => Command::Unknown,
+            None => Command::Nest,
+        },
         "hatch" => parse_hatch(trimmed),
         "coil" => Command::Coil,
         "anchor" => {
@@ -315,6 +321,7 @@ pub fn execute(cmd: Command, line: &str, out: &mut dyn Write) {
         }
         Command::Seal => exec_seal(out),
         Command::Nest => exec_nest(out),
+        Command::NestRenew => exec_nest_renew(out),
         Command::Hatch { name_off, name_len } => {
             let name = &line.as_bytes()[name_off..name_off + name_len];
             exec_hatch(out, name);
@@ -355,7 +362,8 @@ fn exec_ecosystem(out: &mut dyn Write) {
 fn exec_orbit(out: &mut dyn Write) {
     ansi::orbit_banner(out);
     let _ = out.write_str("cosmos orbit ecosystem moor pulso spark mute ripple\r\n");
-    let _ = out.write_str("scout sonar schema scribe seal nest hatch coil anchor ward\r\n");
+    let _ =
+        out.write_str("scout sonar schema scribe seal nest nest renew hatch coil anchor ward\r\n");
     let _ = out.write_str("anchor — fail-safe ON | anchor off|release — fail-safe OFF\r\n");
 }
 
@@ -452,6 +460,24 @@ fn exec_seal(out: &mut dyn Write) {
         let _ = out.write_str("seal OK\r\n");
     } else {
         let _ = out.write_str("seal: error\r\n");
+    }
+}
+
+fn exec_nest_renew(out: &mut dyn Write) {
+    let ret = user::module_renew();
+    match ret {
+        0 => {
+            let _ = out.write_str("nest renew: hm20-ready\r\n");
+        }
+        -2 => {
+            let _ = out.write_str("nest renew: no-at-response (usart2?)\r\n");
+        }
+        -1 => {
+            let _ = out.write_str("nest renew: hm20-at-warn\r\n");
+        }
+        _ => {
+            let _ = out.write_str("nest renew: error\r\n");
+        }
     }
 }
 

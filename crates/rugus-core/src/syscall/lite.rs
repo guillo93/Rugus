@@ -25,6 +25,8 @@ pub enum Id {
     AppReload = 0x5D,
     SysFailsafe = 0x5E,
     Wdt = 0x5F,
+    /// Factory reset HM-20 + re-init (`nest renew`).
+    ModuleRenew = 0x60,
 }
 
 impl Id {
@@ -47,6 +49,7 @@ impl Id {
             0x5D => Some(Self::AppReload),
             0x5E => Some(Self::SysFailsafe),
             0x5F => Some(Self::Wdt),
+            0x60 => Some(Self::ModuleRenew),
             _ => None,
         }
     }
@@ -97,6 +100,8 @@ pub struct Hooks {
     pub sys_failsafe: fn(action: u8) -> i32,
     /// Watchdog status/kick (`ward`). action: 0=status, 1=kick.
     pub wdt: fn(action: u8) -> i32,
+    /// Factory reset HM-20 en USART2 y re-init (`nest renew`).
+    pub module_renew: fn() -> i32,
 }
 
 static mut LITE_HOOKS: Option<Hooks> = None;
@@ -218,6 +223,7 @@ pub fn dispatch(id: Id, args: [u32; 4]) -> i32 {
         }
         Id::SysFailsafe => (h.sys_failsafe)(args[0] as u8),
         Id::Wdt => (h.wdt)(args[0] as u8),
+        Id::ModuleRenew => (h.module_renew)(),
     }
 }
 
@@ -348,5 +354,10 @@ pub mod user {
     /// Watchdog (`ward`).
     pub fn wdt(action: u8) -> i32 {
         dispatch(Id::Wdt, [action as u32, 0, 0, 0])
+    }
+
+    /// Factory reset HM-20 (`nest renew`).
+    pub fn module_renew() -> i32 {
+        dispatch(Id::ModuleRenew, [0; 4])
     }
 }

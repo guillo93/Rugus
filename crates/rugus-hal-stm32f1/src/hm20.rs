@@ -18,7 +18,7 @@ pub const DEFAULT_BAUD: u32 = 115_200;
 pub struct Hm20Config {
     /// Nombre GAP (`AT+NAME=`).
     pub name: &'static str,
-    /// Baud objetivo en el bus serie (9600 o 115200).
+    /// Baud objetivo en el bus serie (9600, 57600 o 115200).
     pub baud: u32,
 }
 
@@ -44,27 +44,62 @@ pub enum InitResult {
 
 /// Envía `AT\r\n` y espera eco con `OK`/`ERROR` (poll no bloqueante).
 pub fn probe(uart: &mut Usart2) -> bool {
+    probe_with_kick(uart, || {})
+}
+
+fn probe_with_kick(uart: &mut Usart2, kick: fn()) -> bool {
     drain_rx(uart);
     let _ = uart.write(b"AT\r\n");
-    wait_ok(uart, 120_000)
+    let _ = uart.flush();
+    wait_ok_with_kick(uart, 120_000, kick)
 }
 
 /// Baud de fábrica habitual en HM-10/HM-20 DSD Tech.
 const FACTORY_BAUD: u32 = 9600;
 
-/// Configura nombre y baud AT; prueba 9600 (fábrica) y luego 115200.
-pub fn init(uart: &mut Usart2, cfg: Hm20Config) -> InitResult {
-    uart.set_baud(FACTORY_BAUD);
-    if probe(uart) {
-        return finish_init(uart, cfg, true);
-    }
+/// Bauds probados en init (orden: fábrica → intermedio → objetivo Rugus).
+const PROBE_BAUDS: [u32; 3] = [9600, 57_600, 115_200];
 
-    uart.set_baud(DEFAULT_BAUD);
-    if !probe(uart) {
+fn probe_bauds(uart: &mut Usart2, kick: fn()) -> Option<u32> {
+    for &baud in &PROBE_BAUDS {
+        uart.set_baud(baud);
+        if probe_with_kick(uart, kick) {
+            return Some(baud);
+        }
+    }
+    None
+}
+
+/// Factory reset explícito: `AT+RENEW`, `AT+RESET`, luego [`init`].
+///
+/// `kick` se invoca en cada iteración de espera (p. ej. WDT del appliance).
+/// Destructivo: borra nombre/baud/PIN del módulo. Solo para recuperación en campo.
+pub fn factory_renew(uart: &mut Usart2, cfg: Hm20Config, kick: fn()) -> InitResult {
+    if probe_bauds(uart, kick).is_none() {
         return InitResult::NoResponse;
     }
 
-    finish_init(uart, cfg, false)
+    if !send_at_with_kick(uart, b"AT+RENEW\r\n", 250_000, kick) {
+        return InitResult::AtError;
+    }
+    if !send_at_with_kick(uart, b"AT+RESET\r\n", 250_000, kick) {
+        return InitResult::AtError;
+    }
+
+    kick();
+    cortex_m::asm::delay(3_000_000);
+    kick();
+
+    uart.set_baud(FACTORY_BAUD);
+    init(uart, cfg)
+}
+
+/// Configura nombre y baud AT; prueba 9600, 57600 y 115200.
+pub fn init(uart: &mut Usart2, cfg: Hm20Config) -> InitResult {
+    let Some(found) = probe_bauds(uart, || {}) else {
+        return InitResult::NoResponse;
+    };
+    finish_init(uart, cfg, found != cfg.baud)
 }
 
 fn finish_init(uart: &mut Usart2, cfg: Hm20Config, upgrade_baud: bool) -> InitResult {
@@ -104,28 +139,35 @@ fn set_name(uart: &mut Usart2, name: &str) -> bool {
 }
 
 fn set_baud(uart: &mut Usart2, baud: u32) -> bool {
+    // HM-10/HM-20 DSD: AT+BAUD0→9600, AT+BAUD3→57600, AT+BAUD4→115200 (sin '=').
     let code = match baud {
-        9600 => b'1',
+        9600 => b'0',
+        57_600 => b'3',
         115_200 => b'4',
         _ => return false,
     };
-    let cmd = [
-        b'A', b'T', b'+', b'B', b'A', b'U', b'D', b'=', code, b'\r', b'\n',
-    ];
+    // DSD HM-10/HM-20: AT+BAUD4 (sin '='); ver datasheet AT+BAUD[P].
+    let cmd = [b'A', b'T', b'+', b'B', b'A', b'U', b'D', code, b'\r', b'\n'];
     send_at(uart, &cmd, 100_000)
 }
 
 fn send_at(uart: &mut Usart2, cmd: &[u8], delay_cycles: u32) -> bool {
-    drain_rx(uart);
-    let _ = uart.write(cmd);
-    wait_ok(uart, delay_cycles)
+    send_at_with_kick(uart, cmd, delay_cycles, || {})
 }
 
-fn wait_ok(uart: &mut Usart2, delay_cycles: u32) -> bool {
+fn send_at_with_kick(uart: &mut Usart2, cmd: &[u8], delay_cycles: u32, kick: fn()) -> bool {
+    drain_rx(uart);
+    let _ = uart.write(cmd);
+    let _ = uart.flush();
+    wait_ok_with_kick(uart, delay_cycles, kick)
+}
+
+fn wait_ok_with_kick(uart: &mut Usart2, delay_cycles: u32, kick: fn()) -> bool {
     cortex_m::asm::delay(delay_cycles);
     let mut buf = [0u8; 32];
     let mut pos = 0usize;
     for _ in 0..4_000 {
+        kick();
         if let Some(b) = uart.try_read_byte() {
             if pos < buf.len() {
                 buf[pos] = b;
