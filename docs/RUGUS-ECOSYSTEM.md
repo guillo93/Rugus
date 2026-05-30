@@ -334,7 +334,19 @@ Orden de construcción propuesto para el ecosistema:
 
 El **HM-20 BLE** se elige como primer `.eco` real porque ejercita el camino
 completo (descriptor + módulo serie por USART2 + `IDENTIFY`) y deja un patrón
-reutilizable para sensores y comms posteriores. La inferencia tiny-ML se prevé
+reutilizable para sensores y comms posteriores.
+
+### Registry stub (HM-20)
+
+| Campo | Valor |
+|-------|-------|
+| ID | `hm20-ble` |
+| Archivo | [`examples/eco/hm20-ble.eco`](../examples/eco/hm20-ble.eco) |
+| Bus | USART2 @ 115200 (PA2/PA3) |
+| Driver HAL | `rugus-hal-stm32f1::hm20` |
+| Estado | Instalable declarativo (sin firma Ed25519 aún) |
+
+La inferencia tiny-ML se prevé
 como un `.eco` especial (formato `.rml`), encajado en el mismo flujo de
 instalación/firma sin ensanchar el TCB.
 

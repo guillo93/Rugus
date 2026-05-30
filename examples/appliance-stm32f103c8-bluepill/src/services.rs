@@ -8,6 +8,7 @@ use rugus_core::syscall::lite::{GpioLevel, Hooks};
 use rugus_core::Errno;
 use rugus_hal::SerialPort;
 use rugus_hal_stm32f1::gpio_raw;
+use rugus_hal_stm32f1::hm20::{self, Hm20Config, InitResult};
 use rugus_hal_stm32f1::i2c::I2c1;
 use rugus_hal_stm32f1::pac;
 use rugus_hal_stm32f1::spi_sd::{SdStatus, Spi1Sd};
@@ -27,7 +28,7 @@ static mut SD: Option<Spi1Sd> = None;
 static mut MODULES: Option<Usart2> = None;
 static mut WDT: Option<Watchdog> = None;
 static mut SCHED_TASK_COUNT: u32 = 0;
-static mut MODULE_PRESENT: bool = false;
+static mut MODULE_ECO: Option<&'static str> = None;
 static mut APP_NAME: Option<String<{ MAX_FIELD }>> = None;
 static mut IDENT_LINE: [u8; 16] = [0; 16];
 static mut IDENT_LEN: usize = 0;
@@ -110,7 +111,17 @@ pub fn init(rcc: &pac::RCC, i2c: I2c1, sd: Spi1Sd, modules: Usart2, wdt: Watchdo
             }
         }
         if let Some(u) = MODULES.as_mut() {
-            MODULE_PRESENT = u.probe_module();
+            match hm20::init(u, Hm20Config::default()) {
+                InitResult::Ready => {
+                    MODULE_ECO = Some("hm20-ble");
+                }
+                InitResult::NoResponse => {
+                    MODULE_ECO = None;
+                }
+                InitResult::AtError => {
+                    MODULE_ECO = Some("hm20-ble (AT warn)");
+                }
+            }
         }
     }
     defmt::info!("services ok");
@@ -161,7 +172,7 @@ fn hook_sys_status(out: &mut [u8]) -> usize {
             .map(|s| s.status() == SdStatus::Ready)
             .unwrap_or(false)
     };
-    let mod_ok = unsafe { MODULE_PRESENT };
+    let mod_ok = unsafe { MODULE_ECO.is_some() };
     let tasks = unsafe { SCHED_TASK_COUNT };
     let mut line: String<128> = String::new();
     let _ = line.push_str("uptime: (cycle counter)\r\n");
@@ -306,12 +317,16 @@ fn hook_config_commit() -> i32 {
 }
 
 fn hook_module_list(out: &mut [u8]) -> i32 {
-    let present = unsafe { MODULE_PRESENT };
-    if present {
-        write_bytes(out, b"slot0: usart2 (probe OK)\r\n") as i32
-    } else {
-        write_bytes(out, b"(no modules)\r\n") as i32
+    unsafe {
+        if let Some(eco) = MODULE_ECO {
+            let mut line = heapless::String::<64>::new();
+            let _ = line.push_str("slot0: usart2 (");
+            let _ = line.push_str(eco);
+            let _ = line.push_str(")\r\n");
+            return write_bytes(out, line.as_bytes()) as i32;
+        }
     }
+    write_bytes(out, b"(no modules)\r\n") as i32
 }
 
 fn hook_module_read(slot: u8, out: &mut [u8]) -> i32 {

@@ -1,0 +1,27 @@
+# hm20-ble.eco — módulo BLE UART transparente DSD Tech (HM-10 / HM-20)
+#
+# Primer .eco real del ecosistema Rugus: comunicaciones por USART2.
+# Ver docs/RUGUS-LITE-APPLIANCE.md (pinout) y docs/RUGUS-ECOSYSTEM.md (registry).
+
+eco.name      = hm20-ble
+eco.kind      = comms
+eco.flavor    = declarativo
+eco.vendor    = dsdt-tech
+eco.desc      = BLE UART bridge — nombre RUGUS, 115200 8N1
+
+bus           = uart
+uart.periph   = usart2
+uart.tx       = PA2
+uart.rx       = PA3
+uart.baud     = 115200
+uart.voltage  = 3.3V
+
+# Init AT (driver rugus-hal-stm32f1::hm20)
+init.driver   = hm20
+init.name     = RUGUS
+init.baud     = 115200
+init.probe    = AT
+
+# Host descubre la placa vía IDENTIFY en USART1 o a través del puente BLE
+identify      = true
+slot          = 0
