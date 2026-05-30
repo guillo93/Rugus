@@ -16,14 +16,15 @@ PORT=""
 PROVISION=0
 BAUD_PROBE=(9600 57600 115200)
 NAME="RUGUS"
-BAUD_CODE=4
+# Datasheet HM-20: AT+BAUD[P] con 3=9600 (fábrica), 7=115200.
+BAUD_CODE=7
 
 usage() {
   cat <<'EOF'
 provision-hm20.sh — factory reset HM-10/HM-20 (host bench)
 
   -p, --port PATH     Serial device (required), e.g. /dev/ttyUSB0
-  --provision         After reset, set AT+NAME=RUGUS and AT+BAUD4 (115200)
+  --provision         After reset, set AT+NAMERUGUS and AT+BAUD7 (115200)
   -h, --help          This help
 
 Requires: python3, pyserial (pip install pyserial)
@@ -122,9 +123,9 @@ def read_all(ser: serial.Serial, idle_s: float = 0.35) -> str:
 
 
 def send_at(ser: serial.Serial, cmd: str, expect_ok: bool = True) -> tuple[bool, str]:
+    # Datasheet HM-20: comandos AT SIN terminador (\r\n corrompe nombre/parsing).
     ser.reset_input_buffer()
-    line = cmd if cmd.endswith("\r\n") else cmd + "\r\n"
-    ser.write(line.encode("ascii"))
+    ser.write(cmd.encode("ascii"))
     text = read_all(ser)
     ok = "OK" in text or "OK+" in text
     if expect_ok and not ok:
@@ -182,7 +183,7 @@ def main() -> int:
     send_at(ser, "AT+BAUD?", expect_ok=False)
 
     if PROVISION:
-        ok, _ = send_at(ser, f"AT+NAME={NAME}")
+        ok, _ = send_at(ser, f"AT+NAME{NAME}")
         if not ok:
             ser.close()
             return 5
@@ -194,14 +195,14 @@ def main() -> int:
         time.sleep(0.3)
         ser, _ = probe_baud(115200)
         if ser is None:
-            log("verify at 115200 after AT+BAUD4 failed")
+            log("verify at 115200 after AT+BAUD7 failed")
             return 5
         send_at(ser, "AT+NAME?", expect_ok=False)
         send_at(ser, "AT+BAUD?", expect_ok=False)
         log(f"provisioned name={NAME} baud=115200 (BAUD{BAUD_CODE})")
     else:
         send_at(ser, "AT")
-        log("factory reset complete — flash Rugus appliance for AT+NAME=RUGUS @ 115200")
+        log("factory reset complete — flash Rugus appliance; adopts module baud (9600 default)")
 
     ser.close()
     return 0

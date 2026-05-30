@@ -1,10 +1,15 @@
-//! USART2 — PA2 TX, PA3 RX @ 115200 (bus de módulos LoRa/BLE).
+//! USART2 — PA2 TX, PA3 RX (bus de módulos LoRa/BLE).
 
 use crate::pac;
 use rugus_hal::SerialPort;
 
-/// Baud rate del bus de módulos.
-pub const MODULE_BAUD: u32 = 115_200;
+/// Baud inicial del bus de módulos = baud de fábrica del HM-20 (9600).
+///
+/// El driver [`crate::hm20`] re-sincroniza el USART2 al baud real del módulo
+/// durante el sondeo, así que este valor solo fija el punto de partida. 9600
+/// desde el HSI de 8 MHz del F103 tiene error <0.1 %, robusto sin depender de
+/// HSE/PLL.
+pub const MODULE_BAUD: u32 = 9600;
 
 /// Error UART módulos.
 pub type UartError = core::convert::Infallible;
@@ -63,7 +68,7 @@ impl Usart2 {
 
     /// Escribe AT probe y retorna true si hay eco RX (módulo presente).
     pub fn probe_module(&mut self) -> bool {
-        let _ = self.write(b"AT\r\n");
+        let _ = self.write(b"AT");
         cortex_m::asm::delay(800_000);
         let mut buf = [0u8; 4];
         let mut got = 0;

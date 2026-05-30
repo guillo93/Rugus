@@ -117,9 +117,19 @@ fn heartbeat_task() -> ! {
         } else {
             heartbeat::led_off();
         }
-        cortex_m::asm::delay(delay);
-        kick_wdt();
-        yield_cpu();
+        // No bloquear el scheduler cooperativo: trocear el retardo en rebanadas
+        // de ~1 ms y ceder el CPU entre cada una, para que la tarea CLI siga
+        // sondeando USART1/USART2 (el registro RX de 1 byte se desborda si la
+        // tarea CLI no corre durante decenas de ms).
+        const SLICE: u32 = 8_000; // ~1 ms @ 8 MHz HSI
+        let mut remaining = delay;
+        while remaining > 0 {
+            let slice = remaining.min(SLICE);
+            cortex_m::asm::delay(slice);
+            remaining -= slice;
+            kick_wdt();
+            yield_cpu();
+        }
     }
 }
 
