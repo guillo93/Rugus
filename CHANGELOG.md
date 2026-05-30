@@ -11,6 +11,28 @@ SemVer estricto.
 
 ## [Unreleased]
 
+### Fixed (cliente host)
+
+- **`parse_signature` tolera el eco de la shell** — `rush` hace eco de los bytes
+  del request antes de emitir la firma y sin salto de línea, así que la respuesta
+  llegaba como `IDENTIFYRUGUS;tier=…`. El parser exigía el prefijo `RUGUS;` al
+  inicio de la línea y rechazaba el dispositivo (`NotRugus`), de modo que la
+  auto-detección de `rugus` no veía la placa pese a responder correctamente.
+  Ahora localiza el prefijo en cualquier posición y descarta el eco previo.
+  Validado en HW: `rugus --list` detecta el F103 vivo en `/dev/ttyUSB0`.
+
+### Changed (cliente host)
+
+- **Binario del cliente renombrado a `rugus`** — el ejecutable se invoca con la
+  palabra `rugus` (antes `rugus-cli`).
+- **BLE opcional tras la feature `ble` (off por defecto)** — `btleplug` arrastra
+  `libdbus-sys` (requiere `libdbus-1-dev`/`dbus-devel`). El build por defecto es
+  solo serie; recompila con `--features ble` para BLE. Sin la feature se enlaza
+  un stub (`ble_stub.rs`) que no escanea y explica cómo habilitarlo.
+- **`serialport` sin default-features** — evita `libudev-sys`
+  (`libudev-dev`/`systemd-devel`) en Linux; la enumeración por nombre de puerto
+  sigue funcionando. El build de `rugus` ahora compila sin dependencias de sistema.
+
 ### Fixed (robustez)
 
 - **RX de la consola USART1 (F103) por interrupción + ring buffer (raíz)** — la

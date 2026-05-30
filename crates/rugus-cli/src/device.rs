@@ -19,6 +19,7 @@ pub enum TransportKind {
     /// Puerto serie (nombre del puerto).
     Serial(String),
     /// BLE (nombre anunciado o id del periférico).
+    #[cfg_attr(not(feature = "ble"), allow(dead_code))]
     Ble(String),
 }
 
