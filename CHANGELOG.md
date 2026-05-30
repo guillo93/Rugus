@@ -11,6 +11,43 @@ SemVer estricto.
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-05-30 — Rugus lite appliance + rush + eco HM-20
+
+Release del tier **lite** como appliance completo: shell `rush`, cliente host
+`rugus-cli`, primer `.eco` (HM-20 BLE) y fail-safe reversible.
+
+### Added
+
+- **`rush`** — shell on-device (rename desde `rugus-cli` embebido): léxico v1,
+  banners ANSI, protocolo `IDENTIFY`, comando `orbit` con ayuda.
+- **`rugus-cli` (host)** — cliente PC (`rugus-proto` + serie/BLE auto-detect +
+  TUI ratatui). Crates host excluidos del workspace embebido; CI job `host`.
+- **Appliance F103 fases 1–6** — `examples/appliance-stm32f103c8-bluepill`:
+  USART1 consola, I2C/SD/GPIO, scheduler cooperativo, USART2 módulos, WDT.
+- **Primer `.eco`** — `examples/eco/hm20-ble.eco` (HM-10/HM-20 BLE UART
+  transparente); driver `rugus-hal-stm32f1::hm20` (AT `+NAME=RUGUS`, 115200).
+- **Docs** — `RUGUS-ECOSYSTEM.md`, `RUGUS-CLI-HOST.md`, wiring HM-20 en
+  `RUGUS-LITE-APPLIANCE.md`, registry stub HM-20.
+
+### Changed
+
+- **`anchor off` / `anchor release`** — `sys_failsafe(1)` desactiva fail-safe
+  (GPIO y syscalls vuelven a operar); ayuda en `orbit`.
+
+### Fixed
+
+- **`hm20` init** — poll no bloqueante en USART2 cuando no hay módulo BLE
+  conectado (boot no cuelga).
+
+### Validated
+
+- **`verify-appliance-stm32f103c8-bluepill.sh` → 9/9 PASS** (ST-Link
+  `0483:3748:…`, BOOT0=GND, 2026-05-30).
+
+---
+
+## [Unreleased — histórico G4]
+
 ### Added
 
 - **G4 closure follow-up** — recovered uncommitted ETH/HTTPS work, refined and applied as proper commits.
