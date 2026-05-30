@@ -14,7 +14,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PORT=""
 PROVISION=0
-BAUD_PROBE=(9600 115200)
+BAUD_PROBE=(9600 57600 115200)
 NAME="RUGUS"
 BAUD_CODE=4
 
@@ -101,7 +101,7 @@ PORT = os.environ["HM20_PORT"]
 PROVISION = os.environ.get("HM20_PROVISION", "0") == "1"
 NAME = os.environ.get("HM20_NAME", "RUGUS")
 BAUD_CODE = int(os.environ.get("HM20_BAUD_CODE", "4"))
-BAUDS = [9600, 115200]
+BAUDS = [9600, 57600, 115200]
 READ_TIMEOUT = 2.0
 POST_RESET_WAIT = 1.5
 
@@ -157,7 +157,7 @@ def main() -> int:
             log(f"AT responded at {baud}")
             break
     if ser is None:
-        log("no AT response at 9600 or 115200 — check KEY→3.3V, TX/RX swap, power")
+        log("no AT response at 9600, 57600 or 115200 — check KEY→3.3V, TX/RX swap, power")
         return 2
 
     ok, _ = send_at(ser, "AT+RENEW")

@@ -136,14 +136,17 @@ pub fn init(rcc: &pac::RCC, i2c: I2c1, sd: Spi1Sd, modules: Usart2, wdt: Watchdo
                 InitResult::Ready => {
                     MODULE_ECO = Some("hm20-ble");
                     MODULE_STATUS = ModuleStatus::Hm20Ready;
+                    defmt::info!("hm20 init: ready");
                 }
                 InitResult::NoResponse => {
                     MODULE_ECO = None;
                     MODULE_STATUS = ModuleStatus::NoAtResponse;
+                    defmt::warn!("hm20 init: no-at-response");
                 }
                 InitResult::AtError => {
                     MODULE_ECO = Some("hm20-ble (AT warn)");
                     MODULE_STATUS = ModuleStatus::Hm20AtWarn;
+                    defmt::warn!("hm20 init: at-error");
                 }
             }
         }
