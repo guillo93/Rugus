@@ -26,6 +26,14 @@ SemVer estricto.
 
 ### Changed
 
+- **Allocator global fuera del TCB mínimo (feature `alloc`)** — `rugus-core`
+  exponía siempre `#[global_allocator]` (`linked_list_allocator`), obligando a
+  toda personalidad —incluida la lite/F103 sin heap— a enlazarlo y comprometer
+  un allocator global. Ahora el módulo `heap` y la dependencia van tras la
+  feature `alloc` (off por defecto); solo las placas con región de heap
+  (full/F4/F7 y los demos con `extern crate alloc`) la activan. El TCB queda más
+  pequeño y agnóstico de heap. Eliminada además la dependencia `heapless`, que
+  no se usaba en `rugus-core`.
 - **Layout de la MPU parametrizado por placa (`MpuLayout`)** — `mpu::init` y
   `platform_init` tenían el mapa de memoria del STM32F769 hardcodeado (SDRAM
   16 M, SRAM 512 K, flash 2 M), de modo que el ejemplo del F407 programaba

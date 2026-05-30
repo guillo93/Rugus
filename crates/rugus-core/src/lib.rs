@@ -13,6 +13,7 @@
 pub mod arch;
 pub mod domain;
 pub mod fault;
+#[cfg(feature = "alloc")]
 pub mod heap;
 pub mod sched;
 pub mod syscall;
