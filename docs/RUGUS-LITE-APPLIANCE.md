@@ -80,7 +80,8 @@ handshake y el flujo de auto-detección en [`RUGUS-CLI-HOST.md`](RUGUS-CLI-HOST.
 | `nest` | `module_list` | Listar módulos |
 | `hatch` | `app_reload` | Recargar `.afr` |
 | `coil` | `task_list` | Tareas del scheduler |
-| `anchor` | `sys_failsafe` | Modo fail-safe |
+| `anchor` | `sys_failsafe(0)` | Activar fail-safe |
+| `anchor off` / `anchor release` | `sys_failsafe(1)` | Desactivar fail-safe |
 | `ward` | `wdt` | Estado / kick watchdog |
 | `IDENTIFY` | (local) | Firma de descubrimiento (host serie/BLE) |
 

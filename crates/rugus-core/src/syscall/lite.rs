@@ -93,8 +93,8 @@ pub struct Hooks {
     pub task_list: fn(out: &mut [u8]) -> i32,
     /// Recarga app `.afr` (`hatch`).
     pub app_reload: fn(name: &[u8]) -> i32,
-    /// Modo fail-safe (`anchor`).
-    pub sys_failsafe: fn() -> i32,
+    /// Modo fail-safe (`anchor`). action: 0=on, 1=off.
+    pub sys_failsafe: fn(action: u8) -> i32,
     /// Watchdog status/kick (`ward`). action: 0=status, 1=kick.
     pub wdt: fn(action: u8) -> i32,
 }
@@ -216,7 +216,7 @@ pub fn dispatch(id: Id, args: [u32; 4]) -> i32 {
             };
             (h.app_reload)(name)
         }
-        Id::SysFailsafe => (h.sys_failsafe)(),
+        Id::SysFailsafe => (h.sys_failsafe)(args[0] as u8),
         Id::Wdt => (h.wdt)(args[0] as u8),
     }
 }
@@ -340,9 +340,9 @@ pub mod user {
         )
     }
 
-    /// Fail-safe (`anchor`).
-    pub fn sys_failsafe() -> i32 {
-        dispatch(Id::SysFailsafe, [0; 4])
+    /// Fail-safe (`anchor`). action: 0=on, 1=off.
+    pub fn sys_failsafe(action: u8) -> i32 {
+        dispatch(Id::SysFailsafe, [action as u32, 0, 0, 0])
     }
 
     /// Watchdog (`ward`).
