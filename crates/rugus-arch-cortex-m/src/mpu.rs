@@ -35,11 +35,19 @@ mod size {
     pub const B_512M: u8 = 28;
 }
 
-/// AP[2:0] en RASR — ver ARMv7-M ARM.
+/// AP[2:0] en RASR — ver ARMv7-M ARM B3.5.
+///
+/// OJO con la codificación: `0b011` es RW priv + RW user (acceso completo),
+/// mientras que `0b111` es RO/RO (solo lectura para ambos). Confundirlos deja
+/// el stack de la app como solo-lectura y la primera escritura (el `push` del
+/// prólogo) dispara MemManage aunque la región parezca correcta.
 mod ap {
+    /// Priv RW, user sin acceso.
     pub const PRIV_RW: u32 = 0b001 << 24;
+    /// Priv RO, user RO (flash ejecutable/lectura).
     pub const FULL_RO: u32 = 0b110 << 24;
-    pub const FULL_RW: u32 = 0b111 << 24;
+    /// Priv RW, user RW (stack de app).
+    pub const FULL_RW: u32 = 0b011 << 24;
 }
 
 const RASR_ENABLE: u32 = 1 << 0;
@@ -182,6 +190,17 @@ pub fn init(mpu: &mut MPU, layout: &MpuLayout) {
     unsafe {
         mpu.ctrl.write(CTRL_ENABLE | CTRL_PRIVDEFENA);
     }
+    sync_mpu();
+}
+
+/// Garantiza que los cambios en la configuración MPU surtan efecto antes de
+/// cualquier acceso a memoria que dependa de ellos. ARMv7-M recomienda `DSB;
+/// ISB` tras reprogramar regiones para que la nueva configuración rija en la
+/// tarea recién conmutada sin depender de la sincronización implícita del
+/// exception return.
+fn sync_mpu() {
+    cortex_m::asm::dsb();
+    cortex_m::asm::isb();
 }
 
 /// Remapea la región de stack de la app activa (dominio App).
@@ -197,11 +216,13 @@ pub fn remap_app_stack(mpu: &mut MPU, stack_base: u32, size: u8) {
         false,
         ATTR_NORMAL_WB,
     );
+    sync_mpu();
 }
 
 /// Deshabilita la región de stack app (p. ej. al volver a tarea kernel).
 pub fn clear_app_stack(mpu: &mut MPU) {
     disable_region(mpu, region::APP_STACK);
+    sync_mpu();
 }
 
 fn configure_region(mpu: &mut MPU, rn: u8, base: u32, size: u8, ap: u32, xn: bool, attr: u32) {
