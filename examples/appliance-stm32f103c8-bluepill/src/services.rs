@@ -14,7 +14,7 @@ use rugus_hal_stm32f1::pac;
 use rugus_hal_stm32f1::spi_sd::{SdStatus, Spi1Sd};
 use rugus_hal_stm32f1::uart2::Usart2;
 use rugus_hal_stm32f1::wdt::Watchdog;
-use rugus_rfn::{parse_afr_header, parse_rfn, ConfigMap, MAX_FIELD};
+use rugus_rfn::{parse_rfn, AfrHeader, ConfigMap, MAX_FIELD};
 use rush::{identify, Write};
 
 /// Config RFN embebida por defecto (sin SD).
@@ -30,9 +30,21 @@ static mut WDT: Option<Watchdog> = None;
 static mut SCHED_TASK_COUNT: u32 = 0;
 static mut MODULE_ECO: Option<&'static str> = None;
 static mut MODULE_STATUS: ModuleStatus = ModuleStatus::Idle;
-static mut APP_NAME: Option<String<{ MAX_FIELD }>> = None;
 static mut IDENT_LINE: [u8; 16] = [0; 16];
 static mut IDENT_LEN: usize = 0;
+
+/// Capacidad del registro de apps `.afr` conocidas por el dispositivo.
+const APP_SLOTS: usize = 4;
+/// Registro de apps `.afr`: built-ins embebidos + (opcional) manifiesto de la SD.
+static mut APPS: [Option<AfrHeader>; APP_SLOTS] = [None, None, None, None];
+/// Número de entradas vivas en `APPS`.
+static mut APP_COUNT: usize = 0;
+/// Índice de la app activa en `APPS` (la última seleccionada con `hatch`).
+static mut ACTIVE_APP: Option<usize> = None;
+
+/// Apps `.afr` built-in (siempre presentes, sin depender de la SD). `hatch`
+/// puede activar cualquiera de estas; la SD puede añadir/override una más.
+const BUILTIN_APPS: &[(&str, &str)] = &[("rush", "1.0.0"), ("blink", "0.1.0")];
 
 /// Estado de init HM-20 en USART2 (diagnóstico `ecosystem`).
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -131,6 +143,7 @@ pub fn init(rcc: &pac::RCC, i2c: I2c1, sd: Spi1Sd, modules: Usart2, wdt: Watchdo
                 }
             }
         }
+        seed_app_registry();
         if let Some(u) = MODULES.as_mut() {
             match hm20::init_with_kick(u, Hm20Config::default(), kick_wdt) {
                 InitResult::Ready => {
@@ -157,6 +170,63 @@ pub fn init(rcc: &pac::RCC, i2c: I2c1, sd: Spi1Sd, modules: Usart2, wdt: Watchdo
         }
     }
     defmt::info!("services ok");
+}
+
+/// Puebla el registro de apps: built-ins embebidos primero y, si el sector de
+/// arranque de la SD declaró una app `.afr` (`app.name`/`app.version` en la
+/// config RFN), la añade/override. Deja la app de la SD como activa si existe;
+/// si no, la primera built-in. Único punto de inicialización del registro.
+///
+/// SAFETY: invocado solo desde `init`, antes de arrancar el scheduler.
+unsafe fn seed_app_registry() {
+    APP_COUNT = 0;
+    ACTIVE_APP = None;
+    for (name, version) in BUILTIN_APPS {
+        let _ = register_app(name, version);
+    }
+    // Override/añadido desde el manifiesto `.afr` de la SD (si lo hubo).
+    let mut sd_app: Option<usize> = None;
+    if let Some(cfg) = CONFIG.as_ref() {
+        if let Some(name) = cfg.get("app.name") {
+            let version = cfg.get("app.version").unwrap_or("0.0.0");
+            sd_app = register_app(name, version);
+        }
+    }
+    ACTIVE_APP = sd_app.or(if APP_COUNT > 0 { Some(0) } else { None });
+}
+
+/// Registra (o actualiza la versión de) una app en el registro. Devuelve el
+/// índice de la entrada, o `None` si el registro está lleno y el nombre es nuevo.
+///
+/// SAFETY: acceso a los statics del registro; serializado (init / tarea CLI).
+unsafe fn register_app(name: &str, version: &str) -> Option<usize> {
+    let (Ok(name), Ok(version)) = (
+        String::<{ MAX_FIELD }>::try_from(name),
+        String::<16>::try_from(version),
+    ) else {
+        return None;
+    };
+    if let Some(idx) = find_app(name.as_str()) {
+        APPS[idx] = Some(AfrHeader { name, version });
+        return Some(idx);
+    }
+    if APP_COUNT >= APP_SLOTS {
+        return None;
+    }
+    let idx = APP_COUNT;
+    APPS[idx] = Some(AfrHeader { name, version });
+    APP_COUNT += 1;
+    Some(idx)
+}
+
+/// Busca una app por nombre exacto. SAFETY: solo lee los statics del registro.
+unsafe fn find_app(name: &str) -> Option<usize> {
+    (0..APP_COUNT).find(|&i| {
+        APPS[i]
+            .as_ref()
+            .map(|a| a.name.as_str() == name)
+            .unwrap_or(false)
+    })
 }
 
 pub fn set_task_count(n: u32) {
@@ -207,7 +277,7 @@ fn hook_sys_status(out: &mut [u8]) -> usize {
     };
     let mod_status = unsafe { MODULE_STATUS.as_str() };
     let tasks = unsafe { SCHED_TASK_COUNT };
-    let mut line: String<128> = String::new();
+    let mut line: String<256> = String::new();
     let _ = line.push_str("uptime: (cycle counter)\r\n");
     let _ = line.push_str("failsafe: ");
     let _ = line.push_str(if fs { "ON\r\n" } else { "OFF\r\n" });
@@ -218,6 +288,30 @@ fn hook_sys_status(out: &mut [u8]) -> usize {
     let _ = line.push_str("\r\n");
     let _ = line.push_str("tasks: ");
     push_u32(&mut line, tasks);
+    let _ = line.push_str("\r\n");
+    // App `.afr` activa + registro conocido (built-ins + manifiesto SD).
+    let _ = line.push_str("app: ");
+    unsafe {
+        match ACTIVE_APP.and_then(|i| APPS[i].as_ref()) {
+            Some(a) => {
+                let _ = line.push_str(a.name.as_str());
+                let _ = line.push_str(" v");
+                let _ = line.push_str(a.version.as_str());
+            }
+            None => {
+                let _ = line.push_str("(none)");
+            }
+        }
+        let _ = line.push_str("\r\napps: ");
+        for (i, slot) in APPS[..APP_COUNT].iter().enumerate() {
+            if let Some(a) = slot.as_ref() {
+                if i > 0 {
+                    let _ = line.push_str(",");
+                }
+                let _ = line.push_str(a.name.as_str());
+            }
+        }
+    }
     let _ = line.push_str("\r\n");
     write_bytes(out, line.as_bytes())
 }
@@ -439,6 +533,10 @@ fn hook_task_list(out: &mut [u8]) -> i32 {
     write_bytes(out, line.as_bytes()) as i32
 }
 
+/// `hatch <name>` — activa una app `.afr` del registro (built-in o de la SD).
+/// Devuelve 0 si la app existe (queda como activa), `Einval` si no está
+/// registrada. No ejecuta código: en lite `.afr` es un registro de apps
+/// conocidas; la activación fija cuál reporta el dispositivo.
 fn hook_app_reload(name: &[u8]) -> i32 {
     if FAILSAFE.load(Ordering::Relaxed) {
         return Errno::Edenied as i32;
@@ -446,17 +544,16 @@ fn hook_app_reload(name: &[u8]) -> i32 {
     let Ok(name_s) = core::str::from_utf8(name) else {
         return Errno::Einval as i32;
     };
-    // Try embedded AFR header stub
-    let stub = "app.name = demo\napp.version = 0.1.0\n";
-    if let Some(hdr) = parse_afr_header(stub) {
-        if hdr.name.as_str() == name_s || name_s == "demo" {
-            unsafe {
-                APP_NAME = Some(hdr.name);
+    // SAFETY: registro serializado; solo la tarea CLI lo muta vía este hook.
+    unsafe {
+        match find_app(name_s) {
+            Some(idx) => {
+                ACTIVE_APP = Some(idx);
+                0
             }
-            return 0;
+            None => Errno::Einval as i32,
         }
     }
-    Errno::Einval as i32
 }
 
 fn hook_sys_failsafe(action: u8) -> i32 {
@@ -510,7 +607,7 @@ fn push_hex_byte(s: &mut heapless::String<16>, b: u8) {
     let _ = s.push(HEX[(b & 0xF) as usize] as char);
 }
 
-fn push_u32(s: &mut heapless::String<128>, n: u32) {
+fn push_u32<const N: usize>(s: &mut heapless::String<N>, n: u32) {
     let mut buf = [0u8; 10];
     let mut i = 0;
     let mut v = n;

@@ -11,6 +11,20 @@ SemVer estricto.
 
 ## [Unreleased]
 
+### Added
+
+- **Registro de apps `.afr` real en el appliance F103 (reemplaza el stub)** — el
+  hook `app_reload` (`hatch <name>`) tenía un manifiesto `demo` hardcodeado y solo
+  aceptaba ese nombre, simulando una carga inexistente. Ahora hay un registro real
+  de apps: se siembra con built-ins embebidos (no depende de la SD) y, si el sector
+  de arranque de la SD declara una app `.afr` (`app.name`/`app.version` en la config
+  RFN), la añade/override. `hatch <name>` valida contra el registro y fija la app
+  activa (`Einval` si no existe). `ecosystem` ahora muestra `app:`/`apps:` para que
+  la selección sea observable (antes `APP_NAME` se asignaba pero no se mostraba). No
+  ejecuta código: en lite `.afr` es un registro de apps conocidas, no un loader de
+  binarios (sin MPU no habría aislamiento). Validado en HW: `hatch blink` cambia la
+  app activa, `hatch <inexistente>` da error.
+
 ### Changed (robustez)
 
 - **RX del bus de módulos USART2 (HM-20/BLE) por interrupción + ring buffer** —
