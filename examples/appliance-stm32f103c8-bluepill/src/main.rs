@@ -32,6 +32,9 @@ type Sched = Scheduler<CortexM>;
 static mut SCHEDULER: Sched = Sched::new();
 static mut STACK_CLI: [u8; 1536] = [0; 1536];
 static mut STACK_HB: [u8; 1024] = [0; 1024];
+/// Pila de la tarea víctima de `sting`. Solo corre brevemente antes de faultar;
+/// el failsafe la mata. Se reutiliza entre stings sucesivos (solo una viva).
+static mut STACK_STING: [u8; 512] = [0; 512];
 static mut CONSOLE: Option<Usart1> = None;
 static mut LINE: [u8; 128] = [0; 128];
 static mut LINE_LEN: usize = 0;
@@ -210,6 +213,7 @@ fn main() -> ! {
             .expect("spawn heartbeat");
         services::set_task_count(2);
         services::set_stack_probe(task_stack_usage);
+        services::set_sting_spawn(sting_spawn);
         services::set_boot_info(reset_cause, last_fault.map(|f| (f.kind, f.task)));
         defmt::info!("scheduler: cli + heartbeat tasks");
         sched.start();
@@ -234,6 +238,8 @@ fn fault_hook(report: FaultReport) -> ! {
     unsafe {
         rugus_hal_stm32f1::postmortem::save_fault(report.kind as u8, report.task_id.0);
     }
+    // Cuenta el fault contenido y deja la cicatriz visible en `ecosystem`/`scar`.
+    services::note_fault(report.kind as u8, report.task_id.0);
     // SAFETY: en contexto de fault (handler mode), single-threaded; el scheduler
     // está activo y `current` es la tarea faultante.
     unsafe { (&mut *addr_of_mut!(SCHEDULER)).kill_current_and_resume(report) }
@@ -247,6 +253,29 @@ fn task_stack_usage(idx: usize) -> (u32, u32) {
     unsafe {
         let sched = &*addr_of!(SCHEDULER);
         (sched.stack_high_water(idx), sched.stack_len(idx))
+    }
+}
+
+/// Tarea víctima de `sting`: ejecuta una instrucción indefinida → UsageFault.
+/// El failsafe la mata y reanuda; CLI y heartbeat sobreviven. No retorna.
+fn sting_task() -> ! {
+    cortex_m::asm::udf()
+}
+
+/// Spawnea la tarea víctima de `sting` en el scheduler vivo. Devuelve 0 si la
+/// armó, `Enomem` (-7) si no quedan slots (cada víctima consume uno hasta el
+/// próximo reset). La invoca el hook `sting` desde la tarea CLI.
+fn sting_spawn() -> i32 {
+    // SAFETY: scheduler cooperativo, sin reentrada concurrente desde la CLI.
+    unsafe {
+        let sched = &mut *addr_of_mut!(SCHEDULER);
+        match sched.spawn(&mut *addr_of_mut!(STACK_STING), sting_task, Priority::App) {
+            Ok(_) => {
+                services::set_task_count(sched.task_count() as u32);
+                0
+            }
+            Err(_) => -7,
+        }
     }
 }
 

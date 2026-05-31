@@ -103,6 +103,13 @@ pub enum Command {
         /// 0=status, 1=kick
         action: u8,
     },
+    /// `scar [clear]` → post-mortem del último fault contenido
+    Scar {
+        /// `true` si `scar clear` (borra la cicatriz).
+        clear: bool,
+    },
+    /// `sting` → provoca un fault controlado para validar el failsafe
+    Sting,
     /// `IDENTIFY` → firma del protocolo de descubrimiento (host serie/BLE).
     Identify,
     /// Línea vacía o desconocida.
@@ -171,6 +178,12 @@ pub fn parse(line: &str) -> Command {
             };
             Command::Ward { action }
         }
+        "scar" => match parts.next() {
+            Some("clear") => Command::Scar { clear: true },
+            Some(_) => Command::Unknown,
+            None => Command::Scar { clear: false },
+        },
+        "sting" => Command::Sting,
         "IDENTIFY" => Command::Identify,
         _ => Command::Unknown,
     }
@@ -329,6 +342,8 @@ pub fn execute(cmd: Command, line: &str, out: &mut dyn Write) {
         Command::Coil => exec_coil(out),
         Command::Anchor { action } => exec_anchor(out, action),
         Command::Ward { action } => exec_ward(out, action),
+        Command::Scar { clear } => exec_scar(out, clear),
+        Command::Sting => exec_sting(out),
         Command::Identify => identify::write_signature(out, identify::TIER, identify::CHIP),
         Command::Unknown => {
             let _ = out.write_str("?\r\n");
@@ -364,7 +379,9 @@ fn exec_orbit(out: &mut dyn Write) {
     let _ = out.write_str("cosmos orbit ecosystem moor pulso spark mute ripple\r\n");
     let _ =
         out.write_str("scout sonar schema scribe seal nest nest renew hatch coil anchor ward\r\n");
+    let _ = out.write_str("scar [clear] sting\r\n");
     let _ = out.write_str("anchor — fail-safe ON | anchor off|release — fail-safe OFF\r\n");
+    let _ = out.write_str("scar — última cicatriz de fault | sting — provoca fault de prueba\r\n");
 }
 
 fn exec_pulso(out: &mut dyn Write, port: u8, pin: u8) {
@@ -526,6 +543,42 @@ fn exec_anchor(out: &mut dyn Write, action: u8) {
         });
     } else {
         let _ = out.write_str("anchor: error\r\n");
+    }
+}
+
+fn exec_scar(out: &mut dyn Write, clear: bool) {
+    if clear {
+        if user::scar_clear() == 0 {
+            let _ = out.write_str("scar: cleared\r\n");
+        } else {
+            let _ = out.write_str("scar: error\r\n");
+        }
+        return;
+    }
+    let mut buf = [0u8; 256];
+    let n = user::scar(&mut buf);
+    if n > 0 {
+        let text = core::str::from_utf8(&buf[..n as usize]).unwrap_or("(invalid)");
+        let _ = out.write_str(text);
+        if !text.ends_with("\r\n") {
+            let _ = out.write_str("\r\n");
+        }
+    } else {
+        let _ = out.write_str("scar: error\r\n");
+    }
+}
+
+fn exec_sting(out: &mut dyn Write) {
+    match user::sting() {
+        0 => {
+            let _ = out.write_str("sting: victim armed — failsafe should contain it\r\n");
+        }
+        -7 => {
+            let _ = out.write_str("sting: no free task slot\r\n");
+        }
+        _ => {
+            let _ = out.write_str("sting: error\r\n");
+        }
     }
 }
 
