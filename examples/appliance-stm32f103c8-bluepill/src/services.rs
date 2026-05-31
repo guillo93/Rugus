@@ -149,6 +149,11 @@ pub fn init(rcc: &pac::RCC, i2c: I2c1, sd: Spi1Sd, modules: Usart2, wdt: Watchdo
                     defmt::warn!("hm20 init: at-error");
                 }
             }
+            // El init AT usó lecturas polled; a partir de aquí (runtime) la RX
+            // del bus de módulos va por interrupción al ring SPSC, igual que la
+            // consola USART1, para no perder bytes del IDENTIFY sobre BLE cuando
+            // la tarea CLI tarda en sondear.
+            u.enable_rx_irq();
         }
     }
     defmt::info!("services ok");

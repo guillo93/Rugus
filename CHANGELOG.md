@@ -11,6 +11,21 @@ SemVer estricto.
 
 ## [Unreleased]
 
+### Changed (robustez)
+
+- **RX del bus de módulos USART2 (HM-20/BLE) por interrupción + ring buffer** —
+  la RX de USART2 era polled sobre el registro de 1 byte, igual que lo estaba
+  USART1 antes de su fix: el descubrimiento IDENTIFY que llega por el puente BLE
+  podía perder bytes cuando la tarea CLI cooperativa tardaba en sondear (p. ej.
+  el heartbeat a mitad de una rebanada de retardo). Ahora un ISR `USART2`
+  (RXNEIE) drena cada byte a un ring SPSC lock-free de 256 B, igual que USART1.
+  La RX opera en dos modos sobre el mismo periférico: **polled** durante el init
+  AT del HM-20 (boot single-thread, fiable) y **por interrupción** en runtime
+  (`Usart2::enable_rx_irq` se llama tras el init); `try_read_byte` conmuta según
+  el modo, así que el driver `hm20` y `poll_identify_usart2` usan la misma API.
+  `set_baud` reasevera `RXNEIE` porque reescribe CR1. Validado en HW: arranque,
+  IDENTIFY por USART1 e init HM-20 `ready` sin regresión tras el cambio.
+
 ### Fixed (cliente host)
 
 - **`parse_signature` tolera el eco de la shell** — `rush` hace eco de los bytes
