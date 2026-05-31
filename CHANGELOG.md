@@ -13,6 +13,21 @@ SemVer estricto.
 
 ### Added
 
+- **Comandos `scar` y `sting` — observabilidad y prueba del failsafe** — dos
+  comandos nuevos en `rush` que exponen la madurez del kernel lite (extienden el
+  ABI lite del appliance, no el TCB de `rugus-core`):
+  - **`scar [clear]`**: muestra la *cicatriz* del último fault contenido (kind +
+    tarea) y el total de faults contenidos desde el arranque, bajo demanda;
+    `scar clear` la borra. La cicatriz se rellena en vivo desde el fault hook
+    (no solo al arrancar desde los backup registers).
+  - **`sting`**: provoca un fault controlado armando una tarea víctima efímera
+    (UsageFault). El failsafe (kill+resume) la contiene sin tumbar la consola ni
+    el heartbeat — valida el lazo del failsafe sin recompilar. Cada víctima
+    consume un slot del scheduler hasta el próximo reset (`Enomem` si se agotan).
+  - **`ecosystem` ampliado** con `contained-faults: N` (cuántas veces actuó el
+    failsafe). Validado en HW: `sting` → `scar` muestra `UsageFault task=2`,
+    `ecosystem` cuenta el fault, sistema vivo.
+
 - **Madurez de kernel: reloj monotónico, diagnóstico de pila, post-mortem
   persistente y canales SPSC** — cuatro mejoras que endurecen el kernel lite sin
   tocar el ABI de syscalls (la TCB sigue mínima y sin logging):

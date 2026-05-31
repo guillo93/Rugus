@@ -1,7 +1,7 @@
 //! Estado y hooks del appliance — capa servicio (no CLI).
 
 use crate::heartbeat;
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use heapless::String;
 use rugus_core::syscall::lite::{GpioLevel, Hooks};
@@ -22,6 +22,12 @@ const DEFAULT_RFN: &str =
     "# Rugus lite appliance default\nboard = bluepill\npersonality = lite\nled = C13\n";
 
 static FAILSAFE: AtomicBool = AtomicBool::new(false);
+/// Faults contenidos por el failsafe desde el arranque (incrementado en el
+/// fault hook de `main`). Observabilidad: cuántas veces actuó el immune system.
+static CONTAINED_FAULTS: AtomicU32 = AtomicU32::new(0);
+/// Spawner de la tarea víctima de `sting`, inyectado por `main` (necesita el
+/// scheduler vivo). Devuelve 0 si la armó, errno negativo si no hay slot.
+static mut STING_SPAWN: Option<fn() -> i32> = None;
 static mut CONFIG: Option<ConfigMap> = None;
 static mut I2C: Option<I2c1> = None;
 static mut SD: Option<Spi1Sd> = None;
@@ -279,6 +285,25 @@ pub fn set_boot_info(reset_cause: &'static str, fault: Option<(u8, u8)>) {
     }
 }
 
+/// Registra el spawner de la tarea víctima de `sting`; lo cablea `main`, que
+/// es quien posee el scheduler. La capa servicio no conoce su dirección.
+pub fn set_sting_spawn(f: fn() -> i32) {
+    unsafe {
+        STING_SPAWN = Some(f);
+    }
+}
+
+/// Registra un fault contenido por el failsafe: incrementa el contador y deja
+/// la cicatriz (`kind`, `task`) visible en vivo por `scar`, sin esperar a un
+/// reset. Lo llama el fault hook de `main` tras grabar el post-mortem en BKP.
+pub fn note_fault(kind: u8, task: u8) {
+    CONTAINED_FAULTS.fetch_add(1, Ordering::Relaxed);
+    // SAFETY: contexto de fault, single-thread; el scheduler no corre concurrente.
+    unsafe {
+        LAST_FAULT = Some((kind, task));
+    }
+}
+
 /// Nombre de un `FaultKind` desde su código `u8` (repr de rugus-core).
 fn fault_kind_name(kind: u8) -> &'static str {
     match kind {
@@ -315,6 +340,52 @@ pub fn hooks() -> Hooks {
         app_reload: hook_app_reload,
         sys_failsafe: hook_sys_failsafe,
         wdt: hook_wdt,
+        scar: hook_scar,
+        sting: hook_sting,
+    }
+}
+
+/// `scar [clear]` — post-mortem del último fault contenido. action 0=leer
+/// (informe en `out`), 1=borrar la cicatriz en RAM. La copia persistente vive
+/// en los backup registers y ya se consume al arrancar; aquí está la copia que
+/// `set_boot_info` dejó en RAM más el contador de faults vivos.
+fn hook_scar(action: u8, out: &mut [u8]) -> i32 {
+    if action == 1 {
+        unsafe {
+            LAST_FAULT = None;
+        }
+        return 0;
+    }
+    let mut line: String<256> = String::new();
+    let contained = CONTAINED_FAULTS.load(Ordering::Relaxed);
+    // SAFETY: estático fijado en boot/fault hook, lectura desde la tarea CLI.
+    unsafe {
+        match LAST_FAULT {
+            Some((kind, task)) => {
+                let _ = line.push_str("last-fault: ");
+                let _ = line.push_str(fault_kind_name(kind));
+                let _ = line.push_str(" task=");
+                push_u32(&mut line, task as u32);
+                let _ = line.push_str("\r\n");
+            }
+            None => {
+                let _ = line.push_str("last-fault: (none)\r\n");
+            }
+        }
+    }
+    let _ = line.push_str("contained: ");
+    push_u32(&mut line, contained);
+    let _ = line.push_str("\r\n");
+    write_bytes(out, line.as_bytes()) as i32
+}
+
+/// `sting` — provoca un fault controlado armando una tarea víctima efímera. El
+/// failsafe (kill+resume) debe contenerla sin tumbar la consola ni el heartbeat.
+fn hook_sting() -> i32 {
+    // SAFETY: spawner inyectado por main; serializado en la tarea CLI.
+    match unsafe { STING_SPAWN } {
+        Some(f) => f(),
+        None => Errno::Ebusy as i32,
     }
 }
 
@@ -360,6 +431,11 @@ fn hook_sys_status(out: &mut [u8]) -> usize {
     let _ = line.push_str("\r\n");
     let _ = line.push_str("tasks: ");
     push_u32(&mut line, tasks);
+    let _ = line.push_str("\r\n");
+    // Failsafe en acción: faults contenidos (tarea matada + resume) desde el
+    // arranque. Distinto de cero = el immune system del kernel ya actuó.
+    let _ = line.push_str("contained-faults: ");
+    push_u32(&mut line, CONTAINED_FAULTS.load(Ordering::Relaxed));
     let _ = line.push_str("\r\n");
     // Diagnóstico de transporte: bytes RX descartados (ring lleno u overrun HW)
     // en cada UART. Distinto de cero indica que una tarea tardó en drenar.

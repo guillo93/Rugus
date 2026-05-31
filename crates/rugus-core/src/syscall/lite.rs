@@ -27,6 +27,10 @@ pub enum Id {
     Wdt = 0x5F,
     /// Factory reset del módulo del slot + re-init (`nest renew`).
     ModuleRenew = 0x60,
+    /// Post-mortem del último fault contenido (`scar`). action: 0=leer, 1=borrar.
+    Scar = 0x61,
+    /// Provoca un fault controlado para validar el failsafe (`sting`).
+    Sting = 0x62,
 }
 
 impl Id {
@@ -50,6 +54,8 @@ impl Id {
             0x5E => Some(Self::SysFailsafe),
             0x5F => Some(Self::Wdt),
             0x60 => Some(Self::ModuleRenew),
+            0x61 => Some(Self::Scar),
+            0x62 => Some(Self::Sting),
             _ => None,
         }
     }
@@ -103,6 +109,13 @@ pub struct Hooks {
     /// Factory reset del módulo del slot y re-init (`nest renew`). El driver
     /// concreto (proveedor, bus) lo resuelve la capa de servicio, no el kernel.
     pub module_renew: fn() -> i32,
+    /// Post-mortem del último fault contenido (`scar`). `action`: 0=leer (escribe
+    /// el informe en `out`, retorna bytes), 1=borrar la cicatriz (retorna 0).
+    pub scar: fn(action: u8, out: &mut [u8]) -> i32,
+    /// Provoca un fault controlado en una tarea víctima efímera (`sting`) para
+    /// validar que el failsafe la contiene sin tumbar el sistema. Lo resuelve la
+    /// capa de servicio (spawn de la víctima vía scheduler), no el kernel.
+    pub sting: fn() -> i32,
 }
 
 static mut LITE_HOOKS: Option<Hooks> = None;
@@ -225,6 +238,18 @@ pub fn dispatch(id: Id, args: [u32; 4]) -> i32 {
         Id::SysFailsafe => (h.sys_failsafe)(args[0] as u8),
         Id::Wdt => (h.wdt)(args[0] as u8),
         Id::ModuleRenew => (h.module_renew)(),
+        Id::Scar => {
+            let action = args[0] as u8;
+            if action == 1 {
+                // Borrar no necesita buffer.
+                return (h.scar)(1, &mut []);
+            }
+            let Some(out) = mut_slice_from_args(args[1], args[2]) else {
+                return Errno::Einval as i32;
+            };
+            (h.scar)(0, out)
+        }
+        Id::Sting => (h.sting)(),
     }
 }
 
@@ -360,5 +385,20 @@ pub mod user {
     /// Factory reset del módulo del slot (`nest renew`).
     pub fn module_renew() -> i32 {
         dispatch(Id::ModuleRenew, [0; 4])
+    }
+
+    /// Lee el post-mortem del último fault contenido (`scar`).
+    pub fn scar(out: &mut [u8]) -> i32 {
+        dispatch(Id::Scar, [0, out.as_mut_ptr() as u32, out.len() as u32, 0])
+    }
+
+    /// Borra la cicatriz del último fault (`scar clear`).
+    pub fn scar_clear() -> i32 {
+        dispatch(Id::Scar, [1, 0, 0, 0])
+    }
+
+    /// Provoca un fault controlado para validar el failsafe (`sting`).
+    pub fn sting() -> i32 {
+        dispatch(Id::Sting, [0; 4])
     }
 }
