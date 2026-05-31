@@ -60,7 +60,7 @@ fn main() -> ! {
     let clocks = rcc::init(&dp);
     // Match eth-link exactly: ETH MPU + caches BEFORE SysTick / GPIOs.
     cache::enable_with_eth_dma(&mut cp.SCB, &mut cp.CPUID, &mut cp.MPU);
-    setup_systick(&mut cp.SYST);
+    setup_systick(&mut cp.SYST, clocks.hclk);
 
     defmt::info!(
         "rugus https-get @ STM32F769I-DISCO, SYSCLK {} MHz",
@@ -275,8 +275,14 @@ fn wait_ipv4(net: &mut NetStack<'_, EthernetDMA<'_, '_>>, cfg: &StaticConfig) {
     }
 }
 
-fn setup_systick(syst: &mut cortex_m::peripheral::SYST) {
-    syst.set_reload(cortex_m::peripheral::SYST::get_ticks_per_10ms() / 10);
+fn setup_systick(syst: &mut cortex_m::peripheral::SYST, hclk_hz: u32) {
+    // Tick de 1 ms derivado del reloj del core (HCLK), no del registro de
+    // calibración CALIB: en el STM32F7 ese valor no es fiable y dejaba `now_ms`
+    // corriendo ~13x rápido, encogiendo los timeouts de TCP (connect 15 s) y
+    // del handshake TLS hasta provocar timeouts espurios contra RTT real.
+    syst.set_clock_source(cortex_m::peripheral::syst::SystClkSource::Core);
+    syst.set_reload(hclk_hz / 1000 - 1);
+    syst.clear_current();
     syst.enable_counter();
     syst.enable_interrupt();
 }

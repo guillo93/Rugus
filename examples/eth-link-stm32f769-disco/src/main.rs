@@ -40,7 +40,7 @@ fn main() -> ! {
 
     let clocks = rcc::init(&dp);
     cache::enable_with_eth_dma(&mut cp.SCB, &mut cp.CPUID, &mut cp.MPU);
-    setup_systick(&mut cp.SYST);
+    setup_systick(&mut cp.SYST, clocks.hclk);
 
     defmt::info!(
         "rugus eth-link @ STM32F769I-DISCO, SYSCLK {} MHz",
@@ -185,8 +185,15 @@ fn eth_rings() -> (&'static mut [RxRingEntry], &'static mut [TxRingEntry]) {
     }
 }
 
-fn setup_systick(syst: &mut cortex_m::peripheral::SYST) {
-    syst.set_reload(cortex_m::peripheral::SYST::get_ticks_per_10ms() / 10);
+fn setup_systick(syst: &mut cortex_m::peripheral::SYST, hclk_hz: u32) {
+    // Tick de 1 ms derivado del reloj del core (HCLK), no del registro de
+    // calibración CALIB: en el STM32F7 ese valor no es fiable y dejaba `now_ms`
+    // corriendo ~13x rápido, encogiendo todos los timeouts de smoltcp (ARP,
+    // retransmisión TCP, DHCP). Fijamos explícitamente la fuente al reloj del
+    // procesador y derivamos el reload de la frecuencia conocida.
+    syst.set_clock_source(cortex_m::peripheral::syst::SystClkSource::Core);
+    syst.set_reload(hclk_hz / 1000 - 1);
+    syst.clear_current();
     syst.enable_counter();
     syst.enable_interrupt();
 }
