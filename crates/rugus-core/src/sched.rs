@@ -11,6 +11,14 @@ use core::mem::MaybeUninit;
 /// Máximo de tareas concurrentes (incluye idle).
 pub const MAX_TASKS: usize = 4;
 
+/// Patrón de relleno de stack para medir el uso máximo (high-water mark).
+///
+/// En `spawn` el stack se pinta entero con este byte; las posiciones que la
+/// tarea nunca tocó lo conservan. La marca de uso máximo es la distancia desde
+/// la base hasta el primer byte alterado. `0xA5` es un patrón clásico (no es ni
+/// `0x00` ni `0xFF`, valores que el código a veces escribe de forma natural).
+pub const STACK_FILL: u8 = 0xA5;
+
 /// Error al registrar una tarea.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SpawnError {
@@ -117,6 +125,13 @@ impl<A: Arch> Scheduler<A> {
                 return Err(SpawnError::UnalignedUserStack);
             }
         }
+        // Pinta el stack con el patrón antes de montar el frame inicial: el
+        // context switch crece desde el tope (direcciones altas) hacia la base,
+        // así que las posiciones bajas intactas miden el high-water (ver
+        // [`stack_high_water`]). `init_task_stack` reescribe el tope con el
+        // frame, lo cual ya cuenta como uso.
+        stack.fill(STACK_FILL);
+        let stack_len = stack.len() as u32;
         let ctx = A::init_task_stack(stack, entry, mode == TaskMode::Privileged);
         let base = stack.as_ptr() as u32;
         let slot = TaskSlot {
@@ -126,7 +141,7 @@ impl<A: Arch> Scheduler<A> {
             mode,
             domain,
             stack_base: base,
-            stack_len: stack.len() as u32,
+            stack_len,
         };
         self.tasks[self.count].write(slot);
         let id = TaskId(self.count as u8);
@@ -205,6 +220,51 @@ impl<A: Arch> Scheduler<A> {
     /// Dominio lógico de la tarea en ejecución.
     pub fn current_domain(&self) -> Domain {
         self.task_ref(self.current).domain
+    }
+
+    /// Número de tareas registradas.
+    pub fn task_count(&self) -> usize {
+        self.count
+    }
+
+    /// `true` si la tarea `idx` sigue viva (no fue matada por un fault).
+    pub fn task_alive(&self, idx: usize) -> bool {
+        idx < self.count && self.task_ref(idx).state == TaskState::Ready
+    }
+
+    /// Tamaño total del stack de la tarea `idx` en bytes (0 si no existe).
+    pub fn stack_len(&self, idx: usize) -> u32 {
+        if idx >= self.count {
+            return 0;
+        }
+        self.task_ref(idx).stack_len
+    }
+
+    /// Uso máximo de stack (high-water mark) de la tarea `idx`, en bytes.
+    ///
+    /// Cuenta los bytes [`STACK_FILL`] consecutivos desde la base (el extremo
+    /// que la tarea alcanza en último lugar) y resta del total: el resultado es
+    /// cuánto stack llegó a usar como máximo. Si la marca llega al total, la
+    /// tarea pudo haber desbordado y la medida es un límite inferior.
+    ///
+    /// Coste O(stack_len) — pensado para diagnóstico puntual (`coil`), no para
+    /// el camino caliente.
+    pub fn stack_high_water(&self, idx: usize) -> u32 {
+        if idx >= self.count {
+            return 0;
+        }
+        let slot = self.task_ref(idx);
+        let base = slot.stack_base as *const u8;
+        let len = slot.stack_len as usize;
+        let mut free = 0usize;
+        // SAFETY: [base, base+len) es el stack estático de la tarea, vivo
+        // mientras el scheduler existe; solo lectura byte a byte.
+        unsafe {
+            while free < len && *base.add(free) == STACK_FILL {
+                free += 1;
+            }
+        }
+        (len - free) as u32
     }
 
     fn prepare_task_hw(&self, idx: usize) {

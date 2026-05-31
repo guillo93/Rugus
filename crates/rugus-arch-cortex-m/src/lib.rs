@@ -12,6 +12,7 @@ mod fault;
 mod mpu;
 mod svc;
 mod switch;
+pub mod time;
 
 pub use exceptions::enable_fault_handlers;
 pub use fault::set_fault_hook;

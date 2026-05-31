@@ -20,6 +20,7 @@ pub mod gpio;
 pub mod gpio_raw;
 pub mod hm20;
 pub mod i2c;
+pub mod postmortem;
 pub mod rcc;
 pub mod spi_sd;
 pub mod uart;
