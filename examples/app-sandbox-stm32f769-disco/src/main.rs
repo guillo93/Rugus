@@ -115,9 +115,10 @@ fn main() -> ! {
                 Priority::Kernel,
             )
             .expect("spawn kernel");
-        // `bad_app` se lanza antes que `good_app`: el round-robin cooperativo
-        // sirve a las tareas App en orden de spawn, así `bad_app` alcanza su
-        // acceso ilegal, el kernel la mata, y `good_app` (+ kernel) sobreviven.
+        // Ambas apps comparten banda App y rotan de forma justa (round-robin por
+        // banda en el scheduler): el orden de spawn no decide cuál corre. `bad_app`
+        // alcanza su acceso ilegal, el kernel la mata, y `good_app` (+ kernel)
+        // sobreviven.
         sched
             .spawn_user(
                 &mut (*core::ptr::addr_of_mut!(STACK_BAD)).0,

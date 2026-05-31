@@ -60,12 +60,21 @@ struct TaskSlot<A: Arch> {
     stack_len: u32,
 }
 
+/// Número de bandas de prioridad (ver [`Priority`]).
+const PRIORITY_BANDS: usize = 3;
+
 /// Scheduler cooperativo con round-robin dentro de cada banda de prioridad.
 pub struct Scheduler<A: Arch> {
     tasks: [MaybeUninit<TaskSlot<A>>; MAX_TASKS],
     count: usize,
     current: usize,
     started: bool,
+    /// Cursor round-robin por banda: índice de la última tarea servida en cada
+    /// [`Priority`]. La rotación de cada banda avanza desde aquí, no desde la
+    /// tarea que cede, de modo que las tareas de igual prioridad rotan de forma
+    /// justa aunque una banda superior (p. ej. Kernel) se intercale en cada
+    /// turno y `from` sea siempre la misma.
+    last_served: [usize; PRIORITY_BANDS],
 }
 
 impl<A: Arch> Scheduler<A> {
@@ -76,6 +85,7 @@ impl<A: Arch> Scheduler<A> {
             count: 0,
             current: 0,
             started: false,
+            last_served: [0; PRIORITY_BANDS],
         }
     }
 
@@ -276,15 +286,18 @@ impl<A: Arch> Scheduler<A> {
         (0..self.count).all(|i| self.task_ref(i).state == TaskState::Killed)
     }
 
-    fn pick_next(&self, from: usize) -> usize {
+    fn pick_next(&mut self, from: usize) -> usize {
         for band in [Priority::Kernel, Priority::Service, Priority::App] {
+            let bi = band as usize;
+            let start = self.last_served[bi];
             for offset in 1..=self.count {
-                let idx = (from + offset) % self.count;
+                let idx = (start + offset) % self.count;
                 if idx == from {
                     continue;
                 }
                 let slot = self.task_ref(idx);
                 if slot.state == TaskState::Ready && slot.priority == band {
+                    self.last_served[bi] = idx;
                     return idx;
                 }
             }
