@@ -1,7 +1,82 @@
 //! USART2 — PA2 TX, PA3 RX (bus de módulos LoRa/BLE).
+//!
+//! La RX puede operar en dos modos sobre el mismo periférico:
+//!
+//! - **Polled** (arranque): durante el init AT del HM-20 (`hm20::init_with_kick`,
+//!   antes de arrancar el scheduler) se lee `SR.RXNE` directamente. En ese
+//!   contexto single-thread sin contención del scheduler el sondeo es fiable.
+//! - **Por interrupción** (runtime): tras el init se llama [`Usart2::enable_rx_irq`],
+//!   que habilita `RXNEIE` y enruta cada byte a un ring buffer SPSC (mismo patrón
+//!   que USART1). Así el descubrimiento IDENTIFY sobre el puente BLE no pierde
+//!   bytes cuando la tarea CLI cooperativa tarda en sondear (p. ej. el heartbeat
+//!   a mitad de una rebanada de retardo).
+//!
+//! [`Usart2::try_read_byte`] conmuta entre ambos modos según el flag interno, de
+//! modo que tanto el driver `hm20` (boot) como `poll_identify_usart2` (runtime)
+//! usan la misma llamada sin saber qué modo está activo.
+
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::pac;
+use pac::interrupt;
 use rugus_hal::SerialPort;
+
+/// Capacidad del ring RX (potencia de 2 para el índice módulo barato).
+const RX_BUF_LEN: usize = 256;
+static mut RX_BUF: [u8; RX_BUF_LEN] = [0; RX_BUF_LEN];
+/// Índice de escritura (solo ISR productor).
+static RX_HEAD: AtomicUsize = AtomicUsize::new(0);
+/// Índice de lectura (solo tarea consumidora).
+static RX_TAIL: AtomicUsize = AtomicUsize::new(0);
+/// Bytes descartados por ring lleno / overrun HW (diagnóstico).
+static RX_OVERRUNS: AtomicUsize = AtomicUsize::new(0);
+
+/// Empuja un byte al ring (productor único: ISR USART2).
+fn rx_push(b: u8) {
+    let head = RX_HEAD.load(Ordering::Relaxed);
+    let next = (head + 1) % RX_BUF_LEN;
+    if next == RX_TAIL.load(Ordering::Acquire) {
+        RX_OVERRUNS.fetch_add(1, Ordering::Relaxed);
+        return;
+    }
+    // SAFETY: `head` < RX_BUF_LEN y el ISR es el único escritor de RX_BUF/RX_HEAD.
+    unsafe {
+        (*core::ptr::addr_of_mut!(RX_BUF))[head] = b;
+    }
+    RX_HEAD.store(next, Ordering::Release);
+}
+
+/// Saca un byte del ring (consumidor único: tarea CLI).
+fn rx_pop() -> Option<u8> {
+    let tail = RX_TAIL.load(Ordering::Relaxed);
+    if tail == RX_HEAD.load(Ordering::Acquire) {
+        return None;
+    }
+    // SAFETY: `tail` < RX_BUF_LEN y la tarea es la única lectora de RX_TAIL.
+    let b = unsafe { (*core::ptr::addr_of!(RX_BUF))[tail] };
+    RX_TAIL.store((tail + 1) % RX_BUF_LEN, Ordering::Release);
+    Some(b)
+}
+
+/// Total de bytes RX descartados desde el arranque (ring lleno u overrun HW).
+pub fn rx_overruns() -> usize {
+    RX_OVERRUNS.load(Ordering::Relaxed)
+}
+
+/// ISR de USART2: drena DR a ring en cada RXNE; leer DR limpia RXNE y ORE.
+#[interrupt]
+fn USART2() {
+    // SAFETY: handler exclusivo de USART2; solo lee SR/DR del periférico.
+    let usart = unsafe { &*pac::USART2::ptr() };
+    let sr = usart.sr.read();
+    if sr.ore().bit() {
+        RX_OVERRUNS.fetch_add(1, Ordering::Relaxed);
+    }
+    if sr.rxne().bit() || sr.ore().bit() {
+        let b = usart.dr.read().dr().bits() as u8;
+        rx_push(b);
+    }
+}
 
 /// Baud inicial del bus de módulos = baud de fábrica del HM-20 (9600).
 ///
@@ -18,6 +93,9 @@ pub type UartError = core::convert::Infallible;
 pub struct Usart2 {
     usart: pac::USART2,
     pclk1: u32,
+    /// `true` tras [`enable_rx_irq`](Usart2::enable_rx_irq): la RX llega por ISR
+    /// al ring; `false` durante el boot (lectura polled de `SR.RXNE`).
+    irq_rx: bool,
 }
 
 impl Usart2 {
@@ -43,17 +121,48 @@ impl Usart2 {
         }
 
         configure_usart(&usart, pclk1, baud);
-        Self { usart, pclk1 }
+        Self {
+            usart,
+            pclk1,
+            irq_rx: false,
+        }
+    }
+
+    /// Conmuta la RX a modo interrupción: habilita `RXNEIE`, desenmascara el
+    /// vector NVIC y enruta los bytes al ring SPSC. Llamar UNA vez tras el init
+    /// AT del HM-20 (que usa lecturas polled). Drena primero los restos del
+    /// shift register y el ring para no arrastrar bytes del sondeo de arranque.
+    pub fn enable_rx_irq(&mut self) {
+        // Drena cualquier byte polled pendiente del init AT.
+        while self.usart.sr.read().rxne().bit() {
+            let _ = self.usart.dr.read().dr().bits();
+        }
+        RX_HEAD.store(0, Ordering::Release);
+        RX_TAIL.store(0, Ordering::Release);
+        self.irq_rx = true;
+        self.usart.cr1.modify(|_, w| w.rxneie().set_bit());
+        // SAFETY: única habilitación del vector USART2; el handler está definido.
+        unsafe {
+            cortex_m::peripheral::NVIC::unmask(pac::Interrupt::USART2);
+        }
     }
 
     /// Reconfigura el baud rate del bus (p. ej. tras `AT+BAUD` en HM-20).
+    /// Reasevera `RXNEIE` si la RX por interrupción ya estaba activa, porque
+    /// `configure_usart` reescribe CR1 por completo.
     pub fn set_baud(&mut self, baud: u32) {
         configure_usart(&self.usart, self.pclk1, baud);
+        if self.irq_rx {
+            self.usart.cr1.modify(|_, w| w.rxneie().set_bit());
+        }
     }
 
-    /// Lee un byte si RXNE está activo; no bloquea.
+    /// Lee un byte sin bloquear. En modo interrupción saca del ring; en modo
+    /// polled (boot) lee `SR.RXNE` directo.
     pub fn try_read_byte(&mut self) -> Option<u8> {
-        if self.usart.sr.read().rxne().bit() {
+        if self.irq_rx {
+            rx_pop()
+        } else if self.usart.sr.read().rxne().bit() {
             Some(self.usart.dr.read().dr().bits() as u8)
         } else {
             None
