@@ -115,13 +115,9 @@ fn main() -> ! {
                 Priority::Kernel,
             )
             .expect("spawn kernel");
-        sched
-            .spawn_user(
-                &mut (*core::ptr::addr_of_mut!(STACK_GOOD)).0,
-                good_app,
-                Priority::App,
-            )
-            .expect("spawn good app");
+        // `bad_app` se lanza antes que `good_app`: el round-robin cooperativo
+        // sirve a las tareas App en orden de spawn, así `bad_app` alcanza su
+        // acceso ilegal, el kernel la mata, y `good_app` (+ kernel) sobreviven.
         sched
             .spawn_user(
                 &mut (*core::ptr::addr_of_mut!(STACK_BAD)).0,
@@ -129,6 +125,13 @@ fn main() -> ! {
                 Priority::App,
             )
             .expect("spawn bad app");
+        sched
+            .spawn_user(
+                &mut (*core::ptr::addr_of_mut!(STACK_GOOD)).0,
+                good_app,
+                Priority::App,
+            )
+            .expect("spawn good app");
 
         defmt::info!("scheduler: 3 tasks (1 kernel + 2 userland), starting");
         sched.start();
@@ -136,6 +139,16 @@ fn main() -> ! {
 }
 
 fn on_fault(report: FaultReport) -> ! {
+    // Traza del MPU en acción: confirma que el acceso ilegal de `bad_app` al
+    // dominio Drivers disparó un MemManage en user mode y que el kernel lo
+    // contiene matando SOLO esa tarea.
+    defmt::error!(
+        "MPU fault {} domain={} pc={=u32:#x} task={=u8} -> kill+resume",
+        report.kind.name(),
+        report.domain.name(),
+        report.pc,
+        report.task_id.0
+    );
     // SAFETY: scheduler activo; hook solo desde fault handler.
     unsafe {
         (&mut *core::ptr::addr_of_mut!(SCHEDULER)).kill_current_and_resume(report);
