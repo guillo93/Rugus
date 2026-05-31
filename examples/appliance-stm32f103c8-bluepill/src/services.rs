@@ -402,6 +402,17 @@ fn hook_config_get(key: &[u8], out: &mut [u8]) -> i32 {
     let Ok(k) = core::str::from_utf8(key) else {
         return Errno::Einval as i32;
     };
+    // Clave especial: lee el nombre BLE real del módulo (`AT+NAME?`) por USART2,
+    // para verificar la provisión sin necesidad de escanear con el teléfono.
+    if k == "ble.name" {
+        // SAFETY: solo la tarea CLI cooperativa toca USART2 fuera de los hooks.
+        return unsafe {
+            match MODULES.as_mut() {
+                Some(u) => hm20::query_name(u, out, kick_wdt) as i32,
+                None => Errno::Ebusy as i32,
+            }
+        };
+    }
     unsafe {
         if let Some(cfg) = CONFIG.as_ref() {
             if let Some(v) = cfg.get(k) {
@@ -422,6 +433,24 @@ fn hook_config_set(key: &[u8], val: &[u8]) -> i32 {
     let Ok(vs) = core::str::from_utf8(val) else {
         return Errno::Einval as i32;
     };
+    // Clave especial: provisionar el nombre BLE del HM-20 vía AT por USART2.
+    // No es config en RAM, es una acción sobre el módulo (capa servicio, sin
+    // tocar el ABI de syscalls). Persiste en la NVRAM del módulo.
+    if k == "ble.name" {
+        // SAFETY: solo la tarea CLI cooperativa toca USART2 fuera de los hooks.
+        return unsafe {
+            match MODULES.as_mut() {
+                Some(u) => {
+                    if hm20::provision_name(u, vs, kick_wdt) {
+                        0
+                    } else {
+                        Errno::Etimedout as i32
+                    }
+                }
+                None => Errno::Ebusy as i32,
+            }
+        };
+    }
     let Ok(kk) = heapless::String::<MAX_FIELD>::try_from(k) else {
         return Errno::Einval as i32;
     };

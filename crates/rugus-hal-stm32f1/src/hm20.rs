@@ -131,6 +131,89 @@ pub fn init_with_kick(uart: &mut Usart2, cfg: Hm20Config, kick: fn()) -> InitRes
     InitResult::Ready
 }
 
+/// Provisión persistente del nombre BLE.
+///
+/// Este módulo (se anuncia `HMSoft` de fábrica, dialecto HM-10/HMSoft V5+) usa
+/// `AT+NAME<n>` SIN `=` → responde `OK+Set:<n>`. El `=` NO se separa: `AT+NAME=X`
+/// fija el nombre literal `=X` (verificado en HW), así que NUNCA usar `=`. El
+/// cambio sólo se anuncia tras `AT+RESET`; el `AT+NAME?` previo al reset sigue
+/// devolviendo el nombre viejo. Por eso: set → reset → esperar reinicio (~7,5 s
+/// de margen) → re-sincronizar baud → leer de vuelta y confirmar que coincide.
+/// Devuelve `true` sólo si el readback contiene el nombre solicitado. Pensado
+/// para provisión puntual desde consola (`scribe ble.name <n>`), no en cada
+/// arranque: persiste en la NVRAM del módulo.
+///
+/// `kick` se invoca en cada espera para alimentar el watchdog (la secuencia
+/// corre síncrona en la tarea CLI, que no cede el CPU mientras tanto).
+pub fn provision_name(uart: &mut Usart2, name: &str, kick: fn()) -> bool {
+    let name_b = name.as_bytes();
+    if name_b.is_empty() || name_b.len() > 18 {
+        return false;
+    }
+    let mut buf = [0u8; 32];
+    let n = build_name_cmd(&mut buf, b"AT+NAME", name_b);
+    if !send_at_with_kick(uart, &buf[..n], kick) {
+        return false;
+    }
+    // Aplicar: reset y esperar a que el módulo reinicie antes de re-sincronizar.
+    let _ = send_at_with_kick(uart, b"AT+RESET", kick);
+    for _ in 0..20 {
+        kick();
+        cortex_m::asm::delay(3_000_000);
+    }
+    let _ = probe_bauds(uart, kick);
+    // Confirmar leyendo de vuelta el nombre real.
+    let mut rb = [0u8; 48];
+    let r = send_at_capture(uart, b"AT+NAME?", &mut rb, kick);
+    contains(&rb[..r], name_b)
+}
+
+/// Lee el nombre BLE actual del módulo (`AT+NAME?`) y captura la respuesta cruda
+/// en `out`. La respuesta varía por dialecto (`OK+NAME:<n>` u `OK+Get:<n>`).
+/// Devuelve los bytes capturados.
+pub fn query_name(uart: &mut Usart2, out: &mut [u8], kick: fn()) -> usize {
+    send_at_capture(uart, b"AT+NAME?", out, kick)
+}
+
+/// `true` si `needle` aparece como subsecuencia contigua dentro de `hay`.
+fn contains(hay: &[u8], needle: &[u8]) -> bool {
+    if needle.is_empty() || needle.len() > hay.len() {
+        return false;
+    }
+    hay.windows(needle.len()).any(|w| w == needle)
+}
+
+/// Concatena `prefix` + `name` en `buf`; devuelve la longitud. Trunca si no cabe.
+fn build_name_cmd(buf: &mut [u8], prefix: &[u8], name: &[u8]) -> usize {
+    let len = (prefix.len() + name.len()).min(buf.len());
+    let p = prefix.len().min(buf.len());
+    buf[..p].copy_from_slice(&prefix[..p]);
+    let n = len - p;
+    buf[p..len].copy_from_slice(&name[..n]);
+    len
+}
+
+/// Envía `cmd` y captura la respuesta cruda en `out` (ventana ~250 ms). No
+/// interpreta OK/ERROR; útil para diagnóstico/lectura de campos.
+fn send_at_capture(uart: &mut Usart2, cmd: &[u8], out: &mut [u8], kick: fn()) -> usize {
+    drain_rx(uart);
+    let _ = uart.write(cmd);
+    let _ = uart.flush();
+    let mut pos = 0usize;
+    for _ in 0..4_000 {
+        kick();
+        if let Some(b) = uart.try_read_byte() {
+            if pos < out.len() {
+                out[pos] = b;
+                pos += 1;
+            }
+        } else {
+            cortex_m::asm::delay(500);
+        }
+    }
+    pos
+}
+
 fn set_name(uart: &mut Usart2, name: &str) -> bool {
     // Datasheet HM-20: `AT+NAMEname` (sin `=`, sin `\r\n`) → `OK+Set:name`.
     // Nombre máx. 18 chars; el módulo lo trunca si excede.
