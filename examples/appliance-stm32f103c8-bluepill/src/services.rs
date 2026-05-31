@@ -15,7 +15,7 @@ use rugus_hal_stm32f1::spi_sd::{SdStatus, Spi1Sd};
 use rugus_hal_stm32f1::uart2::Usart2;
 use rugus_hal_stm32f1::wdt::Watchdog;
 use rugus_rfn::{parse_rfn, AfrHeader, ConfigMap, MAX_FIELD};
-use rush::{identify, Write};
+use rush::{execute, identify, parse, Write};
 
 /// Config RFN embebida por defecto (sin SD).
 const DEFAULT_RFN: &str =
@@ -30,7 +30,7 @@ static mut WDT: Option<Watchdog> = None;
 static mut SCHED_TASK_COUNT: u32 = 0;
 static mut MODULE_ECO: Option<&'static str> = None;
 static mut MODULE_STATUS: ModuleStatus = ModuleStatus::Idle;
-static mut IDENT_LINE: [u8; 16] = [0; 16];
+static mut IDENT_LINE: [u8; 128] = [0; 128];
 static mut IDENT_LEN: usize = 0;
 
 /// Capacidad del registro de apps `.afr` conocidas por el dispositivo.
@@ -83,10 +83,15 @@ impl Write for ModuleWriter {
     }
 }
 
-/// Poll no bloqueante del bus de módulos (USART2) para el protocolo IDENTIFY.
+/// Poll no bloqueante del bus de módulos (USART2): consola `rush` sobre BLE.
 ///
-/// Permite que un host conectado por serie/BLE a través del puente de módulos
-/// descubra el dispositivo. Responde a `IDENTIFY\r\n` y al byte de control ENQ.
+/// Un host conectado por serie/BLE a través del puente de módulos puede tanto
+/// descubrir el dispositivo (`IDENTIFY\r\n` o el byte de control ENQ) como
+/// ejecutar comandos completos de `rush` (`ecosystem`, `orbit`, …): la salida
+/// vuelve por el mismo puente (`ModuleWriter`). Hace eco de los bytes recibidos
+/// para que el terminal del teléfono muestre lo que se escribe; soporta
+/// retroceso (DEL/BS). Misma semántica de línea que la consola USART1, pero el
+/// transporte es USART2.
 pub fn poll_identify_usart2() {
     // SAFETY: invocado solo desde la tarea CLI cooperativa.
     let byte = unsafe { MODULES.as_mut().and_then(|u| u.try_read_byte()) };
@@ -102,14 +107,28 @@ pub fn poll_identify_usart2() {
     unsafe {
         if b == b'\r' || b == b'\n' {
             if IDENT_LEN > 0 {
+                let _ = ModuleWriter.write_str("\r\n");
                 if &IDENT_LINE[..IDENT_LEN] == b"IDENTIFY" {
                     identify::write_signature(&mut ModuleWriter, identify::TIER, identify::CHIP);
+                } else if let Ok(line) = core::str::from_utf8(&IDENT_LINE[..IDENT_LEN]) {
+                    let cmd = parse(line);
+                    execute(cmd, line, &mut ModuleWriter);
                 }
+                heartbeat::note(heartbeat::CLI_CMD);
                 IDENT_LEN = 0;
+            }
+        } else if b == 0x7F || b == 0x08 {
+            if IDENT_LEN > 0 {
+                IDENT_LEN -= 1;
+                let _ = ModuleWriter.write_str("\x08 \x08");
             }
         } else if IDENT_LEN < IDENT_LINE.len() {
             IDENT_LINE[IDENT_LEN] = b;
             IDENT_LEN += 1;
+            let ch = [b];
+            if let Ok(s) = core::str::from_utf8(&ch) {
+                let _ = ModuleWriter.write_str(s);
+            }
         } else {
             // Línea sobredimensionada: descartar para evitar falsos positivos.
             IDENT_LEN = 0;

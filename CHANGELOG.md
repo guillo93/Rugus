@@ -13,6 +13,15 @@ SemVer estricto.
 
 ### Added
 
+- **Consola `rush` completa sobre BLE (USART2) en el appliance F103** — antes el
+  poller del bus de módulos solo respondía a `IDENTIFY`/ENQ y descartaba cualquier
+  otra línea, así que comandos como `ecosystem`/`orbit` enviados desde un terminal
+  BLE del teléfono se recibían pero nunca llegaban al parser de `rush` (sin eco ni
+  respuesta). Ahora `poll_identify_usart2` enruta las líneas completas a
+  `rush::parse`/`execute` y devuelve la salida por el mismo puente (`ModuleWriter`),
+  con eco de los bytes y soporte de retroceso (DEL/BS) — misma semántica de línea
+  que la consola USART1 pero sobre USART2. El descubrimiento `IDENTIFY` se mantiene.
+
 - **Registro de apps `.afr` real en el appliance F103 (reemplaza el stub)** — el
   hook `app_reload` (`hatch <name>`) tenía un manifiesto `demo` hardcodeado y solo
   aceptaba ese nombre, simulando una carga inexistente. Ahora hay un registro real
