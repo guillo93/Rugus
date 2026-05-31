@@ -11,6 +11,7 @@
 #![warn(missing_docs)]
 
 pub mod arch;
+pub mod channel;
 pub mod domain;
 pub mod fault;
 #[cfg(feature = "alloc")]

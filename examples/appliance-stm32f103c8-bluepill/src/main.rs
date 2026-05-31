@@ -16,6 +16,7 @@ use rugus_core::syscall::lite;
 use rugus_hal::SerialPort;
 use rugus_hal_stm32f1::i2c::I2c1;
 use rugus_hal_stm32f1::pac;
+use rugus_hal_stm32f1::postmortem;
 use rugus_hal_stm32f1::rcc;
 use rugus_hal_stm32f1::spi_sd::Spi1Sd;
 use rugus_hal_stm32f1::uart::{Usart1, CLI_BAUD};
@@ -112,25 +113,27 @@ fn heartbeat_task() -> ! {
     loop {
         let act = heartbeat::level();
         tick = tick.wrapping_add(1);
-        let (on, delay) = heartbeat::step(act, tick);
+        let (on, delay_cycles) = heartbeat::step(act, tick);
         if on {
             heartbeat::led_on();
         } else {
             heartbeat::led_off();
         }
-        // No bloquear el scheduler cooperativo: trocear el retardo en rebanadas
-        // de ~1 ms y ceder el CPU entre cada una, para que la tarea CLI siga
-        // sondeando USART1/USART2 (el registro RX de 1 byte se desborda si la
-        // tarea CLI no corre durante decenas de ms).
-        const SLICE: u32 = 8_000; // ~1 ms @ 8 MHz HSI
-        let mut remaining = delay;
-        while remaining > 0 {
-            let slice = remaining.min(SLICE);
-            cortex_m::asm::delay(slice);
-            remaining -= slice;
-            kick_wdt();
-            yield_cpu();
-        }
+        // `step` devuelve el retardo en ciclos de CPU (interfaz histórica); a
+        // 8 MHz HCLK son 8000 ciclos/ms. Dormimos ese tiempo cediendo el CPU.
+        sleep_ms((delay_cycles / 8_000).max(1));
+    }
+}
+
+/// Espera cooperativa de `ms` milisegundos: cede el CPU y alimenta el watchdog
+/// mientras el reloj monotónico de SysTick no alcance el plazo. No hace
+/// busy-wait: el scheduler sigue corriendo la tarea CLI (sondeo UART) entre
+/// cesiones, así no se pierden bytes RX.
+fn sleep_ms(ms: u32) {
+    let start = rugus_arch_cortex_m::time::now_ms();
+    while rugus_arch_cortex_m::time::elapsed_ms(start) < ms {
+        kick_wdt();
+        yield_cpu();
     }
 }
 
@@ -144,6 +147,15 @@ fn main() -> ! {
 
     let clocks = rcc::init(&dp);
     rugus_runtime::enable_cycle_counter(&mut cp);
+    // Reloj monotónico: SysTick a 1 kHz desde el HCLK. Base de uptime, sleep
+    // cooperativo y timeouts; reemplaza los busy-delay por cesión de CPU.
+    rugus_arch_cortex_m::time::init(&mut cp.SYST, clocks.hclk);
+
+    // Post-mortem que cruza el reset: causa de reinicio (RCC_CSR) y, si el
+    // arranque anterior murió por un fault contenido, kind + tarea desde los
+    // backup registers (sobreviven al reset del IWDG).
+    let reset_cause = postmortem::read_reset_cause(&dp.RCC).name();
+    let last_fault = postmortem::take_fault(&dp.RCC, &dp.PWR, &dp.BKP);
 
     defmt::info!("appliance F103 boot");
 
@@ -197,6 +209,8 @@ fn main() -> ! {
             .spawn(&mut *addr_of_mut!(STACK_HB), heartbeat_task, Priority::App)
             .expect("spawn heartbeat");
         services::set_task_count(2);
+        services::set_stack_probe(task_stack_usage);
+        services::set_boot_info(reset_cause, last_fault.map(|f| (f.kind, f.task)));
         defmt::info!("scheduler: cli + heartbeat tasks");
         sched.start();
     }
@@ -214,9 +228,26 @@ fn fault_hook(report: FaultReport) -> ! {
         report.pc,
         report.task_id.0
     );
+    // Graba el post-mortem en el dominio de respaldo ANTES de matar la tarea:
+    // si el watchdog acaba reseteando, el próximo arranque podrá decir qué pasó.
+    // SAFETY: contexto de fault, single-thread.
+    unsafe {
+        rugus_hal_stm32f1::postmortem::save_fault(report.kind as u8, report.task_id.0);
+    }
     // SAFETY: en contexto de fault (handler mode), single-threaded; el scheduler
     // está activo y `current` es la tarea faultante.
     unsafe { (&mut *addr_of_mut!(SCHEDULER)).kill_current_and_resume(report) }
+}
+
+/// Sonda de stack para `services` (`coil`): high-water y total de la tarea
+/// `idx`, leídos del scheduler vivo. Aislamos aquí el acceso al estático para
+/// que la capa servicio no dependa de la dirección del scheduler.
+fn task_stack_usage(idx: usize) -> (u32, u32) {
+    // SAFETY: lectura del scheduler; cooperativo, sin reentrada concurrente.
+    unsafe {
+        let sched = &*addr_of!(SCHEDULER);
+        (sched.stack_high_water(idx), sched.stack_len(idx))
+    }
 }
 
 fn yield_cpu() {

@@ -28,6 +28,14 @@ static mut SD: Option<Spi1Sd> = None;
 static mut MODULES: Option<Usart2> = None;
 static mut WDT: Option<Watchdog> = None;
 static mut SCHED_TASK_COUNT: u32 = 0;
+/// Sonda de stack inyectada por `main`: `idx -> (high_water, total)` en bytes.
+/// El scheduler vive como estático en `main`; este puntero evita que la capa
+/// servicio dependa de su dirección concreta.
+static mut STACK_PROBE: Option<fn(usize) -> (u32, u32)> = None;
+/// Causa del último reset (cadena estática de `postmortem::ResetCause::name`).
+static mut RESET_CAUSE: &str = "unknown";
+/// Fault del arranque anterior recuperado de los backup registers: `(kind, task)`.
+static mut LAST_FAULT: Option<(u8, u8)> = None;
 static mut MODULE_ECO: Option<&'static str> = None;
 static mut MODULE_STATUS: ModuleStatus = ModuleStatus::Idle;
 static mut IDENT_LINE: [u8; 128] = [0; 128];
@@ -254,6 +262,34 @@ pub fn set_task_count(n: u32) {
     }
 }
 
+/// Registra la sonda de stack (`idx -> (high_water, total)`); la cablea `main`
+/// leyendo el scheduler vivo, sin exponer su dirección a la capa servicio.
+pub fn set_stack_probe(f: fn(usize) -> (u32, u32)) {
+    unsafe {
+        STACK_PROBE = Some(f);
+    }
+}
+
+/// Registra el post-mortem leído al arrancar: causa de reset y, si el arranque
+/// anterior murió por un fault, su `(kind, task)`. Se muestra en `cosmos`.
+pub fn set_boot_info(reset_cause: &'static str, fault: Option<(u8, u8)>) {
+    unsafe {
+        RESET_CAUSE = reset_cause;
+        LAST_FAULT = fault;
+    }
+}
+
+/// Nombre de un `FaultKind` desde su código `u8` (repr de rugus-core).
+fn fault_kind_name(kind: u8) -> &'static str {
+    match kind {
+        0 => "HardFault",
+        1 => "MemManage",
+        2 => "BusFault",
+        3 => "UsageFault",
+        _ => "unknown",
+    }
+}
+
 pub fn set_wdt(wdt: Watchdog) {
     unsafe {
         WDT = Some(wdt);
@@ -283,8 +319,22 @@ pub fn hooks() -> Hooks {
 }
 
 fn hook_sys_info(out: &mut [u8]) -> usize {
-    let msg = "Rugus lite v0.1\r\nboard: F103 Blue Pill\r\n";
-    write_bytes(out, msg.as_bytes())
+    let mut line: String<256> = String::new();
+    let _ = line.push_str("Rugus lite v0.1\r\nboard: F103 Blue Pill\r\n");
+    let _ = line.push_str("reset: ");
+    // SAFETY: estáticos fijados en boot, solo lectura desde la tarea CLI.
+    unsafe {
+        let _ = line.push_str(RESET_CAUSE);
+        let _ = line.push_str("\r\n");
+        if let Some((kind, task)) = LAST_FAULT {
+            let _ = line.push_str("last-fault: ");
+            let _ = line.push_str(fault_kind_name(kind));
+            let _ = line.push_str(" task=");
+            push_u32(&mut line, task as u32);
+            let _ = line.push_str("\r\n");
+        }
+    }
+    write_bytes(out, line.as_bytes())
 }
 
 fn hook_sys_status(out: &mut [u8]) -> usize {
@@ -296,8 +346,11 @@ fn hook_sys_status(out: &mut [u8]) -> usize {
     };
     let mod_status = unsafe { MODULE_STATUS.as_str() };
     let tasks = unsafe { SCHED_TASK_COUNT };
+    let ms = rugus_arch_cortex_m::time::now_ms();
     let mut line: String<256> = String::new();
-    let _ = line.push_str("uptime: (cycle counter)\r\n");
+    let _ = line.push_str("uptime: ");
+    push_uptime(&mut line, ms);
+    let _ = line.push_str("\r\n");
     let _ = line.push_str("failsafe: ");
     let _ = line.push_str(if fs { "ON\r\n" } else { "OFF\r\n" });
     let _ = line.push_str("sd: ");
@@ -307,6 +360,13 @@ fn hook_sys_status(out: &mut [u8]) -> usize {
     let _ = line.push_str("\r\n");
     let _ = line.push_str("tasks: ");
     push_u32(&mut line, tasks);
+    let _ = line.push_str("\r\n");
+    // Diagnóstico de transporte: bytes RX descartados (ring lleno u overrun HW)
+    // en cada UART. Distinto de cero indica que una tarea tardó en drenar.
+    let _ = line.push_str("rx_drops: usart1=");
+    push_u32(&mut line, rugus_hal_stm32f1::uart::rx_overruns() as u32);
+    let _ = line.push_str(" usart2=");
+    push_u32(&mut line, rugus_hal_stm32f1::uart2::rx_overruns() as u32);
     let _ = line.push_str("\r\n");
     // App `.afr` activa + registro conocido (built-ins + manifiesto SD).
     let _ = line.push_str("app: ");
@@ -569,14 +629,31 @@ fn kick_wdt() {
 }
 
 fn hook_task_list(out: &mut [u8]) -> i32 {
-    let n = unsafe { SCHED_TASK_COUNT };
-    let mut line: String<128> = String::new();
-    let _ = line.push_str("id name\r\n");
-    if n >= 1 {
-        let _ = line.push_str("1 cli\r\n");
-    }
-    if n >= 2 {
-        let _ = line.push_str("2 heartbeat\r\n");
+    let n = unsafe { SCHED_TASK_COUNT } as usize;
+    let probe = unsafe { STACK_PROBE };
+    let mut line: String<256> = String::new();
+    let _ = line.push_str("id name      stack(used/total)\r\n");
+    const NAMES: [&str; 2] = ["cli", "heartbeat"];
+    for (idx, name) in NAMES.iter().enumerate() {
+        if idx >= n {
+            break;
+        }
+        push_u32(&mut line, (idx + 1) as u32);
+        let _ = line.push(' ');
+        let _ = line.push_str(name);
+        // Relleno hasta una columna fija para alinear (nombre máx ~9).
+        for _ in name.len()..10 {
+            let _ = line.push(' ');
+        }
+        if let Some(f) = probe {
+            let (used, total) = f(idx);
+            push_u32(&mut line, used);
+            let _ = line.push('/');
+            push_u32(&mut line, total);
+        } else {
+            let _ = line.push('?');
+        }
+        let _ = line.push_str("\r\n");
     }
     write_bytes(out, line.as_bytes()) as i32
 }
@@ -672,6 +749,30 @@ fn push_u32<const N: usize>(s: &mut heapless::String<N>, n: u32) {
         i -= 1;
         let _ = s.push(buf[i] as char);
     }
+}
+
+/// Formatea milisegundos como `DdHHhMMmSSs` (omite los campos altos en cero),
+/// p. ej. `90061000` → `1d01h01m01s`, `5000` → `5s`.
+fn push_uptime<const N: usize>(s: &mut heapless::String<N>, ms: u32) {
+    let total_s = ms / 1000;
+    let days = total_s / 86_400;
+    let hours = (total_s % 86_400) / 3600;
+    let mins = (total_s % 3600) / 60;
+    let secs = total_s % 60;
+    if days > 0 {
+        push_u32(s, days);
+        let _ = s.push('d');
+    }
+    if days > 0 || hours > 0 {
+        push_u32(s, hours);
+        let _ = s.push('h');
+    }
+    if days > 0 || hours > 0 || mins > 0 {
+        push_u32(s, mins);
+        let _ = s.push('m');
+    }
+    push_u32(s, secs);
+    let _ = s.push('s');
 }
 
 fn push_u32_str(s: &mut heapless::String<{ MAX_FIELD }>, n: u32) {

@@ -13,6 +13,25 @@ SemVer estricto.
 
 ### Added
 
+- **Madurez de kernel: reloj monotónico, diagnóstico de pila, post-mortem
+  persistente y canales SPSC** — cuatro mejoras que endurecen el kernel lite sin
+  tocar el ABI de syscalls (la TCB sigue mínima y sin logging):
+  - **Reloj monotónico SysTick** (`rugus-arch-cortex-m::time`) a 1 kHz desde el
+    HCLK: contador de milisegundos atómico que da base de `uptime` real, `sleep`
+    cooperativo (cede CPU y alimenta el watchdog en vez de busy-delay) y timeouts.
+    El `heartbeat_task` y `sleep_ms` del appliance ya no hacen busy-wait.
+  - **Diagnóstico de pila (high-water)**: cada stack se pinta con `0xA5` al
+    `spawn`; el scheduler expone `stack_high_water`/`stack_len` por tarea. El
+    comando `coil` muestra `usado/total` por tarea para detectar overruns.
+  - **Post-mortem persistente** (`rugus-hal-stm32f1::postmortem`): la causa del
+    último reset (RCC_CSR) y, si el arranque previo murió por un fault contenido,
+    el `kind`+tarea se graban en los *backup registers* del F103 (sobreviven al
+    reset del IWDG). El fault hook llama `save_fault` antes de matar la tarea, y
+    el arranque lo muestra en `cosmos` (`reset:` + `last-fault:`).
+  - **Canal SPSC** (`rugus-core::channel`): anillo estático lock-free de
+    capacidad fija (Acquire/Release, un productor / un consumidor) para flujos
+    entre tareas o ISR→tarea, como primitiva pura de `rugus-core`.
+
 - **Consola `rush` completa sobre BLE (USART2) en el appliance F103** — antes el
   poller del bus de módulos solo respondía a `IDENTIFY`/ENQ y descartaba cualquier
   otra línea, así que comandos como `ecosystem`/`orbit` enviados desde un terminal
