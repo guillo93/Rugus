@@ -19,6 +19,7 @@ bench = false
 cortex-m            = { workspace = true }
 defmt               = { workspace = true }
 rugus-runtime       = { workspace = true }
+rugus-kernel        = { workspace = true, features = ["defmt"] }
 rugus-hal           = { workspace = true }
 rugus-hal-stm32f4   = { workspace = true, features = ["stm32f407"] }
 rugus-core          = { workspace = true, features = ["log", "alloc"] }

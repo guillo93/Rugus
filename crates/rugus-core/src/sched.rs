@@ -317,6 +317,21 @@ impl<A: Arch> Scheduler<A> {
         idx < self.count && self.task_ref(idx).state == TaskState::Ready
     }
 
+    /// Número de tareas que un fault mató (estado `Killed`). Una tarea dormida
+    /// sigue contando como viva; solo cuenta las terminadas por el failsafe.
+    /// Fuente del indicador de salud del supervisor (LED "degradado").
+    pub fn killed_count(&self) -> usize {
+        (0..self.count)
+            .filter(|&i| self.task_ref(i).state == TaskState::Killed)
+            .count()
+    }
+
+    /// `true` si la tarea `idx` fue matada por un fault. Una tarea dormida o
+    /// lista NO está matada. Índice fuera de rango => `false`.
+    pub fn is_killed(&self, idx: usize) -> bool {
+        idx < self.count && self.task_ref(idx).state == TaskState::Killed
+    }
+
     /// Tamaño total del stack de la tarea `idx` en bytes (0 si no existe).
     pub fn stack_len(&self, idx: usize) -> u32 {
         if idx >= self.count {
