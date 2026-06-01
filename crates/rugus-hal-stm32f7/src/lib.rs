@@ -25,3 +25,4 @@ pub mod eth;
 pub mod fmc;
 pub mod gpio;
 pub mod rcc;
+pub mod usart;

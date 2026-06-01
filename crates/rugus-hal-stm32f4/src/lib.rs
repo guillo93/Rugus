@@ -19,3 +19,4 @@ pub use stm32f4::stm32f407 as pac;
 
 pub mod gpio;
 pub mod rcc;
+pub mod usart;
