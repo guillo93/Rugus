@@ -13,13 +13,16 @@ use core::sync::atomic::{AtomicU32, Ordering};
 
 use cortex_m::peripheral::syst::SystClkSource;
 use cortex_m::peripheral::SYST;
-use cortex_m_rt::exception;
 
 /// Milisegundos desde [`init`]. Productor único: ISR SysTick.
 static MILLIS: AtomicU32 = AtomicU32::new(0);
 
 /// ISR de SysTick: +1 ms por tick.
-#[exception]
+///
+/// Tras la feature `systick` (default-on): un binario que aporte su propio
+/// handler de SysTick desactiva esta feature para evitar el doble símbolo.
+#[cfg(feature = "systick")]
+#[cortex_m_rt::exception]
 fn SysTick() {
     MILLIS.fetch_add(1, Ordering::Relaxed);
 }
