@@ -191,6 +191,7 @@ fn main() -> ! {
             yield_now: yield_cpu,
             current_task_id: || (&*addr_of!(SCHEDULER)).current_id(),
             current_domain: || (&*addr_of!(SCHEDULER)).current_domain(),
+            current_user_region: || (&*addr_of!(SCHEDULER)).current_user_region(),
         });
         lite::register(services::hooks());
         CONSOLE = Some(console);

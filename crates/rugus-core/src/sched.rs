@@ -232,6 +232,22 @@ impl<A: Arch> Scheduler<A> {
         self.task_ref(self.current).domain
     }
 
+    /// Región MPU `(base, len)` del stack de la tarea en ejecución si es
+    /// userland; `None` si es privilegiada.
+    ///
+    /// Es la región App-RW exacta sobre la que [`Self::spawn_user`] montó el
+    /// sandbox (potencia de 2, alineada). El dispatch de syscalls la usa para
+    /// validar punteros de tareas no confiables; para una tarea privilegiada
+    /// devuelve `None` porque el kernel se confía a sí mismo (la MPU no aplica
+    /// en modo privilegiado).
+    pub fn current_user_region(&self) -> Option<(u32, u32)> {
+        let slot = self.task_ref(self.current);
+        match slot.mode {
+            TaskMode::User => Some((slot.stack_base, slot.stack_len)),
+            TaskMode::Privileged => None,
+        }
+    }
+
     /// Número de tareas registradas.
     pub fn task_count(&self) -> usize {
         self.count

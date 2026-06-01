@@ -62,6 +62,9 @@ pub struct Hooks {
     pub current_task_id: fn() -> TaskId,
     /// Dominio lógico de la tarea en ejecución.
     pub current_domain: fn() -> crate::Domain,
+    /// Región MPU `(base, len)` del stack de la tarea en ejecución si es
+    /// userland; `None` si es privilegiada. Fuente para [`validate_user_range`].
+    pub current_user_region: fn() -> Option<(u32, u32)>,
 }
 
 static mut HOOKS: Option<Hooks> = None;
@@ -93,6 +96,48 @@ pub fn current_domain() -> crate::Domain {
     }
 }
 
+/// Valida que el rango `[ptr, ptr + len)` es accesible para el llamante actual.
+///
+/// Implementa el contrato de validación documentado en [`dispatch`]: es el
+/// helper que todo syscall con puntero debe invocar antes de desreferenciar
+/// memoria controlada por una tarea no confiable.
+///
+/// Reglas:
+/// - `len == 0`: `Ok(())` (no hay nada que desreferenciar).
+/// - Llamante **privilegiado** (sin región userland): `Ok(())` — el kernel se
+///   confía a sí mismo y la MPU no restringe el modo privilegiado.
+/// - Llamante **userland**: `Ok(())` solo si `[ptr, ptr+len)` no se desborda y
+///   cae **completo** dentro de su región App-RW. El chequeo del rango entero
+///   (no solo del puntero base) cierra el TOCTOU de un `len` que cruza el borde.
+/// - Sin hooks registrados: [`Errno::Efault`] — fail-closed, no se valida a
+///   ciegas.
+///
+/// La comprobación usa aritmética saturada (`checked_add`) para que un
+/// `ptr + len` que envuelve el espacio de direcciones no falsee la contención.
+pub fn validate_user_range(ptr: u32, len: u32) -> Result<(), Errno> {
+    if len == 0 {
+        return Ok(());
+    }
+    // SAFETY: lectura de static; hooks inmutables tras init.
+    let region = unsafe { HOOKS.map(|h| (h.current_user_region)()) };
+    match region {
+        // Sin hooks: no se puede determinar la región del llamante → rechazar.
+        None => Err(Errno::Efault),
+        // Llamante privilegiado: confiado.
+        Some(None) => Ok(()),
+        // Llamante userland: el rango debe caer completo en su región App-RW.
+        Some(Some((base, region_len))) => {
+            let end = ptr.checked_add(len).ok_or(Errno::Efault)?;
+            let region_end = base.checked_add(region_len).ok_or(Errno::Efault)?;
+            if ptr >= base && end <= region_end {
+                Ok(())
+            } else {
+                Err(Errno::Efault)
+            }
+        }
+    }
+}
+
 /// Dispatch central invocado desde el SVC handler (arch backend).
 ///
 /// # Contrato de validación de punteros (CRÍTICO para seguridad del kernel)
@@ -102,19 +147,21 @@ pub fn current_domain() -> crate::Domain {
 /// un puntero/longitud en `args` (p. ej. `Log`, `IpcSend/Recv`, `NetSend/Recv`,
 /// `CryptoSign`, `RngFill`) DEBE, antes de desreferenciarlo:
 ///
-/// 1. Validar que el rango `[ptr, ptr+len)` no se desborda (`checked_add`).
-/// 2. Comprobar que ese rango cae **completo** dentro de la región MPU de la
-///    tarea llamante (su stack App-RW), o de una región explícitamente
-///    compartida — nunca en RAM del kernel, periféricos ni flash.
-/// 3. Rechazar con [`Errno::Efault`] si la comprobación falla; jamás copiar a/de
-///    un puntero sin validar (TOCTOU: copiar a buffer del kernel y validar solo
-///    el puntero base no basta — validar el rango entero).
+/// llamar a [`validate_user_range`], que:
+///
+/// 1. Valida que el rango `[ptr, ptr+len)` no se desborda (`checked_add`).
+/// 2. Comprueba que ese rango cae **completo** dentro de la región MPU de la
+///    tarea llamante (su stack App-RW) — nunca en RAM del kernel, periféricos
+///    ni flash; un llamante privilegiado es confiado.
+/// 3. Devuelve [`Errno::Efault`] si la comprobación falla; jamás copiar a/de un
+///    puntero sin validar (TOCTOU: copiar a buffer del kernel y validar solo el
+///    puntero base no basta — hay que validar el rango entero).
 ///
 /// La frontera de confianza es ESTE punto: una vez que el SVC handler entra en
 /// modo privilegiado, el MPU ya no protege contra accesos del propio kernel, así
 /// que la validación es responsabilidad del dispatch, no del hardware. Las
-/// syscalls actuales (`YieldNow`, `TaskId`) no toman punteros, por eso aún no
-/// hay helper de validación; el primer syscall con puntero debe introducirlo.
+/// syscalls actuales (`YieldNow`, `TaskId`) no toman punteros; el primer syscall
+/// con puntero debe enrutar sus `args` por [`validate_user_range`].
 pub fn dispatch(id: Id, args: [u32; 4]) -> i32 {
     match id {
         Id::YieldNow => {
