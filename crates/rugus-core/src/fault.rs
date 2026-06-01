@@ -40,4 +40,8 @@ pub struct FaultReport {
     pub domain: Domain,
     /// Tarea identificada por el scheduler.
     pub task_id: TaskId,
+    /// Dirección que provocó el fault (MMFAR/BFAR), si el HW la marcó válida.
+    /// `None` para UsageFault/HardFault sin dirección asociada o cuando el bit
+    /// de validez (MMARVALID/BFARVALID) estaba en 0.
+    pub addr: Option<u32>,
 }
