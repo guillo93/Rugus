@@ -108,6 +108,38 @@ impl Arch for CortexM {
 /// Inicializa MPU + fault handlers para la placa dada. Llamar desde `main`
 /// antes del scheduler. Cada placa con MPU pasa su [`MpuLayout`].
 pub fn platform_init(cp: &mut cortex_m::Peripherals, layout: &MpuLayout) {
+    init_fpu_context();
     mpu::init(&mut cp.MPU, layout);
     enable_fault_handlers(&mut cp.SCB);
 }
+
+/// Configura el modelo de preservación de estado FP para convivir con la MPU.
+///
+/// `FPCCR.ASPEN=1` (preservación automática: el HW extiende el frame con
+/// `S0–S15 + FPSCR` cuando `CONTROL.FPCA=1`) pero `FPCCR.LSPEN=0` (**sin** lazy
+/// stacking): el estado FP se apila de forma EAGER en la entrada a excepción.
+///
+/// El lazy stacking difiere la escritura de `S0–S15` a un puntero (`FPCAR`) que
+/// se resuelve al ejecutar la siguiente instrucción FP. Con context switch + MPU
+/// por tarea, ese `FPCAR` puede apuntar al stack de una tarea cuya región MPU ya
+/// no está activa → el guardado diferido faulta dentro de PendSV (que ejecuta
+/// `vstmdb/vldmia`) y entra en cascada. Apilando eager se elimina esa clase de
+/// fallo a cambio de algo más de latencia/stack por excepción con estado FP.
+///
+/// En M3 (`eabi`, sin FPU) no hay registro FPCCR; la función no emite nada.
+#[cfg(target_abi = "eabihf")]
+fn init_fpu_context() {
+    const FPCCR: *mut u32 = 0xE000_EF34 as *mut u32;
+    const ASPEN: u32 = 1 << 31;
+    const LSPEN: u32 = 1 << 30;
+    // SAFETY: registro FPCCR estándar del SCB; init de arranque single-thread.
+    unsafe {
+        let v = (core::ptr::read_volatile(FPCCR) | ASPEN) & !LSPEN;
+        core::ptr::write_volatile(FPCCR, v);
+    }
+    cortex_m::asm::dsb();
+    cortex_m::asm::isb();
+}
+
+#[cfg(not(target_abi = "eabihf"))]
+fn init_fpu_context() {}
