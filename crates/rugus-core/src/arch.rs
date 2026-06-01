@@ -70,6 +70,15 @@ pub trait Arch: 'static {
     /// Detiene el core hasta la próxima IRQ (para tarea idle).
     fn wait_for_interrupt();
 
+    /// Reloj monotónico en milisegundos para temporización del scheduler.
+    ///
+    /// Base del sleep/wake cooperativo: el scheduler compara plazos contra este
+    /// valor. Envuelve a ~49,7 días (`u32`), por lo que las comparaciones de
+    /// plazo usan aritmética envolvente con signo. Si el backend no tiene una
+    /// fuente de tiempo inicializada, debe devolver un valor monótono (puede ser
+    /// constante 0); en ese caso un `sleep_ms` nunca expira por sí solo.
+    fn now_ms() -> u32;
+
     /// Reset por software.
     fn reset() -> !;
 }

@@ -34,7 +34,10 @@ fn kernel_task() -> ! {
     defmt::info!("kernel task (LD1) started");
     loop {
         toggle_led(DiscoLed::Red);
-        defmt::debug!("kernel toggle LD1");
+        defmt::debug!(
+            "kernel toggle LD1 @ {=u32} ms",
+            rugus_arch_cortex_m::time::now_ms()
+        );
         delay(TICKS_HALF_SEC);
         yield_cpu();
     }
@@ -42,8 +45,10 @@ fn kernel_task() -> ! {
 
 fn good_app() -> ! {
     loop {
-        spin_delay();
-        let _ = svc_user::yield_now();
+        // Sleep real vía syscall: la tarea no se reprograma hasta que el reloj
+        // monotónico avance ~200 ms (no busy-wait). El scheduler corre otras
+        // tareas mientras tanto.
+        let _ = svc_user::sleep_ms(200);
     }
 }
 
@@ -95,6 +100,8 @@ fn main() -> ! {
     cache::enable(&mut cp.SCB, &mut cp.CPUID);
 
     platform_init(&mut cp, &MpuLayout::STM32F769);
+    // Reloj monotónico (SysTick 1 kHz): base del sleep/wake del scheduler.
+    rugus_arch_cortex_m::time::init(&mut cp.SYST, clocks.hclk);
 
     let _ = LedPin::new(&dp.RCC, DiscoLed::Red);
     let _ = LedPin::new(&dp.RCC, DiscoLed::Green);
@@ -103,6 +110,7 @@ fn main() -> ! {
         set_fault_hook(on_fault);
         syscall::register(Hooks {
             yield_now: yield_cpu,
+            sleep_ms: sleep_cpu,
             current_task_id,
             current_domain,
             current_user_region,
@@ -160,6 +168,12 @@ fn on_fault(report: FaultReport) -> ! {
 fn yield_cpu() {
     unsafe {
         (&mut *core::ptr::addr_of_mut!(SCHEDULER)).yield_now();
+    }
+}
+
+fn sleep_cpu(ms: u32) {
+    unsafe {
+        (&mut *core::ptr::addr_of_mut!(SCHEDULER)).sleep_ms(ms);
     }
 }
 
