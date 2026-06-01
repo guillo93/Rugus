@@ -11,13 +11,16 @@
 //!   kernel la mata y el resto sigue.
 //!
 //! Visualización por LEDs (todos los maneja la tarea kernel privilegiada: una
-//! app userland no puede tocar GPIO, está en el dominio Drivers tras la MPU):
-//! - LD4 verde   : latido del kernel (parpadea ~2 Hz mientras el kernel vive).
-//! - LD6 azul    : latido de userland (parpadea mientras good_app sigue viva).
-//! - LD3 naranja : salud del supervisor (fijo si ninguna tarea murió; se apaga
-//!   al primer kill → "degradado").
-//! - LD5 rojo    : fault contenido (se enciende y queda latcheado al primer
-//!   fault que el failsafe contiene).
+//! app userland no puede tocar GPIO, está en el dominio Drivers tras la MPU).
+//! Cada LED tiene un patrón propio derivado del reloj monotónico (`now_ms`),
+//! muestreado a cadencia rápida (~40 ms) para que se distingan a simple vista:
+//! - LD4 verde   : latido del kernel — doble pulso tipo "lub-dub" cada 1 s.
+//! - LD6 azul    : actividad de userland — onda cuadrada ~3 Hz mientras good_app
+//!   vive; apagado fijo si murió.
+//! - LD3 naranja : salud del supervisor — fijo si el sistema está sano; parpadeo
+//!   lento ~1 Hz si alguna tarea murió ("degradado").
+//! - LD5 rojo    : fault contenido — se enciende y queda latcheado al primer
+//!   fault que el failsafe contiene.
 
 #![no_std]
 #![no_main]
@@ -43,8 +46,9 @@ static mut STACK_BAD: Stack4k = Stack4k([0; 4096]);
 /// Índice (= TaskId) de good_app según el orden de spawn de [`main`].
 const GOOD_IDX: usize = 2;
 
-/// Cadencia del heartbeat del supervisor (~250 ms a 168 MHz).
-const HEARTBEAT_CYCLES: u32 = 168_000_000 / 4;
+/// Cadencia de muestreo del supervisor (~40 ms a 168 MHz): suficientemente
+/// fino para que cada LED dibuje su patrón propio sin entrar en `wfi`.
+const SAMPLE_CYCLES: u32 = 168_000_000 / 25;
 
 static mut LED_ALIVE: Option<LedPin> = None;
 static mut LED_USER: Option<LedPin> = None;
@@ -53,43 +57,57 @@ static mut LED_FAULT: Option<LedPin> = None;
 
 fn kernel_task() -> ! {
     defmt::info!("kernel task (LD4) started");
+    let mut last_log_s = u32::MAX;
     loop {
+        let now = time::now_ms();
+        let killed = rugus_kernel::killed_count();
         // SAFETY: los LEDs solo los toca esta tarea privilegiada, cooperativa.
         unsafe {
             if let Some(led) = LED_ALIVE.as_mut() {
-                let _ = led.toggle();
+                let _ = if heartbeat(now) { led.set_high() } else { led.set_low() };
             }
-            // Latido de userland: parpadea mientras good_app no haya muerto.
             if let Some(led) = LED_USER.as_mut() {
-                if rugus_kernel::task_killed(GOOD_IDX) {
-                    let _ = led.set_low();
-                } else {
-                    let _ = led.toggle();
-                }
+                let on = !rugus_kernel::task_killed(GOOD_IDX) && user_activity(now);
+                let _ = if on { led.set_high() } else { led.set_low() };
             }
-            // Supervisor: fijo si el sistema está sano; apagado si algo murió.
             if let Some(led) = LED_SUPERVISOR.as_mut() {
-                if rugus_kernel::killed_count() == 0 {
-                    let _ = led.set_high();
-                } else {
-                    let _ = led.set_low();
-                }
+                let on = if killed == 0 { true } else { degraded_blink(now) };
+                let _ = if on { led.set_high() } else { led.set_low() };
             }
         }
-        defmt::debug!(
-            "supervisor: alive killed={=usize} @ {=u32} ms",
-            rugus_kernel::killed_count(),
-            time::now_ms()
-        );
-        // Heartbeat ACTIVO (paced busy-wait + yield), no `sleep`: mantiene una
+        // Log throttled a ~1/s (el muestreo de LEDs corre mucho más rápido).
+        let now_s = now / 1000;
+        if now_s != last_log_s {
+            last_log_s = now_s;
+            defmt::debug!("supervisor: alive killed={=usize} @ {=u32} ms", killed, now);
+        }
+        // Muestreo ACTIVO (paced busy-wait + yield), no `sleep`: mantiene una
         // tarea siempre lista para que el scheduler no entre en `wfi`. En
         // STM32F4 el WFI apaga el reloj de debug y ST-Link/probe-rs pierde RTT
-        // (incluso con DBGMCU.DBG_SLEEP), así que para un sandbox de
-        // visualización el supervisor late de forma activa. La ruta de bajo
-        // consumo (sleep/wake real) la ejercita `good_app`.
-        cortex_m::asm::delay(HEARTBEAT_CYCLES);
+        // (incluso con DBGMCU.DBG_SLEEP). La ruta de bajo consumo (sleep/wake
+        // real) la ejercita `good_app`.
+        cortex_m::asm::delay(SAMPLE_CYCLES);
         rugus_kernel::cpu_yield();
     }
+}
+
+/// Latido "lub-dub": doble pulso corto al inicio de cada ventana de 1 s.
+#[inline]
+fn heartbeat(now_ms: u32) -> bool {
+    let t = now_ms % 1000;
+    t < 80 || (200..280).contains(&t)
+}
+
+/// Actividad de userland: onda cuadrada ~3 Hz (periodo ~333 ms).
+#[inline]
+fn user_activity(now_ms: u32) -> bool {
+    (now_ms / 166) % 2 == 0
+}
+
+/// Parpadeo lento ~1 Hz para señalar estado degradado.
+#[inline]
+fn degraded_blink(now_ms: u32) -> bool {
+    (now_ms / 500) % 2 == 0
 }
 
 fn good_app() -> ! {
