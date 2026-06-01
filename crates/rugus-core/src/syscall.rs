@@ -58,6 +58,8 @@ impl Id {
 pub struct Hooks {
     /// Cede CPU (cooperativo).
     pub yield_now: fn(),
+    /// Duerme la tarea actual `ms` milisegundos (sleep/wake del scheduler).
+    pub sleep_ms: fn(u32),
     /// ID de la tarea en ejecución.
     pub current_task_id: fn() -> TaskId,
     /// Dominio lógico de la tarea en ejecución.
@@ -177,8 +179,16 @@ pub fn dispatch(id: Id, args: [u32; 4]) -> i32 {
             let id = current_task_id();
             id.0 as i32
         }
-        Id::SleepMs
-        | Id::Log
+        Id::SleepMs => {
+            // SAFETY: hook registrado antes de userland.
+            unsafe {
+                if let Some(h) = HOOKS {
+                    (h.sleep_ms)(args[0]);
+                }
+            }
+            0
+        }
+        Id::Log
         | Id::IpcSend
         | Id::IpcRecv
         | Id::NetSocket
@@ -212,6 +222,25 @@ pub mod user {
     #[inline(always)]
     pub fn task_id() -> i32 {
         svc_imm(Id::TaskId as u8)
+    }
+
+    /// Duerme la tarea actual `ms` milisegundos (`Id::SleepMs`).
+    ///
+    /// `ms` viaja en `r0`, que el handler SVC recupera del frame apilado como
+    /// `args[0]`. `0` equivale a ceder el CPU.
+    #[inline(always)]
+    pub fn sleep_ms(ms: u32) -> i32 {
+        let ret: i32;
+        // SAFETY: SVC con r0=ms; el dispatch lee args[0] del frame.
+        unsafe {
+            core::arch::asm!(
+                "svc 1",
+                in("r0") ms,
+                lateout("r0") ret,
+                options(nomem, nostack)
+            );
+        }
+        ret
     }
 
     #[inline(always)]

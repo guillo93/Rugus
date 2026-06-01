@@ -103,6 +103,10 @@ impl Arch for CortexM {
     fn reset() -> ! {
         cortex_m::peripheral::SCB::sys_reset();
     }
+
+    fn now_ms() -> u32 {
+        time::now_ms()
+    }
 }
 
 /// Inicializa MPU + fault handlers para la placa dada. Llamar desde `main`

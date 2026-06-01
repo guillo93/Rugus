@@ -46,6 +46,10 @@ pub enum TaskMode {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TaskState {
     Ready,
+    /// Dormida hasta que el reloj monotónico alcance este plazo (en ms,
+    /// comparado con aritmética envolvente con signo). No elegible por
+    /// [`Scheduler::pick_next`] hasta despertar.
+    Sleeping(u32),
     Killed,
 }
 
@@ -192,6 +196,52 @@ impl<A: Arch> Scheduler<A> {
         }
     }
 
+    /// Duerme la tarea en ejecución `ms` milisegundos y cede el CPU.
+    ///
+    /// La tarea no vuelve a ser elegible hasta que el reloj monotónico
+    /// ([`Arch::now_ms`]) alcance el plazo. Si hay otra tarea lista se conmuta a
+    /// ella; si solo quedan durmientes, el scheduler hace `wfi` hasta el próximo
+    /// tick y reevalúa (no hay busy-spin). `ms == 0` equivale a [`Self::yield_now`].
+    ///
+    /// Cooperativo: el despertar ocurre la próxima vez que una tarea cede o el
+    /// `wfi` retorna por interrupción, no de forma preventiva.
+    pub fn sleep_ms(&mut self, ms: u32) {
+        if !self.started || self.count == 0 {
+            return;
+        }
+        if ms == 0 {
+            self.yield_now();
+            return;
+        }
+        let prev_idx = self.current;
+        let wake_at = A::now_ms().wrapping_add(ms);
+        // SAFETY: prev_idx válido; slot inicializado en spawn.
+        unsafe {
+            self.tasks[prev_idx].assume_init_mut().state = TaskState::Sleeping(wake_at);
+        }
+        loop {
+            let next_idx = self.pick_next(prev_idx);
+            if next_idx != prev_idx {
+                self.current = next_idx;
+                self.prepare_task_hw(next_idx);
+                // SAFETY: índices válidos y contextos inicializados.
+                unsafe {
+                    let prev =
+                        &mut self.tasks[prev_idx].assume_init_mut().context as *mut A::Context;
+                    let next = &self.task_ref(next_idx).context as *const A::Context;
+                    A::switch_context(prev, next);
+                }
+                return;
+            }
+            // Ninguna otra tarea lista. `pick_next` ya despertó las vencidas:
+            // si el propio durmiente alcanzó su plazo, sigue sin conmutar.
+            if self.task_ref(prev_idx).state == TaskState::Ready {
+                return;
+            }
+            A::wait_for_interrupt();
+        }
+    }
+
     /// Mata la tarea faultante y salta a la siguiente; no retorna.
     ///
     /// Invocado desde el fault handler del arch backend. El TCB no registra
@@ -205,14 +255,23 @@ impl<A: Arch> Scheduler<A> {
         unsafe {
             self.tasks[idx].assume_init_mut().state = TaskState::Killed;
         }
-        let next_idx = self.pick_next(idx);
-        if next_idx == idx || self.all_killed() {
-            // Sin tareas vivas: WFI hasta que el watchdog de la plataforma
-            // resetee. No hay panic global por diseño.
-            loop {
-                A::wait_for_interrupt();
+        // `idx` ya está muerta, así que `pick_next` nunca la devuelve como
+        // lista. Si solo quedan durmientes, espera (wfi) a que alguna venza en
+        // vez de abandonar: una tarea dormida sigue viva. Solo si TODAS están
+        // muertas se entra en el WFI terminal (la plataforma resetea por
+        // watchdog; no hay panic global por diseño).
+        let next_idx = loop {
+            let n = self.pick_next(idx);
+            if n != idx {
+                break n;
             }
-        }
+            if self.all_killed() {
+                loop {
+                    A::wait_for_interrupt();
+                }
+            }
+            A::wait_for_interrupt();
+        };
         self.current = next_idx;
         self.prepare_task_hw(next_idx);
         let next = &self.task_ref(next_idx).context as *const A::Context;
@@ -302,7 +361,27 @@ impl<A: Arch> Scheduler<A> {
         (0..self.count).all(|i| self.task_ref(i).state == TaskState::Killed)
     }
 
+    /// Despierta las tareas dormidas cuyo plazo ya venció.
+    ///
+    /// Comparación envolvente con signo: `now - wake_at` interpretado como
+    /// `i32` es `>= 0` cuando `now` alcanzó o pasó el plazo, correcto a través
+    /// del wrap de `u32` mientras un sleep no exceda ~24,8 días (medio rango).
+    fn wake_expired(&mut self) {
+        let now = A::now_ms();
+        for i in 0..self.count {
+            if let TaskState::Sleeping(wake_at) = self.task_ref(i).state {
+                if now.wrapping_sub(wake_at) as i32 >= 0 {
+                    // SAFETY: i < count; slot inicializado en spawn.
+                    unsafe {
+                        self.tasks[i].assume_init_mut().state = TaskState::Ready;
+                    }
+                }
+            }
+        }
+    }
+
     fn pick_next(&mut self, from: usize) -> usize {
+        self.wake_expired();
         for band in [Priority::Kernel, Priority::Service, Priority::App] {
             let bi = band as usize;
             let start = self.last_served[bi];

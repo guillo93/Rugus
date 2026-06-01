@@ -189,6 +189,7 @@ fn main() -> ! {
         // Reporte de fault preciso: task id y dominio desde el scheduler vivo.
         rugus_core::syscall::register(rugus_core::syscall::Hooks {
             yield_now: yield_cpu,
+            sleep_ms: |ms| (&mut *addr_of_mut!(SCHEDULER)).sleep_ms(ms),
             current_task_id: || (&*addr_of!(SCHEDULER)).current_id(),
             current_domain: || (&*addr_of!(SCHEDULER)).current_domain(),
             current_user_region: || (&*addr_of!(SCHEDULER)).current_user_region(),
