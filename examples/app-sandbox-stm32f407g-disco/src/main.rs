@@ -145,10 +145,11 @@ fn on_fault(report: FaultReport) -> ! {
     // dominio Drivers disparó un MemManage en user mode y que el kernel lo
     // contiene matando SOLO esa tarea (LD4 sigue parpadeando).
     defmt::error!(
-        "MPU fault {} domain={} pc={=u32:#x} task={=u8} -> kill+resume",
+        "MPU fault {} domain={} pc={=u32:#x} addr={=u32:#x} task={=u8} -> kill+resume",
         report.kind.name(),
         report.domain.name(),
         report.pc,
+        report.addr.unwrap_or(0),
         report.task_id.0
     );
     // SAFETY: scheduler activo; hook solo desde fault handler.

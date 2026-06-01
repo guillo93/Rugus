@@ -44,6 +44,9 @@ pub fn domain_for_pc(pc: u32) -> Domain {
 
 /// Handler común para MemManage / Bus / Usage / HardFault en contexto de tarea.
 pub fn handle_task_fault(kind: FaultKind) -> ! {
+    // El registro de dirección (MMFAR/BFAR) solo es fiable si su bit de validez
+    // sigue en alto, así que se lee ANTES de limpiar el estado de fault.
+    let addr = fault_address(kind);
     clear_fault_status(kind);
     let psp = cortex_m::register::psp::read();
     let pc = stacked_pc(psp);
@@ -53,6 +56,7 @@ pub fn handle_task_fault(kind: FaultKind) -> ! {
         pc,
         domain,
         task_id: rugus_core::syscall::current_task_id(),
+        addr,
     };
 
     // SAFETY: hook registrado en main; no reentrante desde otra tarea.
@@ -76,6 +80,27 @@ fn fault_panic(kind: FaultKind, domain: Domain, pc: u32) -> ! {
     {
         let _ = (kind, domain, pc);
         core::panic!("rugus fault");
+    }
+}
+
+/// Lee la dirección del fault desde MMFAR/BFAR cuando el bit de validez en CFSR
+/// está activo. Devuelve `None` para faults sin dirección asociada
+/// (UsageFault, HardFault sin escalado de MemManage/BusFault) o si el HW no
+/// marcó la dirección como válida.
+fn fault_address(kind: FaultKind) -> Option<u32> {
+    const CFSR: *const u32 = 0xE000_ED28 as *const u32;
+    const MMFAR: *const u32 = 0xE000_ED34 as *const u32;
+    const BFAR: *const u32 = 0xE000_ED38 as *const u32;
+    const MMARVALID: u32 = 1 << 7;
+    const BFARVALID: u32 = 1 << 15;
+    // SAFETY: registros SCB estándar de solo lectura.
+    unsafe {
+        let cfsr = ptr::read_volatile(CFSR);
+        match kind {
+            FaultKind::MemManage if cfsr & MMARVALID != 0 => Some(ptr::read_volatile(MMFAR)),
+            FaultKind::BusFault if cfsr & BFARVALID != 0 => Some(ptr::read_volatile(BFAR)),
+            _ => None,
+        }
     }
 }
 

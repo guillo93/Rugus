@@ -17,7 +17,8 @@ pub mod time;
 pub use exceptions::enable_fault_handlers;
 pub use fault::set_fault_hook;
 pub use mpu::{
-    init as mpu_init, layout as mpu_layout, region as mpu_region, remap_app_stack, MpuLayout,
+    init as mpu_init, layout as mpu_layout, region as mpu_region, remap_app_stack, set_stack_guard,
+    MpuLayout,
 };
 
 use rugus_core::arch::{Arch, CriticalGuard};
@@ -80,6 +81,10 @@ impl Arch for CortexM {
                     mpu::clear_app_stack(&mut cp.MPU);
                 }
             }
+            // Guarda de pila para CUALQUIER tarea: 32 B sin acceso en la base
+            // del stack. Detecta el desbordamiento (priv o user) como MemManage
+            // limpio en vez de corromper la RAM vecina del kernel.
+            mpu::set_stack_guard(&mut cp.MPU, stack_base);
         }
     }
 

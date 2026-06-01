@@ -21,8 +21,11 @@ pub mod region {
     pub const SERVICES: u8 = 5;
     /// Reservado — Secrets (priv R--, futuro).
     pub const SECRETS: u8 = 6;
-    /// Reservado.
-    pub const SPARE: u8 = 7;
+    /// Guarda de pila: 32 B sin acceso en la base del stack de la tarea activa.
+    /// Es la región de MAYOR número, así que gana la prioridad de solapamiento
+    /// de ARMv7-M sobre `KERNEL_RAM`/`APP_STACK` y convierte un desbordamiento
+    /// de pila (priv o user) en un MemManage limpio en vez de corrupción silente.
+    pub const STACK_GUARD: u8 = 7;
 }
 
 /// Tamaños de región (campo SIZE del RASR): región cubre `2^(SIZE+1)` bytes.
@@ -42,6 +45,8 @@ mod size {
 /// el stack de la app como solo-lectura y la primera escritura (el `push` del
 /// prólogo) dispara MemManage aunque la región parezca correcta.
 mod ap {
+    /// Sin acceso para nadie (ni priv ni user) — guarda de pila.
+    pub const NONE: u32 = 0b000 << 24;
     /// Priv RW, user sin acceso.
     pub const PRIV_RW: u32 = 0b001 << 24;
     /// Priv RO, user RO (flash ejecutable/lectura).
@@ -49,6 +54,9 @@ mod ap {
     /// Priv RW, user RW (stack de app).
     pub const FULL_RW: u32 = 0b011 << 24;
 }
+
+/// Bytes guardados en la base de cada pila (campo SIZE 4 → región de 32 B).
+const GUARD_SIZE_FIELD: u8 = 4;
 
 const RASR_ENABLE: u32 = 1 << 0;
 
@@ -178,10 +186,10 @@ pub fn init(mpu: &mut MPU, layout: &MpuLayout) {
     // Región 4: app stack — deshabilitada hasta el primer switch a app userland.
     disable_region(mpu, region::APP_STACK);
 
-    // Regiones 5–7 sin usar.
+    // Regiones 5–6 sin usar; 7 es la guarda de pila (se programa en cada switch).
     disable_region(mpu, region::SERVICES);
     disable_region(mpu, region::SECRETS);
-    disable_region(mpu, region::SPARE);
+    disable_region(mpu, region::STACK_GUARD);
 
     // PRIVDEFENA: kernel privilegiado usa mapa por defecto además de MPU.
     const CTRL_PRIVDEFENA: u32 = 1 << 2;
@@ -222,6 +230,27 @@ pub fn remap_app_stack(mpu: &mut MPU, stack_base: u32, size: u8) {
 /// Deshabilita la región de stack app (p. ej. al volver a tarea kernel).
 pub fn clear_app_stack(mpu: &mut MPU) {
     disable_region(mpu, region::APP_STACK);
+    sync_mpu();
+}
+
+/// Coloca la guarda de pila (32 B sin acceso) en la base del stack `stack_base`.
+///
+/// `stack_base` es la dirección MÁS BAJA del stack de la tarea (el extremo al
+/// que se acerca el SP al crecer). Cualquier acceso a esos 32 B dispara
+/// MemManage antes de que el stack desborde a la RAM vecina. Aplica tanto a
+/// tareas privilegiadas como userland: la región 7 gana la prioridad de
+/// solapamiento de ARMv7-M sobre `KERNEL_RAM`/`APP_STACK`. `stack_base` ya viene
+/// alineado a ≥32 B (potencia de 2 para user; pilas kernel alineadas a 4 KiB).
+pub fn set_stack_guard(mpu: &mut MPU, stack_base: u32) {
+    configure_region(
+        mpu,
+        region::STACK_GUARD,
+        stack_base,
+        GUARD_SIZE_FIELD,
+        ap::NONE,
+        true,
+        ATTR_NORMAL_WB,
+    );
     sync_mpu();
 }
 
