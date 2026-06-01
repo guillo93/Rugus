@@ -143,6 +143,15 @@ pub fn killed_count() -> usize {
     scheduler_ref().killed_count()
 }
 
+/// Revive una tarea `Killed` reconstruyendo su frame inicial; `true` si lo hizo.
+///
+/// La invoca el supervisor privilegiado para autorreparar una app caída: arranca
+/// limpia desde su `entry` original. No-op si `idx` no está matada.
+pub fn respawn(idx: usize) -> bool {
+    // SAFETY: scheduler poseído; cooperativo sin reentrada concurrente.
+    unsafe { scheduler_mut().respawn(idx) }
+}
+
 /// Uso máximo de pila (high-water) y total de la tarea `idx`, en bytes.
 pub fn stack_usage(idx: usize) -> (u32, u32) {
     let s = scheduler_ref();
