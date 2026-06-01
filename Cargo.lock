@@ -56,6 +56,7 @@ dependencies = [
  "rugus-core",
  "rugus-hal",
  "rugus-hal-stm32f4",
+ "rugus-kernel",
  "rugus-runtime",
 ]
 
@@ -69,6 +70,7 @@ dependencies = [
  "rugus-core",
  "rugus-hal",
  "rugus-hal-stm32f7",
+ "rugus-kernel",
  "rugus-runtime",
 ]
 
@@ -963,6 +965,16 @@ dependencies = [
  "smoltcp",
  "stm32f7",
  "volatile-register",
+]
+
+[[package]]
+name = "rugus-kernel"
+version = "0.1.0"
+dependencies = [
+ "cortex-m",
+ "defmt 1.1.0",
+ "rugus-arch-cortex-m",
+ "rugus-core",
 ]
 
 [[package]]
