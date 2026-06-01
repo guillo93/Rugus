@@ -19,5 +19,11 @@ defmt            = { workspace = true, optional = true }
 rugus-core       = { workspace = true }
 
 [features]
-default = []
+default = ["systick"]
 defmt = ["dep:defmt", "rugus-core/log"]
+# Provee el handler `#[exception] fn SysTick` que alimenta el reloj monotónico
+# de `time`. Default-on: los ejemplos que usan `time::init` lo necesitan. Un
+# binario que defina su propio SysTick (p. ej. un stack de red con su propia
+# base de tiempo) debe poner `default-features = false` en la dependencia de
+# este crate para evitar el doble símbolo en el link.
+systick = []
