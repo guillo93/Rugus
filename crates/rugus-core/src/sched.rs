@@ -62,6 +62,10 @@ struct TaskSlot<A: Arch> {
     /// Base del stack (para remapeo MPU región App).
     stack_base: u32,
     stack_len: u32,
+    /// Punto de entrada original, conservado para poder respawnear la tarea tras
+    /// un fault: repintar el stack y reconstruir el frame inicial exige re-llamar
+    /// a [`Arch::init_task_stack`] con la misma `entry`.
+    entry: fn() -> !,
 }
 
 /// Número de bandas de prioridad (ver [`Priority`]).
@@ -156,6 +160,7 @@ impl<A: Arch> Scheduler<A> {
             domain,
             stack_base: base,
             stack_len,
+            entry,
         };
         self.tasks[self.count].write(slot);
         let id = TaskId(self.count as u8);
@@ -279,6 +284,39 @@ impl<A: Arch> Scheduler<A> {
         unsafe {
             A::resume_after_fault(next);
         }
+    }
+
+    /// Revive una tarea matada por un fault (`Killed` → `Ready`), reconstruyendo
+    /// su frame inicial desde cero. Devuelve `true` si la respawneó.
+    ///
+    /// El supervisor (tarea privilegiada) la invoca para autorreparar una app
+    /// caída: repinta el stack con [`STACK_FILL`], reconstruye el contexto con la
+    /// `entry` original vía [`Arch::init_task_stack`] y la marca `Ready`. La tarea
+    /// arranca limpia (no reanuda donde falló): un fault deja estado indeterminado,
+    /// así que un reinicio en frío es la única recuperación segura.
+    ///
+    /// No-op (devuelve `false`) si `idx` no existe o no está `Killed`: solo se
+    /// revive lo que el failsafe mató, nunca se reinicia una tarea viva.
+    pub fn respawn(&mut self, idx: usize) -> bool {
+        if idx >= self.count || self.task_ref(idx).state != TaskState::Killed {
+            return false;
+        }
+        // SAFETY: idx < count; slot inicializado en spawn. El stack [base,len) es
+        // el estático original de la tarea, vivo mientras el scheduler existe; la
+        // tarea está Killed (no en ejecución), así que reescribirlo es seguro.
+        unsafe {
+            let slot = self.tasks[idx].assume_init_mut();
+            let base = slot.stack_base as *mut u8;
+            let len = slot.stack_len as usize;
+            let entry = slot.entry;
+            let privileged = slot.mode == TaskMode::Privileged;
+            let stack = core::slice::from_raw_parts_mut(base, len);
+            stack.fill(STACK_FILL);
+            let ctx = A::init_task_stack(stack, entry, privileged);
+            slot.context = ctx;
+            slot.state = TaskState::Ready;
+        }
+        true
     }
 
     /// ID de la tarea en ejecución.

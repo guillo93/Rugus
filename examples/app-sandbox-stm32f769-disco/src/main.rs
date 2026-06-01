@@ -35,6 +35,7 @@ use rugus_hal::GpioPin;
 use rugus_hal_stm32f7::cache;
 use rugus_hal_stm32f7::fmc::{self, SDRAM_BASE};
 use rugus_hal_stm32f7::gpio::{DiscoLed, LedPin};
+use rugus_hal_stm32f7::iwdg::Iwdg;
 use rugus_hal_stm32f7::pac;
 use rugus_hal_stm32f7::rcc;
 use rugus_hal_stm32f7::usart::{Usart2, CONSOLE_BAUD};
@@ -47,6 +48,8 @@ static mut STACK_KERNEL: Stack4k = Stack4k([0; 4096]);
 static mut STACK_GOOD: Stack4k = Stack4k([0; 4096]);
 static mut STACK_BAD: Stack4k = Stack4k([0; 4096]);
 
+/// Índice (= TaskId) de bad_app según el orden de spawn de [`main`].
+const BAD_IDX: usize = 1;
 /// Índice (= TaskId) de good_app según el orden de spawn de [`main`].
 const GOOD_IDX: usize = 2;
 
@@ -62,12 +65,31 @@ static mut LED_ALIVE: Option<LedPin> = None;
 static mut LED_USER: Option<LedPin> = None;
 static mut LED_SUPERVISOR: Option<LedPin> = None;
 static mut LED_FAULT: Option<LedPin> = None;
+/// Watchdog independiente: el supervisor lo alimenta en cada muestreo. Si el
+/// kernel se cuelga y deja de hacerlo, el IWDG resetea el chip (~2 s).
+static mut WATCHDOG: Option<Iwdg> = None;
 
 fn kernel_task() -> ! {
     defmt::info!("kernel task (LD Red) started");
     let mut last_log_s = u32::MAX;
+    let mut respawns = 0u32;
     loop {
         let now = time::now_ms();
+        // Alimenta el watchdog: mientras el supervisor late, el sistema vive. El
+        // WFI terminal (todas las tareas muertas) deja de alimentarlo → reset.
+        // SAFETY: solo esta tarea privilegiada toca el handle, cooperativa.
+        unsafe {
+            if let Some(wdt) = WATCHDOG.as_ref() {
+                wdt.kick();
+            }
+        }
+        // Autorreparación: si un fault mató a bad_app, la respawnea desde cero.
+        // bad_app volverá a faultar (acceso prohibido) y el ciclo se repite, lo
+        // que demuestra visiblemente kill→respawn→re-kill sin tumbar el sistema.
+        if rugus_kernel::task_killed(BAD_IDX) && rugus_kernel::respawn(BAD_IDX) {
+            respawns += 1;
+            defmt::info!("supervisor: respawned bad_app (#{=u32})", respawns);
+        }
         let killed = rugus_kernel::killed_count();
         // SAFETY: los LEDs solo los toca esta tarea privilegiada, cooperativa.
         unsafe {
@@ -202,6 +224,13 @@ fn main() -> ! {
         let _ = fault_led.set_low();
         LED_FAULT = Some(fault_led);
     }
+
+    // Watchdog independiente: a partir de aquí el supervisor debe alimentarlo en
+    // cada latido o el chip se resetea (~2 s). Es la red de seguridad última.
+    unsafe {
+        WATCHDOG = Some(Iwdg::start());
+    }
+    defmt::info!("IWDG armed (~2 s reload)");
 
     unsafe {
         rugus_kernel::install(Some(on_fault));

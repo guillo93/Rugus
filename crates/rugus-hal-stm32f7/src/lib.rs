@@ -24,5 +24,6 @@ pub mod cache;
 pub mod eth;
 pub mod fmc;
 pub mod gpio;
+pub mod iwdg;
 pub mod rcc;
 pub mod usart;
