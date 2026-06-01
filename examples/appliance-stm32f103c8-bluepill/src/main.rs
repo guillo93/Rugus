@@ -193,6 +193,8 @@ fn main() -> ! {
             current_task_id: || (&*addr_of!(SCHEDULER)).current_id(),
             current_domain: || (&*addr_of!(SCHEDULER)).current_domain(),
             current_user_region: || (&*addr_of!(SCHEDULER)).current_user_region(),
+            // El appliance lite no expone IPC userland: rechaza con Einval.
+            ipc_send: |_chan, _msg| rugus_core::Errno::Einval as i32,
         });
         lite::register(services::hooks());
         CONSOLE = Some(console);

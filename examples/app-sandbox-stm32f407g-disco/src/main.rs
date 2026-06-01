@@ -15,8 +15,9 @@
 //! Cada LED tiene un patrón propio derivado del reloj monotónico (`now_ms`),
 //! muestreado a cadencia rápida (~40 ms) para que se distingan a simple vista:
 //! - LD4 verde   : latido del kernel — doble pulso tipo "lub-dub" cada 1 s.
-//! - LD6 azul    : actividad de userland — onda cuadrada ~3 Hz mientras good_app
-//!   vive; apagado fijo si murió.
+//! - LD6 azul    : actividad de userland — la conmuta la PROPIA good_app vía IPC
+//!   (syscall IpcSend → buzón del kernel → el supervisor toca el GPIO en su
+//!   nombre). Userland no accede al GPIO directamente; apagado fijo si murió.
 //! - LD3 naranja : salud del supervisor — fijo si el sistema está sano; parpadeo
 //!   lento ~1 Hz si alguna tarea murió ("degradado").
 //! - LD5 rojo    : fault contenido — se enciende y queda latcheado al primer
@@ -50,6 +51,10 @@ const GOOD_IDX: usize = 2;
 /// fino para que cada LED dibuje su patrón propio sin entrar en `wfi`.
 const SAMPLE_CYCLES: u32 = 168_000_000 / 25;
 
+/// Mensaje IPC "conmuta el LED de userland": good_app lo envía por syscall y el
+/// supervisor privilegiado lo ejecuta sobre el GPIO. Protocolo opaco al kernel.
+const IPC_TOGGLE_USER: u32 = 1;
+
 static mut LED_ALIVE: Option<LedPin> = None;
 static mut LED_USER: Option<LedPin> = None;
 static mut LED_SUPERVISOR: Option<LedPin> = None;
@@ -66,9 +71,21 @@ fn kernel_task() -> ! {
             if let Some(led) = LED_ALIVE.as_mut() {
                 let _ = if heartbeat(now) { led.set_high() } else { led.set_low() };
             }
-            if let Some(led) = LED_USER.as_mut() {
-                let on = !rugus_kernel::task_killed(GOOD_IDX) && user_activity(now);
-                let _ = if on { led.set_high() } else { led.set_low() };
+            // I/O userland por IPC: drena las peticiones que good_app envió por
+            // syscall y actúa sobre el GPIO en su nombre (dominio Drivers). Si
+            // good_app murió, apaga el LED para reflejar que ya no hay actividad.
+            if rugus_kernel::task_killed(GOOD_IDX) {
+                if let Some(led) = LED_USER.as_mut() {
+                    let _ = led.set_low();
+                }
+            } else {
+                while let Some(msg) = rugus_kernel::ipc_try_recv() {
+                    if msg == IPC_TOGGLE_USER {
+                        if let Some(led) = LED_USER.as_mut() {
+                            let _ = led.toggle();
+                        }
+                    }
+                }
             }
             if let Some(led) = LED_SUPERVISOR.as_mut() {
                 let on = if killed == 0 { true } else { degraded_blink(now) };
@@ -98,12 +115,6 @@ fn heartbeat(now_ms: u32) -> bool {
     t < 80 || (200..280).contains(&t)
 }
 
-/// Actividad de userland: onda cuadrada ~3 Hz (periodo ~333 ms).
-#[inline]
-fn user_activity(now_ms: u32) -> bool {
-    (now_ms / 166) % 2 == 0
-}
-
 /// Parpadeo lento ~1 Hz para señalar estado degradado.
 #[inline]
 fn degraded_blink(now_ms: u32) -> bool {
@@ -112,8 +123,11 @@ fn degraded_blink(now_ms: u32) -> bool {
 
 fn good_app() -> ! {
     loop {
+        // Conmuta su LED pidiéndoselo al driver privilegiado por IPC: userland
+        // NO toca GPIO (lo prohíbe la MPU, dominio Drivers), enruta por syscall.
+        let _ = svc_user::ipc_send(0, IPC_TOGGLE_USER);
         // Sleep real vía syscall: no busy-wait; el scheduler corre otras tareas.
-        let _ = svc_user::sleep_ms(200);
+        let _ = svc_user::sleep_ms(150);
     }
 }
 

@@ -67,6 +67,11 @@ pub struct Hooks {
     /// Región MPU `(base, len)` del stack de la tarea en ejecución si es
     /// userland; `None` si es privilegiada. Fuente para [`validate_user_range`].
     pub current_user_region: fn() -> Option<(u32, u32)>,
+    /// Entrega un mensaje IPC por valor (`chan`, `msg`) a un buzón del kernel.
+    /// Retorna `0` si encolado, [`Errno`] negativo si el canal no existe o
+    /// está lleno. Es la ruta de I/O userland → driver privilegiado sin
+    /// punteros: todo viaja en registros, así que no hay rango que validar.
+    pub ipc_send: fn(chan: u32, msg: u32) -> i32,
 }
 
 static mut HOOKS: Option<Hooks> = None;
@@ -188,8 +193,17 @@ pub fn dispatch(id: Id, args: [u32; 4]) -> i32 {
             }
             0
         }
+        Id::IpcSend => {
+            // chan=args[0], msg=args[1]; ambos por valor (sin punteros).
+            // SAFETY: hook registrado antes de userland.
+            unsafe {
+                match HOOKS {
+                    Some(h) => (h.ipc_send)(args[0], args[1]),
+                    None => Errno::Efault as i32,
+                }
+            }
+        }
         Id::Log
-        | Id::IpcSend
         | Id::IpcRecv
         | Id::NetSocket
         | Id::NetConnect
@@ -236,6 +250,27 @@ pub mod user {
             core::arch::asm!(
                 "svc 1",
                 in("r0") ms,
+                lateout("r0") ret,
+                options(nomem, nostack)
+            );
+        }
+        ret
+    }
+
+    /// Envía un mensaje IPC por valor a un buzón del kernel (`Id::IpcSend`).
+    ///
+    /// `chan` viaja en `r0` y `msg` en `r1`; el dispatch los lee del frame como
+    /// `args[0]`/`args[1]`. Sin punteros: la ruta de I/O userland → driver
+    /// privilegiado no expone memoria de la app, así que no hay MemManage.
+    #[inline(always)]
+    pub fn ipc_send(chan: u32, msg: u32) -> i32 {
+        let ret: i32;
+        // SAFETY: SVC con r0=chan, r1=msg; el dispatch lee args[0..2] del frame.
+        unsafe {
+            core::arch::asm!(
+                "svc 0x10",
+                in("r0") chan,
+                in("r1") msg,
                 lateout("r0") ret,
                 options(nomem, nostack)
             );
