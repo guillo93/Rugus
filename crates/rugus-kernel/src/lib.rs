@@ -29,10 +29,11 @@
 use core::ptr::{addr_of, addr_of_mut};
 
 use rugus_arch_cortex_m::{set_fault_hook, CortexM};
+use rugus_core::channel::Channel;
 use rugus_core::fault::FaultReport;
 use rugus_core::sched::{Priority, Scheduler, SpawnError, TaskId};
 use rugus_core::syscall::{self, Hooks};
-use rugus_core::Domain;
+use rugus_core::{Domain, Errno};
 
 /// Tipo concreto del scheduler de esta capa (Arch fijado a Cortex-M).
 type Sched = Scheduler<CortexM>;
@@ -47,6 +48,12 @@ pub type FaultObserver = fn(&FaultReport);
 static mut SCHEDULER: Sched = Sched::new();
 /// Observador de fault registrado por la placa (opcional).
 static mut FAULT_OBSERVER: Option<FaultObserver> = None;
+
+/// Canal IPC único (id 0) por el que userland envía peticiones de I/O por valor
+/// a un driver privilegiado. SPSC: el productor es el dispatch del syscall (una
+/// app a la vez bajo el scheduler cooperativo), el consumidor es la tarea-driver
+/// que llama a [`ipc_try_recv`]. Capacidad útil 7.
+static IPC_MAILBOX: Channel<u32, 8> = Channel::new();
 
 /// Cablea el kernel: registra los hooks de syscall y el hook de fault.
 ///
@@ -69,6 +76,7 @@ pub unsafe fn install(observer: Option<FaultObserver>) {
             current_task_id,
             current_domain,
             current_user_region,
+            ipc_send,
         });
     }
 }
@@ -141,7 +149,27 @@ pub fn stack_usage(idx: usize) -> (u32, u32) {
     (s.stack_high_water(idx), s.stack_len(idx))
 }
 
+/// Saca la siguiente petición IPC del buzón userland, o `None` si está vacío.
+///
+/// La consume la tarea-driver privilegiada (único consumidor del SPSC). El
+/// `msg` es opaco a esta capa: lo interpreta el driver de la placa.
+pub fn ipc_try_recv() -> Option<u32> {
+    IPC_MAILBOX.try_recv()
+}
+
 // --- Hooks de syscall: rutean al scheduler poseído por la capa. ---
+
+/// Hook de `Id::IpcSend`: encola `msg` en el buzón del kernel. Solo el canal 0
+/// existe por ahora; cualquier otro id devuelve `Einval`. `Ebusy` si está lleno.
+fn ipc_send(chan: u32, msg: u32) -> i32 {
+    if chan != 0 {
+        return Errno::Einval as i32;
+    }
+    match IPC_MAILBOX.try_send(msg) {
+        Ok(()) => 0,
+        Err(_) => Errno::Ebusy as i32,
+    }
+}
 
 fn yield_now() {
     // SAFETY: scheduler poseído; cooperativo sin reentrada concurrente.
