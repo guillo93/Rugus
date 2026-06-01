@@ -105,6 +105,7 @@ fn main() -> ! {
             yield_now: yield_cpu,
             current_task_id,
             current_domain,
+            current_user_region,
         });
 
         let sched = &mut *core::ptr::addr_of_mut!(SCHEDULER);
@@ -168,6 +169,10 @@ fn current_task_id() -> rugus_core::sched::TaskId {
 
 fn current_domain() -> rugus_core::Domain {
     unsafe { (*core::ptr::addr_of!(SCHEDULER)).current_domain() }
+}
+
+fn current_user_region() -> Option<(u32, u32)> {
+    unsafe { (*core::ptr::addr_of!(SCHEDULER)).current_user_region() }
 }
 
 fn delay(ticks: u32) {
