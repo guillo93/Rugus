@@ -35,6 +35,7 @@ use rugus_hal::GpioPin;
 use rugus_hal_stm32f4::gpio::{DiscoLed, LedPin};
 use rugus_hal_stm32f4::pac;
 use rugus_hal_stm32f4::rcc;
+use rugus_hal_stm32f4::usart::{Usart2, CONSOLE_BAUD};
 use rugus_runtime::entry;
 
 #[repr(C, align(4096))]
@@ -172,6 +173,10 @@ fn main() -> ! {
         rugus_core::heap::init(core::ptr::addr_of_mut!(HEAP).cast(), HEAP_SIZE);
     }
 
+    // Autotest USART2 (HDSEL single-wire loopback): valida el periférico por
+    // RTT sin cablear pines — PA2 reinyecta en el receptor.
+    usart_selftest(clocks.pclk1);
+
     platform_init(&mut cp, &MpuLayout::STM32F407);
     time::init(&mut cp.SYST, clocks.hclk);
 
@@ -210,6 +215,31 @@ fn on_fault(_report: &FaultReport) {
         if let Some(led) = LED_FAULT.as_mut() {
             let _ = led.set_high();
         }
+    }
+}
+
+/// Autotest de USART2 por loopback single-wire (HDSEL): transmite un patrón y
+/// lo lee de vuelta, reportando PASS/FAIL por RTT. Prueba el driver completo
+/// (relojes, BRR, AF, TX, RX) sin hardware externo.
+fn usart_selftest(pclk1: u32) {
+    let mut u = Usart2::new_loopback(pclk1, CONSOLE_BAUD);
+    const PATTERN: &[u8] = b"RUGUS-UART";
+    let mut ok = true;
+    for &tx in PATTERN {
+        u.write_byte(tx);
+        match u.read_byte_timeout(200_000) {
+            Some(rx) if rx == tx => {}
+            other => {
+                defmt::warn!("USART2 loopback: tx={=u8} rx={:?}", tx, other);
+                ok = false;
+                break;
+            }
+        }
+    }
+    if ok {
+        defmt::info!("USART2 loopback selftest: PASS ({=usize} bytes)", PATTERN.len());
+    } else {
+        defmt::warn!("USART2 loopback selftest: FAIL");
     }
 }
 
