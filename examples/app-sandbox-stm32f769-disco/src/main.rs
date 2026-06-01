@@ -34,6 +34,7 @@ use rugus_core::syscall::user as svc_user;
 use rugus_hal::GpioPin;
 use rugus_hal_stm32f7::cache;
 use rugus_hal_stm32f7::fmc::{self, SDRAM_BASE};
+use rugus_hal_stm32f7::exti::{self, Button};
 use rugus_hal_stm32f7::gpio::{DiscoLed, LedPin};
 use rugus_hal_stm32f7::iwdg::Iwdg;
 use rugus_hal_stm32f7::pac;
@@ -68,13 +69,25 @@ static mut LED_FAULT: Option<LedPin> = None;
 /// Watchdog independiente: el supervisor lo alimenta en cada muestreo. Si el
 /// kernel se cuelga y deja de hacerlo, el IWDG resetea el chip (~2 s).
 static mut WATCHDOG: Option<Iwdg> = None;
+/// Botón B1 (PA0) cableado a EXTI0. Mantiene viva la config del IRQ; el conteo
+/// de eventos lo lee el supervisor por [`exti::events`].
+static mut BUTTON: Option<Button> = None;
 
 fn kernel_task() -> ! {
     defmt::info!("kernel task (LD Red) started");
     let mut last_log_s = u32::MAX;
     let mut respawns = 0u32;
+    let mut last_btn = exti::events();
     loop {
         let now = time::now_ms();
+        // IRQ→tarea: el handler EXTI0 contabiliza pulsaciones del botón B1; aquí
+        // (contexto de tarea) observamos el contador y reaccionamos. Un IRQ real
+        // de periférico llega así a código de tarea sin tocar el scheduler.
+        let btn = exti::events();
+        if btn != last_btn {
+            defmt::info!("supervisor: button events={=u32}", btn);
+            last_btn = btn;
+        }
         // Alimenta el watchdog: mientras el supervisor late, el sistema vive. El
         // WFI terminal (todas las tareas muertas) deja de alimentarlo → reset.
         // SAFETY: solo esta tarea privilegiada toca el handle, cooperativa.
@@ -225,6 +238,13 @@ fn main() -> ! {
         LED_FAULT = Some(fault_led);
     }
 
+    // Botón B1 (PA0) por EXTI0 — primer IRQ no-SysTick. Autotest por SWIER (pende
+    // el EXTI por software, igual que un flanco real) validado por RTT sin pulsar.
+    unsafe {
+        BUTTON = Some(Button::new());
+    }
+    button_selftest();
+
     // Watchdog independiente: a partir de aquí el supervisor debe alimentarlo en
     // cada latido o el chip se resetea (~2 s). Es la red de seguridad última.
     unsafe {
@@ -282,6 +302,33 @@ fn usart_selftest(pclk1: u32) {
         defmt::info!("USART2 loopback selftest: PASS ({=usize} bytes)", PATTERN.len());
     } else {
         defmt::warn!("USART2 loopback selftest: FAIL");
+    }
+}
+
+/// Autotest del camino EXTI0: pende la línea del botón por software (`SWIER`) y
+/// confirma que el handler la entregó (el contador de eventos sube). Prueba
+/// NVIC→ISR→tarea sin pulsar el botón, reportando PASS/FAIL por RTT.
+fn button_selftest() {
+    let before = exti::events();
+    // SAFETY: BUTTON se inicializó justo antes en main.
+    unsafe {
+        if let Some(btn) = BUTTON.as_ref() {
+            btn.trigger_test();
+        }
+    }
+    // El IRQ es asíncrono: espera acotada a que el handler corra.
+    let mut ok = false;
+    for _ in 0..100_000 {
+        if exti::events() != before {
+            ok = true;
+            break;
+        }
+        core::hint::spin_loop();
+    }
+    if ok {
+        defmt::info!("EXTI0 button selftest: PASS (events={=u32})", exti::events());
+    } else {
+        defmt::warn!("EXTI0 button selftest: FAIL (no IRQ delivered)");
     }
 }
 
