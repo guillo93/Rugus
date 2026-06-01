@@ -20,6 +20,7 @@
 
 pub use stm32f7::stm32f7x9 as pac;
 
+pub mod adc;
 pub mod cache;
 pub mod eth;
 pub mod exti;
@@ -27,4 +28,5 @@ pub mod fmc;
 pub mod gpio;
 pub mod iwdg;
 pub mod rcc;
+pub mod timer;
 pub mod usart;

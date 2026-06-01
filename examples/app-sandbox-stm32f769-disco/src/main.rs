@@ -32,11 +32,13 @@ use rugus_core::fault::FaultReport;
 use rugus_core::sched::Priority;
 use rugus_core::syscall::user as svc_user;
 use rugus_hal::GpioPin;
+use rugus_hal_stm32f7::adc::Adc;
 use rugus_hal_stm32f7::cache;
 use rugus_hal_stm32f7::fmc::{self, SDRAM_BASE};
 use rugus_hal_stm32f7::exti::{self, Button};
 use rugus_hal_stm32f7::gpio::{DiscoLed, LedPin};
 use rugus_hal_stm32f7::iwdg::Iwdg;
+use rugus_hal_stm32f7::timer::{PwmCheck, Timebase};
 use rugus_hal_stm32f7::pac;
 use rugus_hal_stm32f7::rcc;
 use rugus_hal_stm32f7::usart::{Usart2, CONSOLE_BAUD};
@@ -228,6 +230,10 @@ fn main() -> ! {
     platform_init(&mut cp, &MpuLayout::STM32F769);
     time::init(&mut cp.SYST, clocks.hclk);
 
+    // Autotest de periféricos analógicos/temporización (TIM2 base µs, TIM3 PWM,
+    // ADC1 VREFINT). El reloj de los timers es pclk1*2 (prescaler APB1 ≠ 1).
+    peripheral_selftest(clocks.pclk1 * 2);
+
     // LEDs de estado: Red=kernel, Green=user, Red2=salud, Green2=fault.
     unsafe {
         LED_ALIVE = Some(LedPin::new(&dp.RCC, DiscoLed::Red));
@@ -329,6 +335,44 @@ fn button_selftest() {
         defmt::info!("EXTI0 button selftest: PASS (events={=u32})", exti::events());
     } else {
         defmt::warn!("EXTI0 button selftest: FAIL (no IRQ delivered)");
+    }
+}
+
+/// Autotest de temporización y analógico, todo por RTT y sin hardware externo:
+/// - TIM2 (base µs): cruza un `delay_us(50_000)` contra el SysTick (`now_ms`);
+///   PASS si el delta cae en ~[45, 55] ms (ambos relojes son independientes).
+/// - TIM3 (PWM): genera duty 250/1000 y lo mide muestreando `CNT < CCR`; PASS
+///   si el duty estimado cae en [150, 350] por mil.
+/// - ADC1 (VREFINT, canal 17): convierte la referencia interna; PASS si el
+///   valor crudo de 12 bits cae en el rango plausible [800, 2400].
+fn peripheral_selftest(timer_clk: u32) {
+    let tb = Timebase::start(timer_clk);
+    let t0 = time::now_ms();
+    tb.delay_us(50_000);
+    let dt = time::now_ms().wrapping_sub(t0);
+    if (45..=55).contains(&dt) {
+        defmt::info!("TIM2 timebase selftest: PASS (delay 50 ms ~= {=u32} ms)", dt);
+    } else {
+        defmt::warn!("TIM2 timebase selftest: FAIL (delta={=u32} ms)", dt);
+    }
+
+    let pwm = PwmCheck::start(timer_clk, 999, 250);
+    // El periodo PWM es 1000 ticks a 1 MHz (1 ms); con pocas muestras la ventana
+    // de muestreo cae dentro de un solo periodo y el duty sale sesgado por la
+    // fase. Con 2M muestras la ventana abarca decenas de periodos → media real.
+    let duty = pwm.measure_duty_permille(2_000_000);
+    if (150..=350).contains(&duty) {
+        defmt::info!("TIM3 PWM selftest: PASS (duty={=u32} permille)", duty);
+    } else {
+        defmt::warn!("TIM3 PWM selftest: FAIL (duty={=u32} permille)", duty);
+    }
+
+    let adc = Adc::new();
+    let raw = adc.read_vrefint_raw();
+    if (800..=2400).contains(&raw) {
+        defmt::info!("ADC1 VREFINT selftest: PASS (raw={=u16})", raw);
+    } else {
+        defmt::warn!("ADC1 VREFINT selftest: FAIL (raw={=u16})", raw);
     }
 }
 
