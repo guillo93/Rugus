@@ -86,7 +86,9 @@ pub fn parse_signature(line: &str) -> Result<Signature, SignatureError> {
     // respuesta puede llegar precedida por el texto del propio request sin salto
     // de línea, p. ej. `IDENTIFYRUGUS;tier=...`. Localizamos el prefijo en
     // cualquier posición en vez de exigirlo al inicio, descartando el eco previo.
-    let start = line.find(SIGNATURE_PREFIX).ok_or(SignatureError::NotRugus)?;
+    let start = line
+        .find(SIGNATURE_PREFIX)
+        .ok_or(SignatureError::NotRugus)?;
     let line = line[start..].trim();
 
     // Campos separados por `;`. El primer token es el prefijo `RUGUS`.
