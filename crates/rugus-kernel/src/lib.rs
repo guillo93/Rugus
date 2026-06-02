@@ -26,6 +26,8 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 #![warn(missing_docs)]
 
+pub mod status;
+
 use core::ptr::{addr_of, addr_of_mut};
 
 use rugus_arch_cortex_m::{set_fault_hook, time, CortexM};
@@ -226,6 +228,9 @@ fn fault_hook(report: FaultReport) -> ! {
         report.addr.unwrap_or(0),
         report.task_id.0
     );
+    // Latch de fault del servicio de estado: el LED de fault lo refleja cualquier
+    // placa vía `status::refresh`, sin registrar un observer solo para eso.
+    status::latch_fault();
     // SAFETY: contexto de fault (handler mode), single-thread; observer y
     // scheduler registrados en `install`.
     unsafe {

@@ -28,7 +28,6 @@
 #![allow(static_mut_refs)]
 
 use rugus_arch_cortex_m::{platform_init, time, MpuLayout};
-use rugus_core::fault::FaultReport;
 use rugus_core::sched::Priority;
 use rugus_core::syscall::user as svc_user;
 use rugus_hal::GpioPin;
@@ -42,6 +41,7 @@ use rugus_hal_stm32f7::pac;
 use rugus_hal_stm32f7::rcc;
 use rugus_hal_stm32f7::timer::{PwmCheck, Timebase};
 use rugus_hal_stm32f7::usart::{Usart2, CONSOLE_BAUD};
+use rugus_kernel::status::{self, StatusLeds};
 use rugus_runtime::entry;
 
 #[repr(C, align(4096))]
@@ -64,10 +64,43 @@ const SAMPLE_CYCLES: u32 = 216_000_000 / 25;
 /// supervisor privilegiado lo ejecuta sobre el GPIO. Protocolo opaco al kernel.
 const IPC_TOGGLE_USER: u32 = 1;
 
-static mut LED_ALIVE: Option<LedPin> = None;
+/// LEDs de estado del kernel (latido/salud/fault) agrupados para el servicio
+/// reutilizable [`status`]. El mapeo rol→pin y el tragado de errores de GPIO es
+/// lo único específico de esta placa.
+struct StatusBoard {
+    alive: LedPin,
+    health: LedPin,
+    fault: LedPin,
+}
+
+impl StatusLeds for StatusBoard {
+    fn set_alive(&mut self, on: bool) {
+        let _ = if on {
+            self.alive.set_high()
+        } else {
+            self.alive.set_low()
+        };
+    }
+    fn set_health(&mut self, on: bool) {
+        let _ = if on {
+            self.health.set_high()
+        } else {
+            self.health.set_low()
+        };
+    }
+    fn set_fault(&mut self, on: bool) {
+        let _ = if on {
+            self.fault.set_high()
+        } else {
+            self.fault.set_low()
+        };
+    }
+}
+
+static mut STATUS: Option<StatusBoard> = None;
+/// LED de actividad de userland: lo conduce la PROPIA good_app vía IPC (no es
+/// estado del kernel, por eso queda fuera del servicio [`status`]).
 static mut LED_USER: Option<LedPin> = None;
-static mut LED_SUPERVISOR: Option<LedPin> = None;
-static mut LED_FAULT: Option<LedPin> = None;
 /// Watchdog independiente: el supervisor lo alimenta en cada muestreo. Si el
 /// kernel se cuelga y deja de hacerlo, el IWDG resetea el chip (~2 s).
 static mut WATCHDOG: Option<Iwdg> = None;
@@ -108,12 +141,10 @@ fn kernel_task() -> ! {
         let killed = rugus_kernel::killed_count();
         // SAFETY: los LEDs solo los toca esta tarea privilegiada, cooperativa.
         unsafe {
-            if let Some(led) = LED_ALIVE.as_mut() {
-                let _ = if heartbeat(now) {
-                    led.set_high()
-                } else {
-                    led.set_low()
-                };
+            // Estado del kernel (latido/salud/fault): patrones y latch viven en
+            // el servicio reutilizable del kernel; la placa solo aporta los pines.
+            if let Some(s) = STATUS.as_mut() {
+                status::refresh(now, s);
             }
             // I/O userland por IPC: drena las peticiones que good_app envió por
             // syscall y actúa sobre el GPIO en su nombre (dominio Drivers). Si
@@ -131,14 +162,6 @@ fn kernel_task() -> ! {
                     }
                 }
             }
-            if let Some(led) = LED_SUPERVISOR.as_mut() {
-                let on = if killed == 0 {
-                    true
-                } else {
-                    degraded_blink(now)
-                };
-                let _ = if on { led.set_high() } else { led.set_low() };
-            }
         }
         // Log throttled a ~1/s (el muestreo de LEDs corre mucho más rápido).
         let now_s = now / 1000;
@@ -153,19 +176,6 @@ fn kernel_task() -> ! {
         cortex_m::asm::delay(SAMPLE_CYCLES);
         rugus_kernel::cpu_yield();
     }
-}
-
-/// Latido "lub-dub": doble pulso corto al inicio de cada ventana de 1 s.
-#[inline]
-fn heartbeat(now_ms: u32) -> bool {
-    let t = now_ms % 1000;
-    t < 80 || (200..280).contains(&t)
-}
-
-/// Parpadeo lento ~1 Hz para señalar estado degradado.
-#[inline]
-fn degraded_blink(now_ms: u32) -> bool {
-    (now_ms / 500) % 2 == 0
 }
 
 fn good_app() -> ! {
@@ -242,14 +252,17 @@ fn main() -> ! {
     // ADC1 VREFINT). El reloj de los timers es pclk1*2 (prescaler APB1 ≠ 1).
     peripheral_selftest(clocks.pclk1 * 2);
 
-    // LEDs de estado: Red=kernel, Green=user, Red2=salud, Green2=fault.
+    // LEDs de estado: Red=latido, Red2=salud, Green2=fault (los tres conducidos
+    // por el servicio `status`); Green=actividad userland.
     unsafe {
-        LED_ALIVE = Some(LedPin::new(&dp.RCC, DiscoLed::Red));
+        let mut fault = LedPin::new(&dp.RCC, DiscoLed::Green2);
+        let _ = fault.set_low();
+        STATUS = Some(StatusBoard {
+            alive: LedPin::new(&dp.RCC, DiscoLed::Red),
+            health: LedPin::new(&dp.RCC, DiscoLed::Red2),
+            fault,
+        });
         LED_USER = Some(LedPin::new(&dp.RCC, DiscoLed::Green));
-        LED_SUPERVISOR = Some(LedPin::new(&dp.RCC, DiscoLed::Red2));
-        let mut fault_led = LedPin::new(&dp.RCC, DiscoLed::Green2);
-        let _ = fault_led.set_low();
-        LED_FAULT = Some(fault_led);
     }
 
     // Botón B1 (PA0) por EXTI0 — primer IRQ no-SysTick. Autotest por SWIER (pende
@@ -267,7 +280,9 @@ fn main() -> ! {
     defmt::info!("IWDG armed (~2 s reload)");
 
     unsafe {
-        rugus_kernel::install(Some(on_fault));
+        // El LED de fault lo conduce ahora el servicio `status` desde el latch
+        // del kernel; no hace falta observer de plataforma solo para el LED.
+        rugus_kernel::install(None);
         rugus_kernel::spawn(
             &mut (*core::ptr::addr_of_mut!(STACK_KERNEL)).0,
             kernel_task,
@@ -292,17 +307,6 @@ fn main() -> ! {
 
         defmt::info!("scheduler: 3 tasks (1 kernel + 2 userland), starting");
         rugus_kernel::start();
-    }
-}
-
-/// Observador de fault de plataforma: latchea el LED de fault al primer fault
-/// contenido. El kernel ya loguea el `FaultReport`; aquí solo el efecto visual.
-fn on_fault(_report: &FaultReport) {
-    // SAFETY: contexto de fault, single-thread; el LED solo se toca aquí y en main.
-    unsafe {
-        if let Some(led) = LED_FAULT.as_mut() {
-            let _ = led.set_high();
-        }
     }
 }
 
