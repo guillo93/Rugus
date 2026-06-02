@@ -180,7 +180,11 @@ impl GpioPin for Pin {
         // ventana RMW sobre ODR). Cooperativo, single-thread.
         unsafe {
             let on = read_reg(self.port, ODR) & (1 << self.pin) != 0;
-            let bit = if on { 1 << (self.pin + 16) } else { 1 << self.pin };
+            let bit = if on {
+                1 << (self.pin + 16)
+            } else {
+                1 << self.pin
+            };
             write_reg(self.port, BSRR, bit);
         }
         Ok(())

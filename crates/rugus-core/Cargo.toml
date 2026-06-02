@@ -24,3 +24,8 @@ log = ["dep:defmt"]
 # Fuera del TCB mínimo: las personalidades sin heap (p. ej. lite/F103) NO lo
 # activan. Solo las placas con región de heap (full/F4/F7) lo habilitan.
 alloc = ["dep:linked_list_allocator"]
+# Expone semillas de prueba (`*_for_test`) para tests host del scheduler sin un
+# `Arch` real que salte a tareas. OFF por defecto: los builds embebidos NUNCA la
+# activan, así que no añade superficie ni coste al binario del kernel. La usa el
+# crate host `rugus-host-tests` (excluido del workspace embebido).
+test-util = []

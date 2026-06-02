@@ -97,10 +97,7 @@ impl Usart2 {
             },
         );
         configure(pclk1, baud, true);
-        Self {
-            _tx: tx,
-            _rx: None,
-        }
+        Self { _tx: tx, _rx: None }
     }
 
     /// Escribe un byte (polling TXE).
@@ -159,9 +156,7 @@ impl SerialPort for Usart2 {
 
     fn flush(&mut self) -> Result<(), Self::Error> {
         // SAFETY: espera a transmisión completa (TC).
-        unsafe {
-            while read_reg(ISR) & ISR_TC == 0 {}
-        }
+        unsafe { while read_reg(ISR) & ISR_TC == 0 {} }
         Ok(())
     }
 }
@@ -184,7 +179,7 @@ fn configure(pclk1: u32, baud: u32, loopback: bool) {
         let _ = read_volatile(RCC_APB1ENR as *const u32);
 
         write_reg(CR1, 0); // UE=0 mientras configuramos.
-        // F7: con OVER8=0 el BRR es directamente el divisor (sin partir mantisa).
+                           // F7: con OVER8=0 el BRR es directamente el divisor (sin partir mantisa).
         write_reg(BRR, (pclk1 + baud / 2) / baud);
         write_reg(CR3, if loopback { CR3_HDSEL } else { 0 });
         write_reg(CR1, CR1_UE | CR1_TE | CR1_RE);

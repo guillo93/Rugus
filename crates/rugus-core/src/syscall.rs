@@ -223,6 +223,12 @@ pub fn dispatch(id: Id, args: [u32; 4]) -> i32 {
 }
 
 /// Trampolines userland — ejecutan `SVC #imm8` (ARMv7-M ABI).
+///
+/// Solo se compilan en targets ARM: usan ensamblador en línea con registros
+/// `r0..r3`, inexistentes en el triple host donde corren los tests
+/// (`rugus-host-tests`). El resto del ABI (`Id`, `dispatch`,
+/// `validate_user_range`) es agnóstico y sí se prueba en host.
+#[cfg(target_arch = "arm")]
 pub mod user {
     use super::Id;
 

@@ -36,9 +36,9 @@ use rugus_hal_stm32f4::adc::Adc;
 use rugus_hal_stm32f4::exti::{self, Button};
 use rugus_hal_stm32f4::gpio::{DiscoLed, LedPin};
 use rugus_hal_stm32f4::iwdg::Iwdg;
-use rugus_hal_stm32f4::timer::{PwmCheck, Timebase};
 use rugus_hal_stm32f4::pac;
 use rugus_hal_stm32f4::rcc;
+use rugus_hal_stm32f4::timer::{PwmCheck, Timebase};
 use rugus_hal_stm32f4::usart::{Usart2, CONSOLE_BAUD};
 use rugus_runtime::entry;
 
@@ -112,7 +112,11 @@ fn kernel_task() -> ! {
         // SAFETY: los LEDs solo los toca esta tarea privilegiada, cooperativa.
         unsafe {
             if let Some(led) = LED_ALIVE.as_mut() {
-                let _ = if heartbeat(now) { led.set_high() } else { led.set_low() };
+                let _ = if heartbeat(now) {
+                    led.set_high()
+                } else {
+                    led.set_low()
+                };
             }
             // I/O userland por IPC: drena las peticiones que las apps enviaron
             // por syscall y actúa en su nombre (dominio Drivers). good_app pide
@@ -136,7 +140,11 @@ fn kernel_task() -> ! {
                 }
             }
             if let Some(led) = LED_SUPERVISOR.as_mut() {
-                let on = if killed == 0 { true } else { degraded_blink(now) };
+                let on = if killed == 0 {
+                    true
+                } else {
+                    degraded_blink(now)
+                };
                 let _ = if on { led.set_high() } else { led.set_low() };
             }
         }
@@ -282,18 +290,34 @@ fn main() -> ! {
 
     unsafe {
         rugus_kernel::install(Some(on_fault));
-        rugus_kernel::spawn(&mut (*core::ptr::addr_of_mut!(STACK_KERNEL)).0, kernel_task, Priority::Kernel)
-            .expect("spawn kernel");
+        rugus_kernel::spawn(
+            &mut (*core::ptr::addr_of_mut!(STACK_KERNEL)).0,
+            kernel_task,
+            Priority::Kernel,
+        )
+        .expect("spawn kernel");
         // bad_app y good_app comparten banda App y rotan justo (round-robin por
         // banda): el orden de spawn no decide cuál corre. GOOD_IDX debe coincidir
         // con el orden de spawn de userland.
-        rugus_kernel::spawn_user(&mut (*core::ptr::addr_of_mut!(STACK_BAD)).0, bad_app, Priority::App)
-            .expect("spawn bad app");
-        rugus_kernel::spawn_user(&mut (*core::ptr::addr_of_mut!(STACK_GOOD)).0, good_app, Priority::App)
-            .expect("spawn good app");
+        rugus_kernel::spawn_user(
+            &mut (*core::ptr::addr_of_mut!(STACK_BAD)).0,
+            bad_app,
+            Priority::App,
+        )
+        .expect("spawn bad app");
+        rugus_kernel::spawn_user(
+            &mut (*core::ptr::addr_of_mut!(STACK_GOOD)).0,
+            good_app,
+            Priority::App,
+        )
+        .expect("spawn good app");
         // hog_app: bucle CPU-bound sin cesión. Es el testigo de la preempción.
-        rugus_kernel::spawn_user(&mut (*core::ptr::addr_of_mut!(STACK_HOG)).0, hog_app, Priority::App)
-            .expect("spawn hog app");
+        rugus_kernel::spawn_user(
+            &mut (*core::ptr::addr_of_mut!(STACK_HOG)).0,
+            hog_app,
+            Priority::App,
+        )
+        .expect("spawn hog app");
 
         defmt::info!("scheduler: 4 tasks (1 kernel + 3 userland), starting");
         rugus_kernel::start();
@@ -330,7 +354,10 @@ fn usart_selftest(pclk1: u32) {
         }
     }
     if ok {
-        defmt::info!("USART2 loopback selftest: PASS ({=usize} bytes)", PATTERN.len());
+        defmt::info!(
+            "USART2 loopback selftest: PASS ({=usize} bytes)",
+            PATTERN.len()
+        );
     } else {
         defmt::warn!("USART2 loopback selftest: FAIL");
     }
@@ -357,7 +384,10 @@ fn button_selftest() {
         core::hint::spin_loop();
     }
     if ok {
-        defmt::info!("EXTI0 button selftest: PASS (events={=u32})", exti::events());
+        defmt::info!(
+            "EXTI0 button selftest: PASS (events={=u32})",
+            exti::events()
+        );
     } else {
         defmt::warn!("EXTI0 button selftest: FAIL (no IRQ delivered)");
     }
@@ -376,7 +406,10 @@ fn peripheral_selftest(timer_clk: u32) {
     tb.delay_us(50_000);
     let dt = time::now_ms().wrapping_sub(t0);
     if (45..=55).contains(&dt) {
-        defmt::info!("TIM2 timebase selftest: PASS (delay 50 ms ~= {=u32} ms)", dt);
+        defmt::info!(
+            "TIM2 timebase selftest: PASS (delay 50 ms ~= {=u32} ms)",
+            dt
+        );
     } else {
         defmt::warn!("TIM2 timebase selftest: FAIL (delta={=u32} ms)", dt);
     }

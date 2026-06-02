@@ -539,6 +539,37 @@ impl<A: Arch> Scheduler<A> {
         // SAFETY: idx < count y solo se escribe en spawn.
         unsafe { self.tasks[idx].assume_init_ref() }
     }
+
+    /// Marca el scheduler como arrancado y elige la primera tarea SIN saltar a
+    /// ella (no invoca [`Arch::start_first`], que nunca retorna). Habilita
+    /// pruebas host de [`Self::yield_now`]/[`Self::preempt_tick`]/[`Self::sleep_ms`]
+    /// con un `Arch` simulado cuyo `switch_context` es un no-op.
+    ///
+    /// Solo con la feature `test-util`; ausente en los builds embebidos.
+    #[cfg(feature = "test-util")]
+    pub fn force_start_for_test(&mut self) {
+        if self.count == 0 {
+            return;
+        }
+        self.started = true;
+        self.current = self.pick_next(usize::MAX);
+    }
+
+    /// Marca la tarea `idx` como muerta (`Killed`) sin pasar por el camino de
+    /// fault (que termina en [`Arch::resume_after_fault`], que nunca retorna).
+    /// Permite a las pruebas host ejercitar [`Self::respawn`] y los contadores de
+    /// salud sin un `Arch` real.
+    ///
+    /// Solo con la feature `test-util`; ausente en los builds embebidos.
+    #[cfg(feature = "test-util")]
+    pub fn mark_killed_for_test(&mut self, idx: usize) {
+        if idx < self.count {
+            // SAFETY: idx < count; slot inicializado en spawn.
+            unsafe {
+                self.tasks[idx].assume_init_mut().state = TaskState::Killed;
+            }
+        }
+    }
 }
 
 impl<A: Arch> Default for Scheduler<A> {

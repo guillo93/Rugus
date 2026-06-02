@@ -98,10 +98,7 @@ impl Usart2 {
             },
         );
         configure(pclk1, baud, true);
-        Self {
-            _tx: tx,
-            _rx: None,
-        }
+        Self { _tx: tx, _rx: None }
     }
 
     /// Escribe un byte (polling TXE).
@@ -160,9 +157,7 @@ impl SerialPort for Usart2 {
 
     fn flush(&mut self) -> Result<(), Self::Error> {
         // SAFETY: espera a transmisión completa (TC).
-        unsafe {
-            while read_reg(SR) & SR_TC == 0 {}
-        }
+        unsafe { while read_reg(SR) & SR_TC == 0 {} }
         Ok(())
     }
 }
