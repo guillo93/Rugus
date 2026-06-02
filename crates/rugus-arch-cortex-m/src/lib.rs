@@ -16,10 +16,7 @@ pub mod time;
 
 pub use exceptions::enable_fault_handlers;
 pub use fault::set_fault_hook;
-pub use mpu::{
-    init as mpu_init, layout as mpu_layout, region as mpu_region, remap_app_stack, set_stack_guard,
-    MpuLayout,
-};
+pub use mpu::{init as mpu_init, layout as mpu_layout, region as mpu_region, MpuLayout};
 
 use rugus_core::arch::{Arch, CriticalGuard};
 use rugus_core::sched::TaskMode;
@@ -28,6 +25,12 @@ use rugus_core::sched::TaskMode;
 pub struct CortexM;
 
 /// Contexto de tarea: puntero al frame software (r4–r11) en el stack.
+///
+/// Los campos `mpu_*` se escriben en la región [`mpu::region::APP_STACK`] dentro
+/// del propio context switch (PendSV/bootstrap), de forma atómica con la
+/// conmutación de registros: garantizan que la región MPU del stack corresponde
+/// SIEMPRE a la tarea que se restaura (ver [`mpu::app_region_for`]). El orden de
+/// los campos es ABI con el ASM de `switch.rs` (offsets 0/4/8/12).
 #[repr(C)]
 #[derive(Default)]
 pub struct Context {
@@ -35,6 +38,16 @@ pub struct Context {
     pub sp: u32,
     /// 1 = privilegiada, 0 = userland (nPRIV).
     pub privileged: u32,
+    /// `RBAR` de la región APP_STACK de esta tarea (sin nº de región ni VALID).
+    pub mpu_rbar: u32,
+    /// `RASR` de la región APP_STACK: con ENABLE para userland, `0` (región
+    /// deshabilitada) para tareas privilegiadas.
+    pub mpu_rasr: u32,
+    /// `RBAR` de la región STACK_GUARD (32 B sin acceso) en la base del stack.
+    pub mpu_guard_rbar: u32,
+    /// `RASR` de la región STACK_GUARD: ENABLE + XN + sin acceso. Aplica a TODA
+    /// tarea (privilegiada y userland): la región 7 gana el solapamiento.
+    pub mpu_guard_rasr: u32,
 }
 
 /// Handle de sección crítica: estado previo de PRIMASK.
@@ -67,35 +80,39 @@ impl Arch for CortexM {
         unsafe { switch::resume_after_fault(ctx) }
     }
 
-    fn on_task_switch(mode: TaskMode, stack_base: u32, stack_len: u32) {
-        // SAFETY: steal único en cooperativo; MPU escrito en critical section implícita.
-        unsafe {
-            let mut cp = cortex_m::Peripherals::steal();
-            match mode {
-                TaskMode::User => {
-                    let size = mpu::region_size_for(stack_len as usize);
-                    let aligned = mpu::align_down(stack_base, size);
-                    mpu::remap_app_stack(&mut cp.MPU, aligned, size);
-                }
-                TaskMode::Privileged => {
-                    mpu::clear_app_stack(&mut cp.MPU);
-                }
-            }
-            // Guarda de pila para CUALQUIER tarea: 32 B sin acceso en la base
-            // del stack. Detecta el desbordamiento (priv o user) como MemManage
-            // limpio en vez de corromper la RAM vecina del kernel.
-            mpu::set_stack_guard(&mut cp.MPU, stack_base);
-        }
+    fn on_task_switch(_mode: TaskMode, _stack_base: u32, _stack_len: u32) {
+        // No-op intencional: la región MPU del stack (APP_STACK) la programa el
+        // PROPIO context switch (PendSV/bootstrap) desde los campos `mpu_*` del
+        // `Context` de la tarea entrante, de forma atómica con la conmutación de
+        // registros.
+        //
+        // El modelo anterior reprogramaba la MPU AQUÍ, en tiempo de planificación
+        // (`prepare_task_hw`), pero el switch real se difiere al PendSV. Bajo
+        // preempción por SysTick + cesión cooperativa + reanudación tras fault
+        // (todos difieren al PendSV), la MPU podía quedar programada para una
+        // tarea distinta de la que el PendSV restauraba → MUNSTKERR al desapilar
+        // el frame de una tarea userland con su región de stack deshabilitada.
+        // Mover la programación al switch elimina esa clase de desincronizado.
     }
 
     fn enter_critical() -> Self::SavedIrq {
-        let primask = cortex_m::register::primask::read();
+        // `is_active()` (cortex-m 0.7) es TRUE cuando PRIMASK==0, es decir cuando
+        // las interrupciones estaban HABILITADAS al entrar. Guardamos ese estado
+        // previo para restaurarlo en `exit_critical` sin desenmascarar de más en
+        // secciones críticas anidadas.
+        let was_enabled = cortex_m::register::primask::read().is_active();
         cortex_m::interrupt::disable();
-        SavedPrimask(primask.is_active() as u32)
+        SavedPrimask(was_enabled as u32)
     }
 
     fn exit_critical(saved: Self::SavedIrq) {
-        if saved.0 == 0 {
+        // Solo reactivamos si las interrupciones estaban habilitadas ANTES de la
+        // sección crítica; si ya venían deshabilitadas (anidamiento), las dejamos
+        // como estaban. La lógica anterior estaba invertida (reactivaba justo en
+        // el caso contrario), lo que dejaba PRIMASK=1 colgado tras una sección
+        // crítica normal y, bajo el camino de fault/respawn + preempción, filtraba
+        // ese PRIMASK=1 a una tarea userland → el `svc` escalaba a HardFault.
+        if saved.0 != 0 {
             // SAFETY: restauramos PRIMASK capturado en enter_critical.
             unsafe { cortex_m::interrupt::enable() }
         }

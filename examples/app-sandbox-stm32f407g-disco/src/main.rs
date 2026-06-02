@@ -48,6 +48,7 @@ struct Stack4k([u8; 4096]);
 static mut STACK_KERNEL: Stack4k = Stack4k([0; 4096]);
 static mut STACK_GOOD: Stack4k = Stack4k([0; 4096]);
 static mut STACK_BAD: Stack4k = Stack4k([0; 4096]);
+static mut STACK_HOG: Stack4k = Stack4k([0; 4096]);
 
 /// Índice (= TaskId) de bad_app según el orden de spawn de [`main`].
 const BAD_IDX: usize = 1;
@@ -61,6 +62,9 @@ const SAMPLE_CYCLES: u32 = 168_000_000 / 25;
 /// Mensaje IPC "conmuta el LED de userland": good_app lo envía por syscall y el
 /// supervisor privilegiado lo ejecuta sobre el GPIO. Protocolo opaco al kernel.
 const IPC_TOGGLE_USER: u32 = 1;
+/// Ping IPC de [`hog_app`]: la tarea CPU-bound lo emite periódicamente para
+/// demostrar que avanza pese a no ceder nunca el CPU. El supervisor lo cuenta.
+const IPC_HOG_PING: u32 = 2;
 
 static mut LED_ALIVE: Option<LedPin> = None;
 static mut LED_USER: Option<LedPin> = None;
@@ -78,6 +82,7 @@ fn kernel_task() -> ! {
     let mut last_log_s = u32::MAX;
     let mut respawns = 0u32;
     let mut last_btn = exti::events();
+    let mut hog_pings = 0u32;
     loop {
         let now = time::now_ms();
         // IRQ→tarea: el handler EXTI0 contabiliza pulsaciones del botón B1; aquí
@@ -109,20 +114,25 @@ fn kernel_task() -> ! {
             if let Some(led) = LED_ALIVE.as_mut() {
                 let _ = if heartbeat(now) { led.set_high() } else { led.set_low() };
             }
-            // I/O userland por IPC: drena las peticiones que good_app envió por
-            // syscall y actúa sobre el GPIO en su nombre (dominio Drivers). Si
-            // good_app murió, apaga el LED para reflejar que ya no hay actividad.
-            if rugus_kernel::task_killed(GOOD_IDX) {
-                if let Some(led) = LED_USER.as_mut() {
-                    let _ = led.set_low();
-                }
-            } else {
-                while let Some(msg) = rugus_kernel::ipc_try_recv() {
-                    if msg == IPC_TOGGLE_USER {
+            // I/O userland por IPC: drena las peticiones que las apps enviaron
+            // por syscall y actúa en su nombre (dominio Drivers). good_app pide
+            // conmutar su LED; hog_app emite pings que contamos para evidenciar
+            // que la preempción la mantiene viva pese a no ceder nunca.
+            let good_alive = !rugus_kernel::task_killed(GOOD_IDX);
+            while let Some(msg) = rugus_kernel::ipc_try_recv() {
+                match msg {
+                    IPC_TOGGLE_USER if good_alive => {
                         if let Some(led) = LED_USER.as_mut() {
                             let _ = led.toggle();
                         }
                     }
+                    IPC_HOG_PING => hog_pings = hog_pings.wrapping_add(1),
+                    _ => {}
+                }
+            }
+            if !good_alive {
+                if let Some(led) = LED_USER.as_mut() {
+                    let _ = led.set_low();
                 }
             }
             if let Some(led) = LED_SUPERVISOR.as_mut() {
@@ -134,7 +144,16 @@ fn kernel_task() -> ! {
         let now_s = now / 1000;
         if now_s != last_log_s {
             last_log_s = now_s;
-            defmt::debug!("supervisor: alive killed={=usize} @ {=u32} ms", killed, now);
+            // Que el supervisor siga logueando pese a hog_app (bucle infinito sin
+            // syscalls) demuestra la preempción: sin time-slice, hog monopolizaría
+            // el CPU, el supervisor no alimentaría el IWDG y la placa se resetearía
+            // a los ~2 s. `hog pings` creciendo confirma que hog también avanza.
+            defmt::debug!(
+                "supervisor: alive killed={=usize} hog_pings={=u32} @ {=u32} ms",
+                killed,
+                hog_pings,
+                now
+            );
         }
         // Muestreo ACTIVO (paced busy-wait + yield), no `sleep`: mantiene una
         // tarea siempre lista para que el scheduler no entre en `wfi`. En
@@ -166,6 +185,22 @@ fn good_app() -> ! {
         let _ = svc_user::ipc_send(0, IPC_TOGGLE_USER);
         // Sleep real vía syscall: no busy-wait; el scheduler corre otras tareas.
         let _ = svc_user::sleep_ms(150);
+    }
+}
+
+/// Tarea CPU-bound que NUNCA cede el CPU voluntariamente: un bucle cerrado sin
+/// `sleep`/`yield`. Solo emite un ping IPC cada cierto número de vueltas (el
+/// syscall encola y retorna; no es un punto de cesión). Es el testigo de la
+/// preempción: sin time-slice, monopolizaría el núcleo y el supervisor moriría
+/// (→ reset por watchdog); con F3.7, SysTick la expulsa cada rodaja.
+fn hog_app() -> ! {
+    let mut spins = 0u32;
+    loop {
+        spins = spins.wrapping_add(1);
+        if spins % 2_000_000 == 0 {
+            let _ = svc_user::ipc_send(0, IPC_HOG_PING);
+        }
+        core::hint::spin_loop();
     }
 }
 
@@ -256,8 +291,11 @@ fn main() -> ! {
             .expect("spawn bad app");
         rugus_kernel::spawn_user(&mut (*core::ptr::addr_of_mut!(STACK_GOOD)).0, good_app, Priority::App)
             .expect("spawn good app");
+        // hog_app: bucle CPU-bound sin cesión. Es el testigo de la preempción.
+        rugus_kernel::spawn_user(&mut (*core::ptr::addr_of_mut!(STACK_HOG)).0, hog_app, Priority::App)
+            .expect("spawn hog app");
 
-        defmt::info!("scheduler: 3 tasks (1 kernel + 2 userland), starting");
+        defmt::info!("scheduler: 4 tasks (1 kernel + 3 userland), starting");
         rugus_kernel::start();
     }
 }
