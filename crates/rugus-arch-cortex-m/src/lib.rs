@@ -29,7 +29,7 @@ pub struct CortexM;
 /// Los campos `mpu_*` se escriben en la región [`mpu::region::APP_STACK`] dentro
 /// del propio context switch (PendSV/bootstrap), de forma atómica con la
 /// conmutación de registros: garantizan que la región MPU del stack corresponde
-/// SIEMPRE a la tarea que se restaura (ver [`mpu::app_region_for`]). El orden de
+/// SIEMPRE a la tarea que se restaura (ver `mpu::app_region_for`). El orden de
 /// los campos es ABI con el ASM de `switch.rs` (offsets 0/4/8/12).
 #[repr(C)]
 #[derive(Default)]

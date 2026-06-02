@@ -92,7 +92,7 @@ pub struct Scheduler<A: Arch> {
     /// turno y `from` sea siempre la misma.
     last_served: [usize; PRIORITY_BANDS],
     /// Ticks de SysTick acumulados en la rodaja actual. [`Self::preempt_tick`]
-    /// lo incrementa; al llegar a [`SLICE_TICKS`] fuerza un cambio de contexto
+    /// lo incrementa; al llegar a `SLICE_TICKS` fuerza un cambio de contexto
     /// preemptivo y lo reinicia.
     slice_ticks: u32,
 }
@@ -227,7 +227,7 @@ impl<A: Arch> Scheduler<A> {
 
     /// Preempción por tick de SysTick: invocada desde la ISR de SysTick (1 ms).
     ///
-    /// Acumula ticks; al vencer la rodaja ([`SLICE_TICKS`]) elige round-robin la
+    /// Acumula ticks; al vencer la rodaja (`SLICE_TICKS`) elige round-robin la
     /// siguiente tarea de la banda de mayor prioridad lista y pende un cambio de
     /// contexto. El PendSV tiene la misma prioridad que SysTick y un núm. de
     /// excepción menor, así que hace *tail-chain* al salir de esta ISR.

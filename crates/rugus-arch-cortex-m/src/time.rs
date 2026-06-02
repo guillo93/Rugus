@@ -3,7 +3,7 @@
 //! El `Arch` trait se mantiene mínimo y agnóstico de periféricos; el tiempo
 //! es una capacidad propia del backend Cortex-M, igual que la MPU. Un tick de
 //! SysTick a 1 kHz incrementa un contador de milisegundos en
-//! [`now_ms`](crate::time::now_ms). La plataforma decide la frecuencia del core
+//! [`now_ms`]. La plataforma decide la frecuencia del core
 //! ([`init`]) y construye sus primitivas de espera cooperativa sobre `now_ms`.
 //!
 //! `u32` de milisegundos desborda a ~49,7 días de uptime continuo; suficiente

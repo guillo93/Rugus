@@ -60,7 +60,7 @@ impl ResetCause {
 /// Registro de fault recuperado del dominio de respaldo.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FaultRecord {
-    /// Código de [`rugus_core::fault::FaultKind`] (1=MemManage…4=HardFault).
+    /// Código de `rugus_core::fault::FaultKind` (1=MemManage…4=HardFault).
     pub kind: u8,
     /// Id de la tarea que faultó.
     pub task: u8,

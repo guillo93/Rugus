@@ -50,9 +50,9 @@ static mut STACK_GOOD: Stack4k = Stack4k([0; 4096]);
 static mut STACK_BAD: Stack4k = Stack4k([0; 4096]);
 static mut STACK_HOG: Stack4k = Stack4k([0; 4096]);
 
-/// Índice (= TaskId) de bad_app según el orden de spawn de [`main`].
+/// Índice (= TaskId) de bad_app según el orden de spawn de `main`.
 const BAD_IDX: usize = 1;
-/// Índice (= TaskId) de good_app según el orden de spawn de [`main`].
+/// Índice (= TaskId) de good_app según el orden de spawn de `main`.
 const GOOD_IDX: usize = 2;
 
 /// Cadencia de muestreo del supervisor (~40 ms a 168 MHz): suficientemente
