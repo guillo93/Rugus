@@ -28,7 +28,7 @@
 
 use core::ptr::{addr_of, addr_of_mut};
 
-use rugus_arch_cortex_m::{set_fault_hook, CortexM};
+use rugus_arch_cortex_m::{set_fault_hook, time, CortexM};
 use rugus_core::channel::Channel;
 use rugus_core::fault::FaultReport;
 use rugus_core::sched::{Priority, Scheduler, SpawnError, TaskId};
@@ -70,6 +70,10 @@ pub unsafe fn install(observer: Option<FaultObserver>) {
     unsafe {
         FAULT_OBSERVER = observer;
         set_fault_hook(fault_hook);
+        // Preempción: la ISR de SysTick llamará a este trampolín cada tick para
+        // que el scheduler reparta el CPU por rodajas (time-slice) sin depender
+        // de que las tareas cedan voluntariamente.
+        time::set_preempt_hook(preempt_tick);
         syscall::register(Hooks {
             yield_now,
             sleep_ms,
@@ -79,6 +83,13 @@ pub unsafe fn install(observer: Option<FaultObserver>) {
             ipc_send,
         });
     }
+}
+
+/// Trampolín de preempción invocado por la ISR de SysTick: rutea al scheduler.
+fn preempt_tick() {
+    // SAFETY: corre en la ISR de SysTick; el modo hilo enmascara SysTick
+    // mientras toca el scheduler, así que no hay reentrada concurrente.
+    unsafe { scheduler_mut().preempt_tick() }
 }
 
 /// Registra una tarea privilegiada (kernel/driver) con su pila estática.

@@ -211,47 +211,43 @@ fn sync_mpu() {
     cortex_m::asm::isb();
 }
 
-/// Remapea la región de stack de la app activa (dominio App).
+/// Precalcula los valores `RBAR`/`RASR` de la región [`region::APP_STACK`] para
+/// una tarea userland con stack `[base, base+len)`.
 ///
-/// `stack_base` debe estar alineado al tamaño de región (`2^(size+1)`).
-pub fn remap_app_stack(mpu: &mut MPU, stack_base: u32, size: u8) {
-    configure_region(
-        mpu,
-        region::APP_STACK,
-        stack_base,
-        size,
-        ap::FULL_RW,
-        false,
-        ATTR_NORMAL_WB,
-    );
-    sync_mpu();
+/// Se guarda por tarea en su `Context` y lo escribe el propio context switch
+/// (PendSV) de forma atómica con la conmutación de registros: así la región MPU
+/// del stack SIEMPRE corresponde a la tarea que realmente se restaura, inmune a
+/// cualquier entrelazado entre preempción (SysTick), cesión cooperativa y
+/// reanudación tras fault (todos difieren el switch real al PendSV).
+///
+/// `RASR` ya trae el bit ENABLE; el `RBAR` NO incluye número de región ni bit
+/// VALID porque el switch selecciona la región vía `MPU_RNR`.
+pub fn app_region_for(base: u32, len: u32) -> (u32, u32) {
+    let size = region_size_for(len as usize);
+    let aligned = align_down(base, size);
+    let rbar = aligned & !0x1F;
+    let rasr = RASR_ENABLE | ap::FULL_RW | ATTR_NORMAL_WB | ((size as u32) << 1);
+    (rbar, rasr)
 }
 
-/// Deshabilita la región de stack app (p. ej. al volver a tarea kernel).
-pub fn clear_app_stack(mpu: &mut MPU) {
-    disable_region(mpu, region::APP_STACK);
-    sync_mpu();
-}
-
-/// Coloca la guarda de pila (32 B sin acceso) en la base del stack `stack_base`.
+/// Precalcula los valores `RBAR`/`RASR` de la región [`region::STACK_GUARD`]
+/// (guarda de pila de 32 B sin acceso) en la base `base` del stack de una tarea.
 ///
-/// `stack_base` es la dirección MÁS BAJA del stack de la tarea (el extremo al
-/// que se acerca el SP al crecer). Cualquier acceso a esos 32 B dispara
-/// MemManage antes de que el stack desborde a la RAM vecina. Aplica tanto a
-/// tareas privilegiadas como userland: la región 7 gana la prioridad de
-/// solapamiento de ARMv7-M sobre `KERNEL_RAM`/`APP_STACK`. `stack_base` ya viene
-/// alineado a ≥32 B (potencia de 2 para user; pilas kernel alineadas a 4 KiB).
-pub fn set_stack_guard(mpu: &mut MPU, stack_base: u32) {
-    configure_region(
-        mpu,
-        region::STACK_GUARD,
-        stack_base,
-        GUARD_SIZE_FIELD,
-        ap::NONE,
-        true,
-        ATTR_NORMAL_WB,
-    );
-    sync_mpu();
+/// Igual que [`app_region_for`], se guarda por tarea en su `Context` y lo escribe
+/// el propio context switch (PendSV/bootstrap) de forma atómica con la
+/// conmutación: la guarda SIEMPRE cubre la base del stack de la tarea que se
+/// restaura, inmune al entrelazado preempción/cesión/reanudación-tras-fault.
+///
+/// `base` es la dirección MÁS BAJA del stack (el extremo al que se acerca el SP
+/// al crecer); cualquier acceso a esos 32 B dispara MemManage antes de desbordar
+/// a la RAM vecina. La región 7 gana la prioridad de solapamiento sobre
+/// `KERNEL_RAM`/`APP_STACK`, así que protege tanto a tareas privilegiadas como
+/// userland. `RASR` ya trae ENABLE + XN; `RBAR` sin nº de región ni VALID.
+pub fn guard_region_for(base: u32) -> (u32, u32) {
+    const XN: u32 = 1 << 28;
+    let rbar = base & !0x1F;
+    let rasr = RASR_ENABLE | ap::NONE | ATTR_NORMAL_WB | XN | ((GUARD_SIZE_FIELD as u32) << 1);
+    (rbar, rasr)
 }
 
 fn configure_region(mpu: &mut MPU, rn: u8, base: u32, size: u8, ap: u32, xn: bool, attr: u32) {

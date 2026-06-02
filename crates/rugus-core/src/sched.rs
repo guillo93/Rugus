@@ -71,6 +71,14 @@ struct TaskSlot<A: Arch> {
 /// Número de bandas de prioridad (ver [`Priority`]).
 const PRIORITY_BANDS: usize = 3;
 
+/// Quantum de planificación en ticks de SysTick (1 ms/tick → 10 ms de rodaja).
+///
+/// Cada [`Scheduler::preempt_tick`] (un tick) acumula; al alcanzar este número
+/// el scheduler fuerza un cambio de contexto round-robin dentro de la banda de
+/// mayor prioridad lista. Es lo que impide que una tarea CPU-bound que nunca
+/// cede monopolice el núcleo: la preempción la expulsa al vencer su rodaja.
+const SLICE_TICKS: u32 = 10;
+
 /// Scheduler cooperativo con round-robin dentro de cada banda de prioridad.
 pub struct Scheduler<A: Arch> {
     tasks: [MaybeUninit<TaskSlot<A>>; MAX_TASKS],
@@ -83,6 +91,10 @@ pub struct Scheduler<A: Arch> {
     /// justa aunque una banda superior (p. ej. Kernel) se intercale en cada
     /// turno y `from` sea siempre la misma.
     last_served: [usize; PRIORITY_BANDS],
+    /// Ticks de SysTick acumulados en la rodaja actual. [`Self::preempt_tick`]
+    /// lo incrementa; al llegar a [`SLICE_TICKS`] fuerza un cambio de contexto
+    /// preemptivo y lo reinicia.
+    slice_ticks: u32,
 }
 
 impl<A: Arch> Scheduler<A> {
@@ -94,6 +106,7 @@ impl<A: Arch> Scheduler<A> {
             current: 0,
             started: false,
             last_served: [0; PRIORITY_BANDS],
+            slice_ticks: 0,
         }
     }
 
@@ -181,11 +194,56 @@ impl<A: Arch> Scheduler<A> {
         A::start_first(first);
     }
 
-    /// Cede el CPU a la siguiente tarea lista (cooperativo).
+    /// Cede el CPU a la siguiente tarea lista.
+    ///
+    /// Toda la elección + mutación de estado del scheduler ocurre con IRQs
+    /// enmascaradas: así la preempción por SysTick ([`Self::preempt_tick`]) no
+    /// puede entrar a medias y aliasar/corromper el estado. El `switch_context`
+    /// solo *pende* el PendSV; con las IRQs aún enmascaradas el cambio queda
+    /// diferido hasta el `exit_critical`, que al desenmascarar lo dispara — y,
+    /// ante empate con un SysTick pendiente, PendSV (núm. de excepción menor)
+    /// gana, de modo que SysTick nunca observa el `current` ya actualizado pero
+    /// sin haber conmutado todavía.
     pub fn yield_now(&mut self) {
         if !self.started || self.count <= 1 {
             return;
         }
+        let guard = A::enter_critical();
+        let prev_idx = self.current;
+        let next_idx = self.pick_next(prev_idx);
+        if next_idx != prev_idx {
+            self.current = next_idx;
+            self.slice_ticks = 0;
+            self.prepare_task_hw(next_idx);
+            // SAFETY: índices válidos y contextos inicializados por spawn/start.
+            unsafe {
+                let prev = &mut self.tasks[prev_idx].assume_init_mut().context as *mut A::Context;
+                let next = &self.task_ref(next_idx).context as *const A::Context;
+                A::switch_context(prev, next);
+            }
+        }
+        A::exit_critical(guard);
+    }
+
+    /// Preempción por tick de SysTick: invocada desde la ISR de SysTick (1 ms).
+    ///
+    /// Acumula ticks; al vencer la rodaja ([`SLICE_TICKS`]) elige round-robin la
+    /// siguiente tarea de la banda de mayor prioridad lista y pende un cambio de
+    /// contexto. El PendSV tiene la misma prioridad que SysTick y un núm. de
+    /// excepción menor, así que hace *tail-chain* al salir de esta ISR.
+    ///
+    /// Exclusión mutua con el camino cooperativo: este método solo corre en la
+    /// ISR de SysTick, que el código en modo hilo enmascara mientras toca el
+    /// scheduler ([`Self::yield_now`]/[`Self::sleep_ms`]). No reentra.
+    pub fn preempt_tick(&mut self) {
+        if !self.started || self.count <= 1 {
+            return;
+        }
+        self.slice_ticks += 1;
+        if self.slice_ticks < SLICE_TICKS {
+            return;
+        }
+        self.slice_ticks = 0;
         let prev_idx = self.current;
         let next_idx = self.pick_next(prev_idx);
         if next_idx == prev_idx {
@@ -193,7 +251,8 @@ impl<A: Arch> Scheduler<A> {
         }
         self.current = next_idx;
         self.prepare_task_hw(next_idx);
-        // SAFETY: índices válidos y contextos inicializados por spawn/start.
+        // SAFETY: índices válidos y contextos inicializados; acceso exclusivo
+        // (el modo hilo enmascara SysTick mientras toca el scheduler).
         unsafe {
             let prev = &mut self.tasks[prev_idx].assume_init_mut().context as *mut A::Context;
             let next = &self.task_ref(next_idx).context as *const A::Context;
@@ -220,14 +279,23 @@ impl<A: Arch> Scheduler<A> {
         }
         let prev_idx = self.current;
         let wake_at = A::now_ms().wrapping_add(ms);
-        // SAFETY: prev_idx válido; slot inicializado en spawn.
-        unsafe {
-            self.tasks[prev_idx].assume_init_mut().state = TaskState::Sleeping(wake_at);
+        {
+            let guard = A::enter_critical();
+            // SAFETY: prev_idx válido; slot inicializado en spawn.
+            unsafe {
+                self.tasks[prev_idx].assume_init_mut().state = TaskState::Sleeping(wake_at);
+            }
+            A::exit_critical(guard);
         }
         loop {
+            // Cada iteración evalúa el scheduler con IRQs enmascaradas (excluye a
+            // [`Self::preempt_tick`]); el `wfi` espera fuera de la máscara para
+            // que SysTick avance el reloj y despierte a los durmientes vencidos.
+            let guard = A::enter_critical();
             let next_idx = self.pick_next(prev_idx);
             if next_idx != prev_idx {
                 self.current = next_idx;
+                self.slice_ticks = 0;
                 self.prepare_task_hw(next_idx);
                 // SAFETY: índices válidos y contextos inicializados.
                 unsafe {
@@ -236,13 +304,18 @@ impl<A: Arch> Scheduler<A> {
                     let next = &self.task_ref(next_idx).context as *const A::Context;
                     A::switch_context(prev, next);
                 }
+                // El switch queda diferido al desenmascarar (PendSV gana el empate
+                // con SysTick): al volver a esta tarea, retornamos.
+                A::exit_critical(guard);
                 return;
             }
             // Ninguna otra tarea lista. `pick_next` ya despertó las vencidas:
             // si el propio durmiente alcanzó su plazo, sigue sin conmutar.
             if self.task_ref(prev_idx).state == TaskState::Ready {
+                A::exit_critical(guard);
                 return;
             }
+            A::exit_critical(guard);
             A::wait_for_interrupt();
         }
     }
@@ -278,6 +351,15 @@ impl<A: Arch> Scheduler<A> {
             A::wait_for_interrupt();
         };
         self.current = next_idx;
+        // Reinicia la rodaja igual que TODA conmutación (yield_now/preempt_tick):
+        // la tarea recién reanudada por el failsafe aún no ha ejecutado. Sin esto,
+        // un SysTick que quedó pendiente durante el manejo del fault (p. ej. el
+        // log de `fault_hook`) haría tail-chain tras el PendSV de resume y, si la
+        // rodaja ya estaba vencida, `preempt_tick` conmutaría de inmediato
+        // GUARDANDO el PSP rancio de la tarea reanudada (que no llegó a correr) →
+        // contexto corrupto → MUNSTKERR al desapilar más tarde. Mantener el
+        // invariante "cada switch reinicia la rodaja" cierra esa carrera.
+        self.slice_ticks = 0;
         self.prepare_task_hw(next_idx);
         let next = &self.task_ref(next_idx).context as *const A::Context;
         // SAFETY: índice válido; contexto inicializado en spawn.

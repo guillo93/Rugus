@@ -64,10 +64,61 @@ pub fn init_task_stack(stack: &mut [u8], entry: fn() -> !, privileged: bool) -> 
             *base.add(words - 10 - i) = 0; // r11..r4
         }
         let sp = base.add(words - HW_FRAME_WORDS - SW_FRAME_WORDS) as usize as u32;
+        // MPU región APP_STACK precalculada por tarea: userland obtiene una
+        // región RW que cubre su stack; las privilegiadas la dejan deshabilitada
+        // (RASR=0) y operan bajo PRIVDEFENA. El switch escribe estos valores de
+        // forma atómica con la conmutación (ver Context / PendSV).
+        let (mpu_rbar, mpu_rasr) = if privileged {
+            (0, 0)
+        } else {
+            crate::mpu::app_region_for(stack.as_ptr() as u32, stack.len() as u32)
+        };
+        // Guarda de pila (región 7): 32 B sin acceso en la base del stack. Se
+        // calcula para TODA tarea (priv y user) y el switch la programa de forma
+        // atómica con la conmutación (igual que APP_STACK).
+        let (mpu_guard_rbar, mpu_guard_rasr) = crate::mpu::guard_region_for(stack.as_ptr() as u32);
         Context {
             sp,
             privileged: if privileged { 1 } else { 0 },
+            mpu_rbar,
+            mpu_rasr,
+            mpu_guard_rbar,
+            mpu_guard_rasr,
         }
+    }
+}
+
+/// Dirección base de los registros `MPU_RNR/RBAR/RASR` (contiguos desde RNR).
+const MPU_RNR: u32 = 0xE000_ED98;
+/// Número de la región MPU del stack de la app (espejo de `mpu::region::APP_STACK`).
+const APP_STACK_REGION: u32 = 4;
+/// Número de la región MPU de la guarda de pila (espejo de `mpu::region::STACK_GUARD`).
+const STACK_GUARD_REGION: u32 = 7;
+
+/// Programa la región MPU del stack de `ctx` (APP_STACK) desde Rust.
+///
+/// Usada por el arranque de la primera tarea ([`restore_context`]). El camino
+/// PendSV hace lo equivalente en ASM. `RASR==0` deshabilita la región (tareas
+/// privilegiadas).
+///
+/// # Safety
+///
+/// Acceso exclusivo a la MPU (arranque single-thread o sección crítica).
+unsafe fn program_app_region(ctx: *const Context) {
+    unsafe {
+        let rbar = (*ctx).mpu_rbar;
+        let rasr = (*ctx).mpu_rasr;
+        let guard_rbar = (*ctx).mpu_guard_rbar;
+        let guard_rasr = (*ctx).mpu_guard_rasr;
+        let rnr = MPU_RNR as *mut u32;
+        ptr::write_volatile(rnr, APP_STACK_REGION);
+        ptr::write_volatile(rnr.add(1), rbar); // RBAR
+        ptr::write_volatile(rnr.add(2), rasr); // RASR
+        ptr::write_volatile(rnr, STACK_GUARD_REGION);
+        ptr::write_volatile(rnr.add(1), guard_rbar); // RBAR
+        ptr::write_volatile(rnr.add(2), guard_rasr); // RASR
+        cortex_m::asm::dsb();
+        cortex_m::asm::isb();
     }
 }
 
@@ -105,6 +156,10 @@ pub unsafe fn restore_context(ctx: *const Context) -> ! {
         let entry = frame.add(SW_FRAME_WORDS + 6).read();
         // PSP por encima del frame hardware: sp + (9 sw + ... ) → inicio del HW frame.
         cortex_m::register::psp::write(sp + (SW_FRAME_WORDS as u32) * 4);
+        // Región MPU del stack para la primera tarea (el PendSV lo hará luego en
+        // cada switch). Sin esto, una primera tarea userland no tendría su stack
+        // mapeado y faltaría al primer acceso.
+        program_app_region(ctx);
         let ctrl = control_for_context(ctx);
         cortex_m::register::control::write(cortex_m::register::control::Control::from_bits(ctrl));
         cortex_m::asm::isb();
@@ -209,8 +264,36 @@ global_asm!(
     "  vldmiaeq r0!, {{s16-s31}}",
     "  msr psp, r0",
     "  ldr r3, [r1, #4]",
-    "  rsbs r3, r3, #3",
+    "  rsb r3, r3, #3",
+    // FPCA (bit2) debe reflejar el estado FP de la tarea entrante: si su
+    // EXC_RETURN trae frame extendido (bit4==0), la tarea usaba FP, así que
+    // CONTROL.FPCA=1. Escribir FPCA=0 sobre una tarea con estado FP deja
+    // CONTROL inconsistente con el frame y corrompe el framing FP del siguiente
+    // ciclo de excepción (manifestado como fault al desapilar en el retorno).
+    "  tst lr, #0x10",
+    "  it eq",
+    "  orreq r3, r3, #4",
     "  msr control, r3",
+    "  isb",
+    // Región MPU APP_STACK de la tarea entrante, atómica con el switch: r1 sigue
+    // apuntando al Context. Offsets 8/12 = mpu_rbar/mpu_rasr. RASR=0 deshabilita
+    // (tareas privilegiadas). Inmune al desincronizado del modelo diferido.
+    "  ldr r3, =0xE000ED98",       // MPU_RNR
+    "  movs r0, #4",               // región APP_STACK
+    "  str r0, [r3]",
+    "  ldr r0, [r1, #8]",          // Context.mpu_rbar
+    "  str r0, [r3, #4]",          // RBAR
+    "  ldr r0, [r1, #12]",         // Context.mpu_rasr
+    "  str r0, [r3, #8]",          // RASR
+    // Región MPU STACK_GUARD (7) de la tarea entrante: 32 B sin acceso en la base
+    // del stack. Offsets 16/20 = mpu_guard_rbar/mpu_guard_rasr.
+    "  movs r0, #7",               // región STACK_GUARD
+    "  str r0, [r3]",
+    "  ldr r0, [r1, #16]",         // Context.mpu_guard_rbar
+    "  str r0, [r3, #4]",          // RBAR
+    "  ldr r0, [r1, #20]",         // Context.mpu_guard_rasr
+    "  str r0, [r3, #8]",          // RASR
+    "  dsb",
     "  isb",
     "3:",
     "  movs r0, #0",
@@ -243,6 +326,23 @@ global_asm!(
     "  ldr r3, [r1, #4]",
     "  rsbs r3, r3, #3",
     "  msr control, r3",
+    "  isb",
+    // Región MPU APP_STACK de la tarea entrante (ver variante eabihf).
+    "  ldr r3, =0xE000ED98",       // MPU_RNR
+    "  movs r0, #4",               // región APP_STACK
+    "  str r0, [r3]",
+    "  ldr r0, [r1, #8]",          // Context.mpu_rbar
+    "  str r0, [r3, #4]",          // RBAR
+    "  ldr r0, [r1, #12]",         // Context.mpu_rasr
+    "  str r0, [r3, #8]",          // RASR
+    // Región MPU STACK_GUARD (7) de la tarea entrante (ver variante eabihf).
+    "  movs r0, #7",               // región STACK_GUARD
+    "  str r0, [r3]",
+    "  ldr r0, [r1, #16]",         // Context.mpu_guard_rbar
+    "  str r0, [r3, #4]",          // RBAR
+    "  ldr r0, [r1, #20]",         // Context.mpu_guard_rasr
+    "  str r0, [r3, #8]",          // RASR
+    "  dsb",
     "  isb",
     "3:",
     "  movs r0, #0",
