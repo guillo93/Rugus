@@ -1,0 +1,22 @@
+[package]
+name        = "rugus-host-tests"
+description = "Tests host (std) de la lógica arch-agnóstica de rugus-core: scheduler, sandbox MPU y ABI de syscalls. Excluido del workspace embebido; corre en el triple nativo."
+version     = "0.1.0"
+edition     = "2021"
+rust-version = "1.75"
+license     = "MIT OR Apache-2.0"
+authors     = ["Luis Guillermo Hernandez <luiguihez93@gmail.com>"]
+repository  = "https://github.com/guillo93/Rugus"
+
+# Crate de pruebas: no produce artefacto reutilizable, solo aloja un `Arch`
+# simulado y los tests. No se publica.
+publish = false
+
+[lib]
+name = "rugus_host_tests"
+
+[dependencies]
+# Activa la feature `test-util` para las semillas de prueba del scheduler. Como
+# este crate está EXCLUIDO del workspace embebido, esa feature no se filtra a los
+# binarios del kernel (la unificación de features no cruza la frontera).
+rugus-core = { path = "../rugus-core", features = ["test-util"] }

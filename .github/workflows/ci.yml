@@ -74,7 +74,7 @@ jobs:
       - run: cargo doc --workspace --no-deps --target thumbv7em-none-eabihf
 
   host:
-    name: host crates (rugus-proto + rugus-cli)
+    name: host crates (rugus-proto + rugus-cli + rugus-host-tests)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -86,12 +86,14 @@ jobs:
           workspaces: |
             crates/rugus-proto
             crates/rugus-cli
+            crates/rugus-host-tests
       - name: Install BLE/serial system deps
         run: sudo apt-get update && sudo apt-get install -y libudev-dev libdbus-1-dev pkg-config
       - name: rustfmt (host crates)
         run: |
           cargo fmt --manifest-path crates/rugus-proto/Cargo.toml --all -- --check
           cargo fmt --manifest-path crates/rugus-cli/Cargo.toml --all -- --check
+          cargo fmt --manifest-path crates/rugus-host-tests/Cargo.toml --all -- --check
       - name: clippy + test rugus-proto
         run: |
           cargo clippy --manifest-path crates/rugus-proto/Cargo.toml --all-targets -- -D warnings
@@ -100,3 +102,7 @@ jobs:
         run: |
           cargo clippy --manifest-path crates/rugus-cli/Cargo.toml --all-targets -- -D warnings
           cargo build --manifest-path crates/rugus-cli/Cargo.toml
+      - name: clippy + test rugus-host-tests (scheduler + MPU sandbox + ABI)
+        run: |
+          cargo clippy --manifest-path crates/rugus-host-tests/Cargo.toml --all-targets -- -D warnings
+          cargo test --manifest-path crates/rugus-host-tests/Cargo.toml

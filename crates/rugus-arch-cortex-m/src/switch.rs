@@ -278,21 +278,21 @@ global_asm!(
     // Región MPU APP_STACK de la tarea entrante, atómica con el switch: r1 sigue
     // apuntando al Context. Offsets 8/12 = mpu_rbar/mpu_rasr. RASR=0 deshabilita
     // (tareas privilegiadas). Inmune al desincronizado del modelo diferido.
-    "  ldr r3, =0xE000ED98",       // MPU_RNR
-    "  movs r0, #4",               // región APP_STACK
+    "  ldr r3, =0xE000ED98", // MPU_RNR
+    "  movs r0, #4",         // región APP_STACK
     "  str r0, [r3]",
-    "  ldr r0, [r1, #8]",          // Context.mpu_rbar
-    "  str r0, [r3, #4]",          // RBAR
-    "  ldr r0, [r1, #12]",         // Context.mpu_rasr
-    "  str r0, [r3, #8]",          // RASR
+    "  ldr r0, [r1, #8]",  // Context.mpu_rbar
+    "  str r0, [r3, #4]",  // RBAR
+    "  ldr r0, [r1, #12]", // Context.mpu_rasr
+    "  str r0, [r3, #8]",  // RASR
     // Región MPU STACK_GUARD (7) de la tarea entrante: 32 B sin acceso en la base
     // del stack. Offsets 16/20 = mpu_guard_rbar/mpu_guard_rasr.
-    "  movs r0, #7",               // región STACK_GUARD
+    "  movs r0, #7", // región STACK_GUARD
     "  str r0, [r3]",
-    "  ldr r0, [r1, #16]",         // Context.mpu_guard_rbar
-    "  str r0, [r3, #4]",          // RBAR
-    "  ldr r0, [r1, #20]",         // Context.mpu_guard_rasr
-    "  str r0, [r3, #8]",          // RASR
+    "  ldr r0, [r1, #16]", // Context.mpu_guard_rbar
+    "  str r0, [r3, #4]",  // RBAR
+    "  ldr r0, [r1, #20]", // Context.mpu_guard_rasr
+    "  str r0, [r3, #8]",  // RASR
     "  dsb",
     "  isb",
     "3:",
@@ -328,20 +328,20 @@ global_asm!(
     "  msr control, r3",
     "  isb",
     // Región MPU APP_STACK de la tarea entrante (ver variante eabihf).
-    "  ldr r3, =0xE000ED98",       // MPU_RNR
-    "  movs r0, #4",               // región APP_STACK
+    "  ldr r3, =0xE000ED98", // MPU_RNR
+    "  movs r0, #4",         // región APP_STACK
     "  str r0, [r3]",
-    "  ldr r0, [r1, #8]",          // Context.mpu_rbar
-    "  str r0, [r3, #4]",          // RBAR
-    "  ldr r0, [r1, #12]",         // Context.mpu_rasr
-    "  str r0, [r3, #8]",          // RASR
+    "  ldr r0, [r1, #8]",  // Context.mpu_rbar
+    "  str r0, [r3, #4]",  // RBAR
+    "  ldr r0, [r1, #12]", // Context.mpu_rasr
+    "  str r0, [r3, #8]",  // RASR
     // Región MPU STACK_GUARD (7) de la tarea entrante (ver variante eabihf).
-    "  movs r0, #7",               // región STACK_GUARD
+    "  movs r0, #7", // región STACK_GUARD
     "  str r0, [r3]",
-    "  ldr r0, [r1, #16]",         // Context.mpu_guard_rbar
-    "  str r0, [r3, #4]",          // RBAR
-    "  ldr r0, [r1, #20]",         // Context.mpu_guard_rasr
-    "  str r0, [r3, #8]",          // RASR
+    "  ldr r0, [r1, #16]", // Context.mpu_guard_rbar
+    "  str r0, [r3, #4]",  // RBAR
+    "  ldr r0, [r1, #20]", // Context.mpu_guard_rasr
+    "  str r0, [r3, #8]",  // RASR
     "  dsb",
     "  isb",
     "3:",

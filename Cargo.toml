@@ -34,6 +34,7 @@ members = [
 exclude = [
   "crates/rugus-proto",
   "crates/rugus-cli",
+  "crates/rugus-host-tests",
 ]
 
 [workspace.package]

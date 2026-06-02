@@ -47,7 +47,10 @@ impl Adc {
             write_volatile(RCC_APB2ENR as *mut u32, v | ADC1EN);
             let _ = read_volatile(RCC_APB2ENR as *const u32);
 
-            write_volatile(ADC_CCR as *mut u32, read_volatile(ADC_CCR as *const u32) | CCR_TSVREFE);
+            write_volatile(
+                ADC_CCR as *mut u32,
+                read_volatile(ADC_CCR as *const u32) | CCR_TSVREFE,
+            );
             // Tiempo de muestreo máx (0b111 = 480 ciclos) para el canal 17 (SMP17
             // en SMPR1 bits 23:21). VREFINT necesita muestreo largo.
             write_reg(SMPR1, 0b111 << 21);
