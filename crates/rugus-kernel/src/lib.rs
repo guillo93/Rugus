@@ -26,6 +26,7 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 #![warn(missing_docs)]
 
+pub mod console;
 pub mod status;
 
 use core::ptr::{addr_of, addr_of_mut};
@@ -403,6 +404,70 @@ pub fn respawn(idx: usize) -> bool {
 pub fn stack_usage(idx: usize) -> (u32, u32) {
     let s = scheduler_ref();
     (s.stack_high_water(idx), s.stack_len(idx))
+}
+
+/// Uso máximo de pila (high-water) de la tarea `idx`, en bytes.
+pub fn stack_high_water(idx: usize) -> u32 {
+    scheduler_ref().stack_high_water(idx)
+}
+
+/// Tamaño total de la pila de la tarea `idx`, en bytes.
+pub fn stack_len(idx: usize) -> u32 {
+    scheduler_ref().stack_len(idx)
+}
+
+/// Prioridad efectiva actual de la tarea `idx` (0 = más alta).
+pub fn task_priority(idx: usize) -> u8 {
+    scheduler_ref().task_priority(idx)
+}
+
+/// `true` si la tarea `idx` es userland (nPRIV + sandbox MPU).
+pub fn is_user_task(idx: usize) -> bool {
+    scheduler_ref().is_user_task(idx)
+}
+
+/// Etiqueta legible del estado de la tarea `idx` (`READY`/`SLEEP`/`KILL`/…).
+pub fn task_state_name(idx: usize) -> &'static str {
+    scheduler_ref().task_state_name(idx)
+}
+
+/// Bytes asignados en el heap del sistema (0 si el binario no tiene heap).
+#[cfg(feature = "alloc")]
+pub fn heap_used() -> usize {
+    rugus_core::heap::used()
+}
+/// Bytes asignados en el heap del sistema (0 si el binario no tiene heap).
+#[cfg(not(feature = "alloc"))]
+pub fn heap_used() -> usize {
+    0
+}
+
+/// Bytes libres en el heap del sistema (0 si el binario no tiene heap).
+#[cfg(feature = "alloc")]
+pub fn heap_free() -> usize {
+    rugus_core::heap::free()
+}
+/// Bytes libres en el heap del sistema (0 si el binario no tiene heap).
+#[cfg(not(feature = "alloc"))]
+pub fn heap_free() -> usize {
+    0
+}
+
+/// Tamaño total del heap del sistema (0 si el binario no tiene heap).
+#[cfg(feature = "alloc")]
+pub fn heap_size() -> usize {
+    rugus_core::heap::size()
+}
+/// Tamaño total del heap del sistema (0 si el binario no tiene heap).
+#[cfg(not(feature = "alloc"))]
+pub fn heap_size() -> usize {
+    0
+}
+
+/// Reinicia el sistema por software (`SCB.AIRCR.SYSRESETREQ`). No retorna. La
+/// telemetría persistente en `.uninit` sobrevive a este reset (warm boot).
+pub fn reboot() -> ! {
+    cortex_m::peripheral::SCB::sys_reset()
 }
 
 /// Saca la siguiente petición IPC del buzón userland, o `None` si está vacío.

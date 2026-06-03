@@ -34,6 +34,7 @@ const SR_RXNE: u32 = 1 << 5;
 
 // Bits de CR1 / CR3.
 const CR1_UE: u32 = 1 << 13;
+const CR1_RXNEIE: u32 = 1 << 5;
 const CR1_TE: u32 = 1 << 3;
 const CR1_RE: u32 = 1 << 2;
 const CR3_HDSEL: u32 = 1 << 3;
@@ -130,6 +131,33 @@ impl Usart2 {
             }
         }
         None
+    }
+
+    /// Habilita la interrupción de recepción (RXNEIE): cada byte recibido pende
+    /// la IRQ de USART2. El firmware debe desenmascarar la línea en el NVIC y
+    /// drenar los bytes en el handler con [`isr_read_byte`].
+    pub fn enable_rx_irq(&mut self) {
+        // SAFETY: registro CR1 de USART2; OR no destructivo del bit RXNEIE.
+        unsafe {
+            write_reg(CR1, read_reg(CR1) | CR1_RXNEIE);
+        }
+    }
+}
+
+/// Lee un byte recibido desde el handler de IRQ, sin handle (`&mut Usart2`).
+///
+/// Pensada para el `#[interrupt] fn USART2`: lee `DR` si `RXNE` está alto (lo que
+/// también limpia el flag y desactiva la pendiente de la IRQ). Devuelve `None` si
+/// la IRQ se disparó por otra causa. La base de USART2 es fija, así que no
+/// necesita el handle propietario.
+pub fn isr_read_byte() -> Option<u8> {
+    // SAFETY: registros MMIO de USART2; leer DR limpia RXNE atómicamente.
+    unsafe {
+        if read_reg(SR) & SR_RXNE != 0 {
+            Some((read_reg(DR) & 0xFF) as u8)
+        } else {
+            None
+        }
     }
 }
 
