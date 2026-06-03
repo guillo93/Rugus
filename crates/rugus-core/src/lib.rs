@@ -18,10 +18,12 @@ pub mod fault;
 pub mod heap;
 pub mod sched;
 pub mod syscall;
+pub mod telemetry;
 
 pub use arch::Arch;
 pub use domain::Domain;
 pub use fault::{FaultKind, FaultReport};
+pub use telemetry::FaultTelemetry;
 
 /// Errores visibles al espacio de usuario vía syscall. Mirrors negative
 /// `i32` values en `docs/SYSCALL_ABI.md`.

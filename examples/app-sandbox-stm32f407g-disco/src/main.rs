@@ -149,9 +149,21 @@ fn kernel_task() -> ! {
         // Autorreparación: si un fault mató a bad_app, la respawnea desde cero.
         // bad_app volverá a faultar (acceso prohibido) y el ciclo se repite, lo
         // que demuestra visiblemente kill→respawn→re-kill sin tumbar el sistema.
-        if rugus_kernel::task_killed(BAD_IDX) && rugus_kernel::respawn(BAD_IDX) {
+        // SAFE-MODE (F4.4): cuando la telemetría persistente detecta demasiados
+        // faults (total o de una tarea reincidente), el supervisor DEJA de
+        // respawnear para no entrar en bucle de crash/respawn y se degrada de
+        // forma controlada — el kernel sigue vivo, solo no resucita al culpable.
+        if !rugus_kernel::safe_mode()
+            && rugus_kernel::task_killed(BAD_IDX)
+            && rugus_kernel::respawn(BAD_IDX)
+        {
             respawns += 1;
             defmt::info!("supervisor: respawned bad_app (#{=u32})", respawns);
+        } else if rugus_kernel::safe_mode() && rugus_kernel::task_killed(BAD_IDX) {
+            // Anuncia una sola vez por ventana de log que estamos conteniendo.
+            if now / 1000 != last_log_s {
+                defmt::warn!("supervisor: SAFE-MODE, bad_app NO se respawnea");
+            }
         }
         // Monitor de liveness: detecta una tarea VIVA que dejó de progresar (sin
         // crash, así que el fault containment no la ve) y la reinicia en frío.
@@ -294,6 +306,31 @@ fn main() -> ! {
         clocks.sysclk_mhz(),
         rugus_core::syscall::ABI_VERSION
     );
+
+    // Telemetría de faults persistente (F4.4): vive en `.uninit`, sobrevive a
+    // resets. Validar el magic temprano distingue arranque en frío de reset en
+    // caliente y vuelca el último post-mortem si lo hubo.
+    unsafe {
+        let warm = rugus_kernel::telemetry_init();
+        defmt::info!(
+            "fault telemetry: {=str} boot, boot_count={=u32}, total_faults={=u32}",
+            if warm { "warm" } else { "cold" },
+            rugus_kernel::boot_count(),
+            rugus_kernel::total_faults(),
+        );
+        if let Some((kind, task, pc, addr)) = rugus_kernel::last_fault() {
+            defmt::warn!(
+                "post-mortem: last fault kind={=u8} task={=u8} pc={=u32:#x} addr={=u32:#x}",
+                kind,
+                task,
+                pc,
+                addr,
+            );
+        }
+        if rugus_kernel::safe_mode() {
+            defmt::error!("SAFE-MODE activo: demasiados faults acumulados");
+        }
+    }
 
     static mut HEAP: [u8; 32 * 1024] = [0; 32 * 1024];
     const HEAP_SIZE: usize = 32 * 1024;
