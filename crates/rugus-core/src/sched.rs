@@ -201,6 +201,13 @@ struct TaskSlot<A: Arch> {
     /// timeout. `None` mientras la tarea no está bloqueada con plazo o el bloqueo
     /// es indefinido ([`TIMEOUT_FOREVER`]).
     block_deadline: Option<u32>,
+    /// Periodo de liveness (ms): la tarea debe hacer `checkin` antes de que pase
+    /// este intervalo o el monitor la considera colgada. `None` = no monitorizada.
+    liveness_period: Option<u32>,
+    /// Plazo absoluto (ms) del próximo checkin de liveness. Se renueva en cada
+    /// [`Scheduler::liveness_checkin`]; el monitor declara colgada a la tarea si
+    /// el reloj lo rebasa. `None` si no está monitorizada.
+    liveness_deadline: Option<u32>,
 }
 
 /// Número de bandas de prioridad (ver [`Priority`]).
@@ -320,6 +327,8 @@ impl<A: Arch> Scheduler<A> {
             stack_len,
             entry,
             block_deadline: None,
+            liveness_period: None,
+            liveness_deadline: None,
         };
         self.tasks[self.count].write(slot);
         let id = TaskId(self.count as u8);
@@ -549,6 +558,11 @@ impl<A: Arch> Scheduler<A> {
             slot.state = TaskState::Ready;
             // Arranca limpia: sin prioridad heredada de su vida anterior.
             slot.priority = slot.base_priority;
+            // El monitor de liveness se rearma cuando la tarea revivida vuelva a
+            // llamar a `liveness_checkin`/`set_liveness_period`; si conservara el
+            // plazo viejo, el supervisor la declararía colgada de inmediato.
+            slot.liveness_period = None;
+            slot.liveness_deadline = None;
         }
         true
     }
@@ -582,6 +596,112 @@ impl<A: Arch> Scheduler<A> {
             self.channels[id].recv_waiters &= !bit;
             self.channels[id].send_waiters &= !bit;
         }
+    }
+
+    // --- Monitor de liveness / deadline por tarea (F4.3) ---
+
+    /// Arma la monitorización de liveness de la tarea `idx`: a partir de ahora
+    /// debe renovar su plazo (vía [`Self::liveness_checkin`]) cada `period_ms`
+    /// como máximo, o el monitor la considerará colgada. Fija el primer plazo en
+    /// `ahora + period_ms`. No-op si `idx` no existe o `period_ms` es 0.
+    ///
+    /// Detecta el fallo que el watchdog y el fault containment NO ven: una tarea
+    /// que sigue "viva" (no crashea) pero deja de progresar (bucle infinito,
+    /// deadlock de lógica, espera que nunca llega).
+    ///
+    /// `period_ms == 0` **desarma** la monitorización de la tarea. No-op si `idx`
+    /// no existe.
+    pub fn set_liveness_period(&mut self, idx: usize, period_ms: u32) {
+        if idx >= self.count {
+            return;
+        }
+        // SAFETY: idx < count; slot inicializado en spawn.
+        unsafe {
+            let slot = self.tasks[idx].assume_init_mut();
+            if period_ms == 0 {
+                slot.liveness_period = None;
+                slot.liveness_deadline = None;
+            } else {
+                slot.liveness_period = Some(period_ms);
+                slot.liveness_deadline = Some(A::now_ms().wrapping_add(period_ms));
+            }
+        }
+    }
+
+    /// Renueva el plazo de liveness de la tarea `idx` a `ahora + periodo`. Es el
+    /// "latido" que la tarea emite para demostrar que progresa. No-op si la
+    /// tarea no existe o no tiene la monitorización armada.
+    pub fn liveness_checkin(&mut self, idx: usize) {
+        if idx >= self.count {
+            return;
+        }
+        // SAFETY: idx < count; slot inicializado en spawn.
+        unsafe {
+            let slot = self.tasks[idx].assume_init_mut();
+            if let Some(period) = slot.liveness_period {
+                slot.liveness_deadline = Some(A::now_ms().wrapping_add(period));
+            }
+        }
+    }
+
+    /// Latido de liveness de la tarea en ejecución (azúcar para el syscall
+    /// `Checkin`): renueva el plazo de la tarea actual.
+    pub fn liveness_checkin_current(&mut self) {
+        let idx = self.current;
+        self.liveness_checkin(idx);
+    }
+
+    /// Escanea las tareas monitorizadas y devuelve el índice de la primera cuyo
+    /// plazo de liveness ha vencido (sigue viva pero dejó de hacer checkin).
+    /// `None` si ninguna está colgada. El supervisor lo consulta para recuperar
+    /// (force_kill + respawn) tareas que el fault containment no captura.
+    ///
+    /// Excluye a la tarea en ejecución (que por definición está progresando) y a
+    /// las `Killed` (ya las gestiona el respawn por fault).
+    pub fn liveness_overdue(&self) -> Option<usize> {
+        let now = A::now_ms();
+        for idx in 0..self.count {
+            if idx == self.current {
+                continue;
+            }
+            let slot = self.task_ref(idx);
+            if slot.state == TaskState::Killed {
+                continue;
+            }
+            if let Some(deadline) = slot.liveness_deadline {
+                // Comparación monotónica resistente a wrap (igual que sleep).
+                if now.wrapping_sub(deadline) as i32 >= 0 {
+                    return Some(idx);
+                }
+            }
+        }
+        None
+    }
+
+    /// Mata por la fuerza una tarea viva (no la actual) para recuperarla: la
+    /// marca `Killed`, libera sus objetos de sincronización y desarma su
+    /// liveness. El supervisor la combina con [`Self::respawn`] para reiniciar en
+    /// frío una tarea colgada. Devuelve `true` si la mató.
+    ///
+    /// No-op (devuelve `false`) si `idx` no existe, es la tarea en ejecución
+    /// (no se autodestruye desde aquí: ese camino es `kill_current_and_resume`)
+    /// o ya estaba `Killed`.
+    pub fn force_kill(&mut self, idx: usize) -> bool {
+        if idx >= self.count || idx == self.current {
+            return false;
+        }
+        if self.task_ref(idx).state == TaskState::Killed {
+            return false;
+        }
+        // SAFETY: idx < count; slot inicializado en spawn.
+        unsafe {
+            let slot = self.tasks[idx].assume_init_mut();
+            slot.state = TaskState::Killed;
+            slot.liveness_period = None;
+            slot.liveness_deadline = None;
+        }
+        self.release_task_sync(idx);
+        true
     }
 
     // --- Sincronización con herencia de prioridad (F4.1) ---
@@ -1119,12 +1239,10 @@ impl<A: Arch> Scheduler<A> {
         let now = A::now_ms();
         for i in 0..self.count {
             match self.task_ref(i).state {
-                TaskState::Sleeping(wake_at) => {
-                    if now.wrapping_sub(wake_at) as i32 >= 0 {
-                        // SAFETY: i < count; slot inicializado en spawn.
-                        unsafe {
-                            self.tasks[i].assume_init_mut().state = TaskState::Ready;
-                        }
+                TaskState::Sleeping(wake_at) if now.wrapping_sub(wake_at) as i32 >= 0 => {
+                    // SAFETY: i < count; slot inicializado en spawn.
+                    unsafe {
+                        self.tasks[i].assume_init_mut().state = TaskState::Ready;
                     }
                 }
                 // Bloqueo IPC con plazo: al vencer se quita de la lista de waiters
@@ -1297,6 +1415,18 @@ impl<A: Arch> Scheduler<A> {
     #[cfg(feature = "test-util")]
     pub fn wake_expired_for_test(&mut self) {
         self.wake_expired();
+    }
+
+    /// Plazo absoluto de liveness de `idx` (`None` si no está monitorizada).
+    #[cfg(feature = "test-util")]
+    pub fn liveness_deadline_for_test(&self, idx: usize) -> Option<u32> {
+        self.task_ref(idx).liveness_deadline
+    }
+
+    /// `true` si la tarea `idx` está en estado `Killed`.
+    #[cfg(feature = "test-util")]
+    pub fn is_killed_for_test(&self, idx: usize) -> bool {
+        self.task_ref(idx).state == TaskState::Killed
     }
 }
 

@@ -18,6 +18,7 @@ pub enum Id {
     SleepMs = 0x01,
     TaskId = 0x02,
     Log = 0x03,
+    Checkin = 0x04,
     IpcSend = 0x10,
     IpcRecv = 0x11,
     ChanSend = 0x12,
@@ -44,6 +45,7 @@ impl Id {
             0x01 => Some(Self::SleepMs),
             0x02 => Some(Self::TaskId),
             0x03 => Some(Self::Log),
+            0x04 => Some(Self::Checkin),
             0x10 => Some(Self::IpcSend),
             0x11 => Some(Self::IpcRecv),
             0x12 => Some(Self::ChanSend),
@@ -99,6 +101,11 @@ pub struct Hooks {
     /// `out_ptr` (4 bytes, ya validado por [`validate_user_range`] en el
     /// dispatch). Retorna `0` al recibir, [`Errno`] negativo en error/timeout.
     pub chan_recv: fn(chan: u32, timeout_ms: u32, out_ptr: u32) -> i32,
+    /// Latido de liveness: renueva el plazo del monitor para la tarea en
+    /// ejecución. La tarea lo emite periódicamente para demostrar que progresa;
+    /// si deja de hacerlo, el supervisor la considera colgada. Sin argumentos ni
+    /// punteros: opera sobre la tarea actual del scheduler.
+    pub checkin: fn(),
 }
 
 static mut HOOKS: Option<Hooks> = None;
@@ -255,6 +262,16 @@ pub fn dispatch(id: Id, args: [u32; 4]) -> i32 {
                 Err(e) => e as i32,
             }
         }
+        Id::Checkin => {
+            // Sin argumentos ni punteros: renueva el plazo de liveness de la
+            // tarea actual. SAFETY: hook registrado antes de userland.
+            unsafe {
+                if let Some(h) = HOOKS {
+                    (h.checkin)();
+                }
+            }
+            0
+        }
         Id::MutexLock => sync_call(args[0], |h| h.mutex_lock),
         Id::MutexUnlock => sync_call(args[0], |h| h.mutex_unlock),
         Id::SemWait => sync_call(args[0], |h| h.sem_wait),
@@ -310,6 +327,14 @@ pub mod user {
     #[inline(always)]
     pub fn task_id() -> i32 {
         svc_imm(Id::TaskId as u8)
+    }
+
+    /// Emite un latido de liveness (`Id::Checkin`): renueva el plazo del monitor
+    /// para la tarea actual. Sin argumentos. La app lo llama periódicamente para
+    /// demostrar que progresa; si deja de hacerlo, el supervisor la recupera.
+    #[inline(always)]
+    pub fn checkin() -> i32 {
+        svc_imm(Id::Checkin as u8)
     }
 
     /// Duerme la tarea actual `ms` milisegundos (`Id::SleepMs`).
@@ -453,6 +478,7 @@ pub mod user {
         match imm {
             0x00 => svc0_00(),
             0x02 => svc0_02(),
+            0x04 => svc0_04(),
             _ => crate::Errno::Einval as i32,
         }
     }
@@ -476,6 +502,19 @@ pub mod user {
         unsafe {
             core::arch::asm!(
                 "svc 2",
+                lateout("r0") ret,
+                options(nomem, nostack)
+            );
+        }
+        ret
+    }
+
+    #[inline(always)]
+    fn svc0_04() -> i32 {
+        let ret: i32;
+        unsafe {
+            core::arch::asm!(
+                "svc 4",
                 lateout("r0") ret,
                 options(nomem, nostack)
             );

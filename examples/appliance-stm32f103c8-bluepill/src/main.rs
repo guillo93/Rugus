@@ -203,6 +203,9 @@ fn main() -> ! {
             // Ni IPC bloqueante por canal (sin multitarea que bloquear).
             chan_send: |_chan, _msg, _to| rugus_core::Errno::Einval as i32,
             chan_recv: |_chan, _to, _out| rugus_core::Errno::Einval as i32,
+            // El appliance lite no usa el monitor de liveness del scheduler full:
+            // el checkin es un no-op inofensivo.
+            checkin: || {},
         });
         lite::register(services::hooks());
         CONSOLE = Some(console);

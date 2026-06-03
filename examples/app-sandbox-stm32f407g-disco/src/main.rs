@@ -114,8 +114,14 @@ fn kernel_task() -> ! {
     defmt::info!("kernel task (LD4) started");
     let mut last_log_s = u32::MAX;
     let mut respawns = 0u32;
+    let mut recoveries = 0u32;
     let mut last_btn = exti::events();
     let mut hog_pings = 0u32;
+    // Cadencia del kick del IWDG windowed: hay que alimentar DENTRO de la ventana
+    // [~1 s, ~2 s] tras la última recarga. Alimentar antes (bucle desbocado) o
+    // después (cuelgue) resetea. ~1.5 s deja margen frente al jitter del muestreo.
+    const IWDG_KICK_MS: u32 = 1_500;
+    let mut last_kick = time::now_ms();
     loop {
         let now = time::now_ms();
         // IRQ→tarea: el handler EXTI0 contabiliza pulsaciones del botón B1; aquí
@@ -126,13 +132,19 @@ fn kernel_task() -> ! {
             defmt::info!("supervisor: button events={=u32}", btn);
             last_btn = btn;
         }
-        // Alimenta el watchdog: mientras el supervisor late, el sistema vive. El
-        // WFI terminal (todas las tareas muertas) deja de alimentarlo → reset.
-        // SAFETY: solo esta tarea privilegiada toca el handle, cooperativa.
-        unsafe {
-            if let Some(wdt) = WATCHDOG.as_ref() {
-                wdt.kick();
+        // Alimenta el watchdog DENTRO de la ventana del IWDG windowed: solo cuando
+        // han pasado ~1.5 s desde la última recarga. Mientras el supervisor late
+        // a su ritmo, el sistema vive; si itera demasiado rápido (kick temprano) o
+        // se cuelga (kick tardío/ausente), el hardware resetea. El WFI terminal
+        // (todas las tareas muertas) deja de alimentarlo → reset.
+        if now.wrapping_sub(last_kick) >= IWDG_KICK_MS {
+            // SAFETY: solo esta tarea privilegiada toca el handle, cooperativa.
+            unsafe {
+                if let Some(wdt) = WATCHDOG.as_ref() {
+                    wdt.kick();
+                }
             }
+            last_kick = now;
         }
         // Autorreparación: si un fault mató a bad_app, la respawnea desde cero.
         // bad_app volverá a faultar (acceso prohibido) y el ciclo se repite, lo
@@ -140,6 +152,28 @@ fn kernel_task() -> ! {
         if rugus_kernel::task_killed(BAD_IDX) && rugus_kernel::respawn(BAD_IDX) {
             respawns += 1;
             defmt::info!("supervisor: respawned bad_app (#{=u32})", respawns);
+        }
+        // Monitor de liveness: detecta una tarea VIVA que dejó de progresar (sin
+        // crash, así que el fault containment no la ve) y la reinicia en frío.
+        // En el demo good_app late cada 150 ms, así que esta vía es defensiva.
+        if let Some(idx) = rugus_kernel::liveness_overdue() {
+            if rugus_kernel::force_kill(idx) {
+                rugus_kernel::respawn(idx);
+                recoveries += 1;
+                defmt::warn!(
+                    "supervisor: liveness-recovered task {=usize} (#{=u32})",
+                    idx,
+                    recoveries
+                );
+                // Rearma la monitorización de la tarea reiniciada (respawn la
+                // desarmó): good_app no se autorregistra el periodo.
+                if idx == GOOD_IDX {
+                    // SAFETY: contexto privilegiado del supervisor, cooperativo.
+                    unsafe {
+                        rugus_kernel::set_liveness_period(GOOD_IDX, 1_000);
+                    }
+                }
+            }
         }
         let killed = rugus_kernel::killed_count();
         // SAFETY: los LEDs solo los toca esta tarea privilegiada, cooperativa.
@@ -201,6 +235,10 @@ fn good_app() -> ! {
         // Conmuta su LED pidiéndoselo al driver privilegiado por IPC: userland
         // NO toca GPIO (lo prohíbe la MPU, dominio Drivers), enruta por syscall.
         let _ = svc_user::ipc_send(0, IPC_TOGGLE_USER);
+        // Latido de liveness: demuestra al monitor que la tarea progresa. Si
+        // dejara de emitirlo (cuelgue lógico sin crash), el supervisor la
+        // recuperaría (force_kill + respawn).
+        let _ = svc_user::checkin();
         // Sleep real vía syscall: no busy-wait; el scheduler corre otras tareas.
         let _ = svc_user::sleep_ms(150);
     }
@@ -297,9 +335,9 @@ fn main() -> ! {
     // Watchdog independiente: a partir de aquí el supervisor debe alimentarlo en
     // cada latido o el chip se resetea (~2 s). Es la red de seguridad última.
     unsafe {
-        WATCHDOG = Some(Iwdg::start());
+        WATCHDOG = Some(Iwdg::start_windowed());
     }
-    defmt::info!("IWDG armed (~2 s reload)");
+    defmt::info!("IWDG armed (windowed, kick window ~1-2 s)");
 
     unsafe {
         // El LED de fault lo conduce ahora el servicio `status` desde el latch
@@ -319,6 +357,13 @@ fn main() -> ! {
         } else {
             defmt::warn!("sync selftest: FAIL");
         }
+        // Autotest del monitor de liveness (F4.3): arma/checkin/overdue sin
+        // bloquear; la detección de vencimiento real con reloj se valida en host.
+        if rugus_kernel::liveness_selftest() {
+            defmt::info!("liveness selftest: PASS");
+        } else {
+            defmt::warn!("liveness selftest: FAIL");
+        }
         // bad_app y good_app comparten banda App y rotan justo (round-robin por
         // banda): el orden de spawn no decide cuál corre. GOOD_IDX debe coincidir
         // con el orden de spawn de userland.
@@ -334,6 +379,9 @@ fn main() -> ! {
             Priority::App,
         )
         .expect("spawn good app");
+        // Arma el monitor de liveness de good_app: debe emitir `checkin` al menos
+        // cada 1 s (late cada 150 ms, holgado) o el supervisor la recuperará.
+        rugus_kernel::set_liveness_period(GOOD_IDX, 1_000);
         // hog_app: bucle CPU-bound sin cesión. Es el testigo de la preempción.
         rugus_kernel::spawn_user(
             &mut (*core::ptr::addr_of_mut!(STACK_HOG)).0,
