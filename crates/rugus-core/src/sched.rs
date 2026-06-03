@@ -11,6 +11,12 @@ use core::mem::MaybeUninit;
 /// Máximo de tareas concurrentes (incluye idle).
 pub const MAX_TASKS: usize = 4;
 
+/// Máximo de mutexes gestionados por el kernel (con herencia de prioridad).
+pub const MAX_MUTEXES: usize = 4;
+
+/// Máximo de semáforos contadores gestionados por el kernel.
+pub const MAX_SEMAPHORES: usize = 4;
+
 /// Patrón de relleno de stack para medir el uso máximo (high-water mark).
 ///
 /// En `spawn` el stack se pinta entero con este byte; las posiciones que la
@@ -50,12 +56,66 @@ enum TaskState {
     /// comparado con aritmética envolvente con signo). No elegible por
     /// [`Scheduler::pick_next`] hasta despertar.
     Sleeping(u32),
+    /// Bloqueada esperando el mutex indicado (índice). No elegible hasta que el
+    /// dueño lo libere y le transfiera la propiedad ([`Scheduler::mutex_unlock`]).
+    BlockedMutex(u8),
+    /// Bloqueada esperando el semáforo indicado. La despierta un
+    /// [`Scheduler::sem_post`].
+    BlockedSem(u8),
     Killed,
+}
+
+/// Bloque de control de un mutex con herencia de prioridad.
+///
+/// El dueño hereda la prioridad efectiva más alta entre sus waiters mientras lo
+/// retiene, de modo que una tarea de baja prioridad que bloquea a una de alta
+/// no puede ser interrumpida indefinidamente por una de prioridad media
+/// (inversión de prioridad acotada). La herencia se recalcula en cada lock/unlock.
+#[derive(Clone, Copy)]
+struct MutexCb {
+    /// Índice de la tarea dueña, o `None` si está libre.
+    owner: Option<u8>,
+    /// Bitmask de tareas bloqueadas esperando este mutex.
+    waiters: u8,
+}
+
+impl MutexCb {
+    const fn new() -> Self {
+        Self {
+            owner: None,
+            waiters: 0,
+        }
+    }
+}
+
+/// Bloque de control de un semáforo contador.
+#[derive(Clone, Copy)]
+struct SemCb {
+    /// Permisos disponibles. `sem_wait` consume uno (o bloquea); `sem_post` lo
+    /// devuelve (o despierta a un waiter).
+    count: u32,
+    /// Bitmask de tareas bloqueadas esperando un permiso.
+    waiters: u8,
+}
+
+impl SemCb {
+    const fn new() -> Self {
+        Self {
+            count: 0,
+            waiters: 0,
+        }
+    }
 }
 
 struct TaskSlot<A: Arch> {
     context: A::Context,
+    /// Prioridad EFECTIVA usada por [`Scheduler::pick_next`]. Puede subir por
+    /// encima de [`Self::base_priority`] mientras la tarea retiene un mutex con
+    /// waiters de mayor prioridad (herencia de prioridad).
     priority: Priority,
+    /// Prioridad BASE con la que la tarea fue creada. Es el suelo al que vuelve
+    /// la prioridad efectiva al soltar todos los mutexes heredados.
+    base_priority: Priority,
     state: TaskState,
     mode: TaskMode,
     domain: Domain,
@@ -95,6 +155,10 @@ pub struct Scheduler<A: Arch> {
     /// lo incrementa; al llegar a `SLICE_TICKS` fuerza un cambio de contexto
     /// preemptivo y lo reinicia.
     slice_ticks: u32,
+    /// Bloques de control de mutexes con herencia de prioridad (id = índice).
+    mutexes: [MutexCb; MAX_MUTEXES],
+    /// Bloques de control de semáforos contadores (id = índice).
+    semaphores: [SemCb; MAX_SEMAPHORES],
 }
 
 impl<A: Arch> Scheduler<A> {
@@ -107,6 +171,8 @@ impl<A: Arch> Scheduler<A> {
             started: false,
             last_served: [0; PRIORITY_BANDS],
             slice_ticks: 0,
+            mutexes: [MutexCb::new(); MAX_MUTEXES],
+            semaphores: [SemCb::new(); MAX_SEMAPHORES],
         }
     }
 
@@ -168,6 +234,7 @@ impl<A: Arch> Scheduler<A> {
         let slot = TaskSlot {
             context: ctx,
             priority,
+            base_priority: priority,
             state: TaskState::Ready,
             mode,
             domain,
@@ -333,6 +400,10 @@ impl<A: Arch> Scheduler<A> {
         unsafe {
             self.tasks[idx].assume_init_mut().state = TaskState::Killed;
         }
+        // Suelta cualquier mutex/semáforo que la tarea muerta retuviera o
+        // esperase: si no, sus waiters quedarían bloqueados para siempre y la
+        // propiedad de un mutex se filtraría (deadlock estructural).
+        self.release_task_sync(idx);
         // `idx` ya está muerta, así que `pick_next` nunca la devuelve como
         // lista. Si solo quedan durmientes, espera (wfi) a que alguna venza en
         // vez de abandonar: una tarea dormida sigue viva. Solo si TODAS están
@@ -397,8 +468,311 @@ impl<A: Arch> Scheduler<A> {
             let ctx = A::init_task_stack(stack, entry, privileged);
             slot.context = ctx;
             slot.state = TaskState::Ready;
+            // Arranca limpia: sin prioridad heredada de su vida anterior.
+            slot.priority = slot.base_priority;
         }
         true
+    }
+
+    /// Libera todos los objetos de sincronización ligados a la tarea `idx`:
+    /// la quita de las listas de waiters, y cada mutex que poseía pasa a su
+    /// siguiente waiter (o queda libre). Idempotente; usado al matar/respawnear.
+    fn release_task_sync(&mut self, idx: usize) {
+        let bit = 1u8 << idx;
+        for id in 0..MAX_MUTEXES {
+            self.mutexes[id].waiters &= !bit;
+            if self.mutexes[id].owner == Some(idx as u8) {
+                match self.highest_priority_waiter(self.mutexes[id].waiters) {
+                    Some(w) => {
+                        self.mutexes[id].waiters &= !(1 << w);
+                        self.mutexes[id].owner = Some(w as u8);
+                        // SAFETY: w < count; slot inicializado en spawn.
+                        unsafe {
+                            self.tasks[w].assume_init_mut().state = TaskState::Ready;
+                        }
+                        self.recompute_priority(w);
+                    }
+                    None => self.mutexes[id].owner = None,
+                }
+            }
+        }
+        for id in 0..MAX_SEMAPHORES {
+            self.semaphores[id].waiters &= !bit;
+        }
+    }
+
+    // --- Sincronización con herencia de prioridad (F4.1) ---
+
+    /// Intenta tomar el mutex `id` sin bloquear. `true` si lo adquirió (o ya era
+    /// suyo); `false` si lo retiene otra tarea. No duerme ni conmuta: apto para
+    /// uso desde contextos donde no se puede ceder (p. ej. selftest de arranque
+    /// antes de [`Self::start`]).
+    pub fn mutex_try_lock(&mut self, id: usize) -> bool {
+        if id >= MAX_MUTEXES {
+            return false;
+        }
+        let cur = self.current as u8;
+        match self.mutexes[id].owner {
+            None => {
+                self.mutexes[id].owner = Some(cur);
+                true
+            }
+            Some(o) => o == cur,
+        }
+    }
+
+    /// Toma el mutex `id`; si lo retiene otra tarea, bloquea la actual y le
+    /// **presta su prioridad al dueño** (priority inheritance) hasta que lo
+    /// libere. Devuelve 0, o [`Errno::Einval`](crate::Errno) si `id` no existe.
+    ///
+    /// Limitación conocida: la herencia es de un nivel (no transitiva en cadenas
+    /// dueño→dueño); suficiente con [`MAX_TASKS`]=4 y validado por tests host.
+    pub fn mutex_lock(&mut self, id: usize) -> i32 {
+        if id >= MAX_MUTEXES {
+            return crate::Errno::Einval as i32;
+        }
+        if !self.started {
+            // Sin scheduler activo no se puede bloquear: degradar a try-lock.
+            self.mutex_try_lock(id);
+            return 0;
+        }
+        let me = self.current;
+        let guard = A::enter_critical();
+        let acquired = self.mutex_acquire(id, me);
+        A::exit_critical(guard);
+        if !acquired {
+            self.switch_until_ready(me);
+        }
+        0
+    }
+
+    /// Libera el mutex `id` (debe ser el dueño), transfiere la propiedad al
+    /// waiter de mayor prioridad si lo hay y suelta la prioridad heredada.
+    /// Devuelve 0, [`Errno::Einval`](crate::Errno) si `id` no existe o
+    /// [`Errno::Edenied`](crate::Errno) si el llamante no es el dueño.
+    pub fn mutex_unlock(&mut self, id: usize) -> i32 {
+        if id >= MAX_MUTEXES {
+            return crate::Errno::Einval as i32;
+        }
+        let me = self.current;
+        let guard = A::enter_critical();
+        if self.mutexes[id].owner != Some(me as u8) {
+            A::exit_critical(guard);
+            return crate::Errno::Edenied as i32;
+        }
+        match self.highest_priority_waiter(self.mutexes[id].waiters) {
+            Some(w) => {
+                self.mutexes[id].waiters &= !(1 << w);
+                self.mutexes[id].owner = Some(w as u8);
+                // SAFETY: w < count; slot inicializado en spawn.
+                unsafe {
+                    self.tasks[w].assume_init_mut().state = TaskState::Ready;
+                }
+            }
+            None => self.mutexes[id].owner = None,
+        }
+        // Suelta la prioridad prestada: recomputa el efectivo desde la base y los
+        // mutexes que aún retiene.
+        self.recompute_priority(me);
+        A::exit_critical(guard);
+        // Si despertamos a alguien (potencialmente de mayor prioridad), cede para
+        // que el scheduler lo respete de inmediato.
+        if self.started {
+            self.yield_now();
+        }
+        0
+    }
+
+    /// Inicializa el semáforo `id` con `count` permisos. Llamar desde `main`
+    /// antes de arrancar tareas. No-op si `id` no existe.
+    pub fn sem_init(&mut self, id: usize, count: u32) {
+        if id < MAX_SEMAPHORES {
+            self.semaphores[id].count = count;
+        }
+    }
+
+    /// Intenta consumir un permiso del semáforo `id` sin bloquear. `true` si lo
+    /// consumió.
+    pub fn sem_try_wait(&mut self, id: usize) -> bool {
+        if id >= MAX_SEMAPHORES {
+            return false;
+        }
+        if self.semaphores[id].count > 0 {
+            self.semaphores[id].count -= 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Consume un permiso del semáforo `id`; si no hay, bloquea la tarea actual
+    /// hasta que un [`Self::sem_post`] la despierte. Devuelve 0 o
+    /// [`Errno::Einval`](crate::Errno) si `id` no existe.
+    pub fn sem_wait(&mut self, id: usize) -> i32 {
+        if id >= MAX_SEMAPHORES {
+            return crate::Errno::Einval as i32;
+        }
+        if !self.started {
+            self.sem_try_wait(id);
+            return 0;
+        }
+        let me = self.current;
+        let guard = A::enter_critical();
+        let got = if self.semaphores[id].count > 0 {
+            self.semaphores[id].count -= 1;
+            true
+        } else {
+            self.semaphores[id].waiters |= 1 << me;
+            // SAFETY: me < count; slot inicializado en spawn.
+            unsafe {
+                self.tasks[me].assume_init_mut().state = TaskState::BlockedSem(id as u8);
+            }
+            false
+        };
+        A::exit_critical(guard);
+        if !got {
+            self.switch_until_ready(me);
+        }
+        0
+    }
+
+    /// Devuelve un permiso al semáforo `id`: despierta al waiter de mayor
+    /// prioridad si lo hay, o incrementa el contador. Devuelve 0 o
+    /// [`Errno::Einval`](crate::Errno) si `id` no existe.
+    pub fn sem_post(&mut self, id: usize) -> i32 {
+        if id >= MAX_SEMAPHORES {
+            return crate::Errno::Einval as i32;
+        }
+        let guard = A::enter_critical();
+        match self.highest_priority_waiter(self.semaphores[id].waiters) {
+            Some(w) => {
+                self.semaphores[id].waiters &= !(1 << w);
+                // SAFETY: w < count; slot inicializado en spawn.
+                unsafe {
+                    self.tasks[w].assume_init_mut().state = TaskState::Ready;
+                }
+            }
+            None => self.semaphores[id].count = self.semaphores[id].count.saturating_add(1),
+        }
+        A::exit_critical(guard);
+        if self.started {
+            self.yield_now();
+        }
+        0
+    }
+
+    /// Prioridad efectiva (posiblemente heredada) de la tarea `idx`, como número
+    /// (menor = mayor prioridad). Diagnóstico; `0xFF` si `idx` no existe.
+    pub fn task_priority(&self, idx: usize) -> u8 {
+        if idx >= self.count {
+            return 0xFF;
+        }
+        self.task_ref(idx).priority as u8
+    }
+
+    /// Adquisición de mutex (solo contabilidad, sin conmutar). Devuelve `true` si
+    /// la tomó; `false` si bloqueó la tarea `me` y prestó prioridad al dueño. El
+    /// llamante debe sostener la sección crítica.
+    fn mutex_acquire(&mut self, id: usize, me: usize) -> bool {
+        match self.mutexes[id].owner {
+            None => {
+                self.mutexes[id].owner = Some(me as u8);
+                true
+            }
+            Some(o) if o as usize == me => true,
+            Some(owner) => {
+                self.mutexes[id].waiters |= 1 << me;
+                // SAFETY: me < count; slot inicializado en spawn.
+                unsafe {
+                    self.tasks[me].assume_init_mut().state = TaskState::BlockedMutex(id as u8);
+                }
+                self.recompute_priority(owner as usize);
+                false
+            }
+        }
+    }
+
+    /// Elige el índice del waiter de mayor prioridad efectiva en `mask` (empate →
+    /// menor índice), o `None` si la máscara está vacía.
+    fn highest_priority_waiter(&self, mask: u8) -> Option<usize> {
+        let mut best: Option<usize> = None;
+        let mut w = mask;
+        while w != 0 {
+            let i = w.trailing_zeros() as usize;
+            w &= w - 1;
+            match best {
+                None => best = Some(i),
+                Some(b)
+                    if (self.task_ref(i).priority as u8) < (self.task_ref(b).priority as u8) =>
+                {
+                    best = Some(i)
+                }
+                _ => {}
+            }
+        }
+        best
+    }
+
+    /// Recalcula la prioridad efectiva de la tarea `t`: su base, elevada a la
+    /// prioridad efectiva más alta entre los waiters de TODOS los mutexes que
+    /// retiene. Núcleo de la herencia de prioridad.
+    fn recompute_priority(&mut self, t: usize) {
+        let mut eff = self.task_ref(t).base_priority as u8;
+        for id in 0..MAX_MUTEXES {
+            if self.mutexes[id].owner == Some(t as u8) {
+                let mut w = self.mutexes[id].waiters;
+                while w != 0 {
+                    let i = w.trailing_zeros() as usize;
+                    w &= w - 1;
+                    let wp = self.task_ref(i).priority as u8;
+                    if wp < eff {
+                        eff = wp;
+                    }
+                }
+            }
+        }
+        let p = match eff {
+            0 => Priority::Kernel,
+            1 => Priority::Service,
+            _ => Priority::App,
+        };
+        // SAFETY: t < count; slot inicializado en spawn.
+        unsafe {
+            self.tasks[t].assume_init_mut().priority = p;
+        }
+    }
+
+    /// Conmuta a otras tareas hasta que la tarea `me` vuelva a estar `Ready`.
+    ///
+    /// Modela el bloqueo en un objeto de sincronización: igual que [`Self::sleep_ms`]
+    /// pero el despertar lo provoca un unlock/post (no el reloj). Cada iteración
+    /// evalúa el scheduler con IRQs enmascaradas (excluye la preempción) y, si no
+    /// hay otra tarea lista, espera con `wfi`.
+    fn switch_until_ready(&mut self, me: usize) {
+        loop {
+            let guard = A::enter_critical();
+            if self.task_ref(me).state == TaskState::Ready {
+                A::exit_critical(guard);
+                return;
+            }
+            let next = self.pick_next(me);
+            if next != me {
+                self.current = next;
+                self.slice_ticks = 0;
+                self.prepare_task_hw(next);
+                // SAFETY: índices válidos y contextos inicializados.
+                unsafe {
+                    let prev = &mut self.tasks[me].assume_init_mut().context as *mut A::Context;
+                    let nx = &self.task_ref(next).context as *const A::Context;
+                    A::switch_context(prev, nx);
+                }
+                A::exit_critical(guard);
+                // Reanudada más tarde: el tope del loop reevalúa el estado.
+            } else {
+                A::exit_critical(guard);
+                A::wait_for_interrupt();
+            }
+        }
     }
 
     /// ID de la tarea en ejecución.
@@ -553,6 +927,44 @@ impl<A: Arch> Scheduler<A> {
         }
         self.started = true;
         self.current = self.pick_next(usize::MAX);
+    }
+
+    /// Fija la tarea en ejecución (sin conmutar contexto). Permite a los tests
+    /// host simular qué tarea llama a lock/unlock sin un `Arch` real.
+    ///
+    /// Solo con la feature `test-util`.
+    #[cfg(feature = "test-util")]
+    pub fn set_current_for_test(&mut self, idx: usize) {
+        if idx < self.count {
+            self.current = idx;
+        }
+    }
+
+    /// Ejecuta SOLO la contabilidad de [`Self::mutex_lock`] (adquirir o marcar
+    /// bloqueada + heredar prioridad) sin el bucle de conmutación, que en el host
+    /// (con `switch_context` no-op) no progresaría. Devuelve `true` si adquirió.
+    ///
+    /// Solo con la feature `test-util`.
+    #[cfg(feature = "test-util")]
+    pub fn mutex_acquire_for_test(&mut self, id: usize) -> bool {
+        let me = self.current;
+        self.mutex_acquire(id, me)
+    }
+
+    /// Dueño actual del mutex `id` (índice de tarea), o `None` si libre.
+    ///
+    /// Solo con la feature `test-util`.
+    #[cfg(feature = "test-util")]
+    pub fn mutex_owner_for_test(&self, id: usize) -> Option<u8> {
+        self.mutexes[id].owner
+    }
+
+    /// `true` si la tarea `idx` está bloqueada esperando el mutex `id`.
+    ///
+    /// Solo con la feature `test-util`.
+    #[cfg(feature = "test-util")]
+    pub fn is_blocked_on_mutex_for_test(&self, idx: usize, id: usize) -> bool {
+        idx < self.count && self.task_ref(idx).state == TaskState::BlockedMutex(id as u8)
     }
 
     /// Marca la tarea `idx` como muerta (`Killed`) sin pasar por el camino de

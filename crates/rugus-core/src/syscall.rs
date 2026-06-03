@@ -20,6 +20,10 @@ pub enum Id {
     Log = 0x03,
     IpcSend = 0x10,
     IpcRecv = 0x11,
+    MutexLock = 0x20,
+    MutexUnlock = 0x21,
+    SemWait = 0x22,
+    SemPost = 0x23,
     NetSocket = 0x30,
     NetConnect = 0x31,
     NetSend = 0x32,
@@ -40,6 +44,10 @@ impl Id {
             0x03 => Some(Self::Log),
             0x10 => Some(Self::IpcSend),
             0x11 => Some(Self::IpcRecv),
+            0x20 => Some(Self::MutexLock),
+            0x21 => Some(Self::MutexUnlock),
+            0x22 => Some(Self::SemWait),
+            0x23 => Some(Self::SemPost),
             0x30 => Some(Self::NetSocket),
             0x31 => Some(Self::NetConnect),
             0x32 => Some(Self::NetSend),
@@ -72,6 +80,14 @@ pub struct Hooks {
     /// está lleno. Es la ruta de I/O userland → driver privilegiado sin
     /// punteros: todo viaja en registros, así que no hay rango que validar.
     pub ipc_send: fn(chan: u32, msg: u32) -> i32,
+    /// Toma el mutex `id` (bloquea con herencia de prioridad si está ocupado).
+    pub mutex_lock: fn(id: u32) -> i32,
+    /// Libera el mutex `id` (debe ser el dueño).
+    pub mutex_unlock: fn(id: u32) -> i32,
+    /// Consume un permiso del semáforo `id` (bloquea si no hay).
+    pub sem_wait: fn(id: u32) -> i32,
+    /// Devuelve un permiso al semáforo `id` (despierta a un waiter).
+    pub sem_post: fn(id: u32) -> i32,
 }
 
 static mut HOOKS: Option<Hooks> = None;
@@ -203,6 +219,10 @@ pub fn dispatch(id: Id, args: [u32; 4]) -> i32 {
                 }
             }
         }
+        Id::MutexLock => sync_call(args[0], |h| h.mutex_lock),
+        Id::MutexUnlock => sync_call(args[0], |h| h.mutex_unlock),
+        Id::SemWait => sync_call(args[0], |h| h.sem_wait),
+        Id::SemPost => sync_call(args[0], |h| h.sem_post),
         Id::Log
         | Id::IpcRecv
         | Id::NetSocket
@@ -218,6 +238,18 @@ pub fn dispatch(id: Id, args: [u32; 4]) -> i32 {
         Id::PanicApp => {
             let _ = args;
             Errno::Einval as i32
+        }
+    }
+}
+
+/// Rutea un syscall de sincronización (id de objeto en `obj`) al hook elegido
+/// por `pick`. Fail-closed: [`Errno::Efault`] si no hay hooks registrados.
+fn sync_call(obj: u32, pick: fn(&Hooks) -> fn(u32) -> i32) -> i32 {
+    // SAFETY: lectura de static; hooks inmutables tras init.
+    unsafe {
+        match HOOKS {
+            Some(h) => pick(&h)(obj),
+            None => Errno::Efault as i32,
         }
     }
 }
@@ -280,6 +312,58 @@ pub mod user {
                 lateout("r0") ret,
                 options(nomem, nostack)
             );
+        }
+        ret
+    }
+
+    /// Toma el mutex `id` (`Id::MutexLock`); bloquea con herencia de prioridad
+    /// si está ocupado. `id` viaja en `r0`.
+    #[inline(always)]
+    pub fn mutex_lock(id: u32) -> i32 {
+        svc_arg(0x20, id)
+    }
+
+    /// Libera el mutex `id` (`Id::MutexUnlock`). `id` viaja en `r0`.
+    #[inline(always)]
+    pub fn mutex_unlock(id: u32) -> i32 {
+        svc_arg(0x21, id)
+    }
+
+    /// Consume un permiso del semáforo `id` (`Id::SemWait`), bloqueando si no
+    /// hay. `id` viaja en `r0`.
+    #[inline(always)]
+    pub fn sem_wait(id: u32) -> i32 {
+        svc_arg(0x22, id)
+    }
+
+    /// Devuelve un permiso al semáforo `id` (`Id::SemPost`). `id` viaja en `r0`.
+    #[inline(always)]
+    pub fn sem_post(id: u32) -> i32 {
+        svc_arg(0x23, id)
+    }
+
+    /// Ejecuta `SVC #imm` con un argumento en `r0` y devuelve `r0`. Los cuatro
+    /// syscalls de sincronización comparten esta forma (1 arg → 1 retorno).
+    #[inline(always)]
+    fn svc_arg(imm: u8, arg: u32) -> i32 {
+        let ret: i32;
+        // SAFETY: SVC con r0=arg; el dispatch lee args[0] del frame apilado.
+        // El imm8 se codifica en la instrucción, así que cada valor necesita su
+        // propia instrucción (no se puede parametrizar el imm en runtime).
+        match imm {
+            0x20 => unsafe {
+                core::arch::asm!("svc 0x20", in("r0") arg, lateout("r0") ret, options(nomem, nostack))
+            },
+            0x21 => unsafe {
+                core::arch::asm!("svc 0x21", in("r0") arg, lateout("r0") ret, options(nomem, nostack))
+            },
+            0x22 => unsafe {
+                core::arch::asm!("svc 0x22", in("r0") arg, lateout("r0") ret, options(nomem, nostack))
+            },
+            0x23 => unsafe {
+                core::arch::asm!("svc 0x23", in("r0") arg, lateout("r0") ret, options(nomem, nostack))
+            },
+            _ => return crate::Errno::Einval as i32,
         }
         ret
     }

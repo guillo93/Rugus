@@ -311,6 +311,14 @@ fn main() -> ! {
             Priority::Kernel,
         )
         .expect("spawn kernel");
+        // Autotest de sincronización del kernel (mutex + semáforo) tras tener la
+        // tarea 0 registrada y antes de arrancar: verifica la contabilidad no
+        // bloqueante; la herencia de prioridad y el bloqueo se validan en host.
+        if rugus_kernel::sync_selftest() {
+            defmt::info!("sync selftest: PASS (mutex + semaphore)");
+        } else {
+            defmt::warn!("sync selftest: FAIL");
+        }
         // bad_app y good_app comparten banda App y rotan justo (round-robin por
         // banda): el orden de spawn no decide cuál corre. GOOD_IDX debe coincidir
         // con el orden de spawn de userland.
