@@ -461,6 +461,106 @@ mod ipc_tests {
 }
 
 #[cfg(test)]
+mod liveness_tests {
+    //! Monitor de liveness / deadline por tarea (F4.3).
+    //!
+    //! Detecta tareas VIVAS que dejan de progresar (sin crash, así que el fault
+    //! containment no las ve). Se ejerce con el reloj controlable (`set_clock`):
+    //! armar un periodo, comprobar que no vence antes del plazo, que vence al
+    //! rebasarlo, que `checkin` lo renueva y que `force_kill` recupera.
+    use super::*;
+    use rugus_core::sched::{Priority, Scheduler};
+
+    type Sched = Scheduler<MockArch>;
+
+    /// Crea un scheduler con `n` tareas privilegiadas arrancado, current=0.
+    fn sched_with(n: usize) -> Sched {
+        let mut s = Sched::new();
+        for _ in 0..n {
+            s.spawn(plain_stack(512), dummy_entry, Priority::Kernel)
+                .unwrap();
+        }
+        reset_mock();
+        s.force_start_for_test();
+        s.set_current_for_test(0);
+        s
+    }
+
+    #[test]
+    fn arming_sets_deadline_in_the_future() {
+        let mut s = sched_with(2);
+        set_clock(1000);
+        s.set_liveness_period(1, 500);
+        // Plazo = ahora + periodo.
+        assert_eq!(s.liveness_deadline_for_test(1), Some(1500));
+        // Periodo 0 desarma.
+        s.set_liveness_period(1, 0);
+        assert_eq!(s.liveness_deadline_for_test(1), None);
+    }
+
+    #[test]
+    fn not_overdue_before_deadline_then_overdue_after() {
+        let mut s = sched_with(2);
+        set_clock(0);
+        s.set_liveness_period(1, 100);
+        // current=0; la tarea 1 está monitorizada.
+        set_clock(50);
+        assert_eq!(s.liveness_overdue(), None);
+        set_clock(100);
+        // Al alcanzar el plazo, se declara colgada.
+        assert_eq!(s.liveness_overdue(), Some(1));
+    }
+
+    #[test]
+    fn checkin_renews_the_deadline() {
+        let mut s = sched_with(2);
+        set_clock(0);
+        s.set_liveness_period(1, 100);
+        set_clock(80);
+        // Latido antes de vencer → nuevo plazo = 80 + 100 = 180.
+        s.liveness_checkin(1);
+        assert_eq!(s.liveness_deadline_for_test(1), Some(180));
+        set_clock(100);
+        assert_eq!(s.liveness_overdue(), None);
+        set_clock(180);
+        assert_eq!(s.liveness_overdue(), Some(1));
+    }
+
+    #[test]
+    fn current_task_is_never_overdue() {
+        let mut s = sched_with(2);
+        set_clock(0);
+        // Monitoriza la tarea 0, que es la actual.
+        s.set_liveness_period(0, 100);
+        set_clock(1000);
+        // La tarea en ejecución progresa por definición → nunca colgada.
+        assert_eq!(s.liveness_overdue(), None);
+    }
+
+    #[test]
+    fn force_kill_recovers_a_hung_task() {
+        let mut s = sched_with(2);
+        set_clock(0);
+        s.set_liveness_period(1, 100);
+        set_clock(200);
+        let idx = s.liveness_overdue().expect("tarea 1 colgada");
+        assert_eq!(idx, 1);
+        // No se puede matar a la tarea actual por esta vía.
+        assert!(!s.force_kill(0));
+        // Se mata la colgada; queda Killed y sin liveness.
+        assert!(s.force_kill(1));
+        assert!(s.is_killed_for_test(1));
+        assert_eq!(s.liveness_deadline_for_test(1), None);
+        // Ya no aparece como colgada (las Killed las gestiona respawn).
+        assert_eq!(s.liveness_overdue(), None);
+        // NOTA: la reconstrucción de stack de `respawn` (y su limpieza del plazo
+        // de liveness) no se ejerce en host: el scheduler guarda `stack_base`
+        // como u32 (diseño MCU 32-bit) y truncaría un puntero de 64-bit del
+        // host. Ese camino se valida en placa (F407+F769).
+    }
+}
+
+#[cfg(test)]
 mod mpu_sandbox_tests {
     use super::*;
     use rugus_core::sched::{Priority, Scheduler};
@@ -530,6 +630,7 @@ mod abi_tests {
     fn h_chan_recv(_chan: u32, _timeout: u32, _out_ptr: u32) -> i32 {
         0
     }
+    fn h_checkin() {}
 
     #[test]
     fn abi_version_is_v1() {
@@ -539,14 +640,14 @@ mod abi_tests {
     #[test]
     fn id_from_raw_roundtrips_known_and_rejects_unknown() {
         for raw in [
-            0x00u8, 0x01, 0x02, 0x03, 0x10, 0x11, 0x12, 0x13, 0x20, 0x21, 0x22, 0x23, 0x30, 0x40,
-            0xFE, 0xFF,
+            0x00u8, 0x01, 0x02, 0x03, 0x04, 0x10, 0x11, 0x12, 0x13, 0x20, 0x21, 0x22, 0x23, 0x30,
+            0x40, 0xFE, 0xFF,
         ] {
             let id = Id::from_raw(raw).expect("id conocido");
             assert_eq!(id as u8, raw);
         }
         assert!(Id::from_raw(0x99).is_none());
-        assert!(Id::from_raw(0x04).is_none());
+        assert!(Id::from_raw(0x05).is_none());
     }
 
     // Toca el `HOOKS` global de rugus-core; debe ser el ÚNICO test que lo use
@@ -566,6 +667,7 @@ mod abi_tests {
             sem_post: h_sync,
             chan_send: h_chan_send,
             chan_recv: h_chan_recv,
+            checkin: h_checkin,
         };
         // SAFETY: test single-uso del estado global; sin concurrencia con otros.
         unsafe {
@@ -599,6 +701,8 @@ mod abi_tests {
         assert_eq!(dispatch(Id::ChanRecv, [0, 0, 0x2000_0000, 0]), 0);
         // out_ptr fuera de la región del llamante → Efault (sin tocar el hook).
         assert!(dispatch(Id::ChanRecv, [0, 0, 0x1FFF_FFFF, 0]) < 0);
+        // Checkin: sin args ni punteros, rutea al hook (no-op) → 0.
+        assert_eq!(dispatch(Id::Checkin, [0; 4]), 0);
         // Syscalls aún no implementadas devuelven Errno negativo.
         assert!(dispatch(Id::Log, [0; 4]) < 0);
         assert!(dispatch(Id::NetSocket, [0; 4]) < 0);

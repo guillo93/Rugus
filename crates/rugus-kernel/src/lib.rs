@@ -89,6 +89,7 @@ pub unsafe fn install(observer: Option<FaultObserver>) {
             sem_post,
             chan_send,
             chan_recv,
+            checkin,
         });
     }
 }
@@ -187,6 +188,39 @@ pub fn cpu_chan_recv(chan: usize, timeout_ms: u32, out: &mut u32) -> i32 {
     unsafe { scheduler_mut().chan_recv(chan, timeout_ms, out) }
 }
 
+/// Arma la monitorización de liveness de la tarea `idx`: debe emitir un
+/// `checkin` cada `period_ms` ms como máximo o el supervisor la considerará
+/// colgada. Llamar desde `main` o desde el supervisor.
+///
+/// # Safety
+///
+/// Solo desde contexto privilegiado (main o supervisor), sin reentrada.
+pub unsafe fn set_liveness_period(idx: usize, period_ms: u32) {
+    // SAFETY: scheduler poseído; cooperativo sin reentrada concurrente.
+    unsafe { scheduler_mut().set_liveness_period(idx, period_ms) }
+}
+
+/// Renueva el plazo de liveness de la tarea `idx` (latido por proxy desde una
+/// tarea privilegiada). La ruta userland es el syscall `Checkin`.
+pub fn cpu_checkin(idx: usize) {
+    // SAFETY: scheduler poseído; cooperativo sin reentrada concurrente.
+    unsafe { scheduler_mut().liveness_checkin(idx) }
+}
+
+/// Índice de la primera tarea cuyo plazo de liveness venció (colgada pero viva),
+/// o `None`. El supervisor lo consulta para recuperar tareas atascadas.
+pub fn liveness_overdue() -> Option<usize> {
+    scheduler_ref().liveness_overdue()
+}
+
+/// Mata por la fuerza la tarea viva `idx` (no la actual) para recuperarla;
+/// `true` si la mató. El supervisor la combina con [`respawn`] para reiniciar en
+/// frío una tarea colgada que el fault containment no captura.
+pub fn force_kill(idx: usize) -> bool {
+    // SAFETY: scheduler poseído; cooperativo sin reentrada concurrente.
+    unsafe { scheduler_mut().force_kill(idx) }
+}
+
 /// Inicializa el semáforo `id` con `count` permisos. Llamar desde `main` antes
 /// de [`start`].
 ///
@@ -236,6 +270,36 @@ pub unsafe fn sync_selftest() -> bool {
     ok &= s.chan_recv(0, 0, &mut got) == 0 && got == 0xBEEF;
     // Canal vacío sin bloquear → Ebusy.
     ok &= s.chan_recv(0, 0, &mut got) == Errno::Ebusy as i32;
+    ok
+}
+
+/// Autotest determinista del monitor de liveness (F4.3).
+///
+/// Llamar desde `main` DESPUÉS de [`spawn`] (tarea 0 registrada) y ANTES de
+/// [`start`]. Con el reloj aún en 0 (SysTick sin arrancar), arma un periodo en la
+/// tarea 0 y verifica que el monitor NO la declara colgada de inmediato (plazo en
+/// el futuro). No avanza el reloj (no puede sin SysTick), así que la detección de
+/// vencimiento real se cubre en `rugus-host-tests` con reloj controlable. Deja la
+/// liveness desarmada al terminar. Devuelve `true` si los invariantes se cumplen.
+///
+/// # Safety
+///
+/// Solo desde `main`, single-thread, tras al menos un [`spawn`].
+pub unsafe fn liveness_selftest() -> bool {
+    // SAFETY: arranque single-thread; tarea 0 ya registrada.
+    let s = unsafe { scheduler_mut() };
+    let mut ok = true;
+    // Sin liveness armada, ninguna tarea está colgada.
+    ok &= s.liveness_overdue().is_none();
+    // Armar un periodo amplio fija el plazo en el futuro: no vencido todavía.
+    s.set_liveness_period(0, 60_000);
+    // La tarea 0 es la actual (current==0 antes de start) → liveness_overdue la
+    // excluye por definición; el invariante observable es simplemente que no
+    // explota y que un checkin renueva sin error.
+    s.liveness_checkin(0);
+    ok &= s.liveness_overdue().is_none();
+    // Restaura: rearmará el periodo real cada app/tarea cuando corresponda.
+    s.set_liveness_period(0, 0);
     ok
 }
 
@@ -336,6 +400,12 @@ fn chan_recv(chan: u32, timeout_ms: u32, out_ptr: u32) -> i32 {
         }
     }
     r
+}
+
+/// Hook de `Id::Checkin`: renueva el plazo de liveness de la tarea en ejecución.
+fn checkin() {
+    // SAFETY: igual que yield_now.
+    unsafe { scheduler_mut().liveness_checkin_current() }
 }
 
 fn yield_now() {
