@@ -35,6 +35,7 @@ use rugus_core::channel::Channel;
 use rugus_core::fault::FaultReport;
 use rugus_core::sched::{Priority, Scheduler, SpawnError, TaskId};
 use rugus_core::syscall::{self, Hooks};
+use rugus_core::telemetry::FaultTelemetry;
 use rugus_core::{Domain, Errno};
 
 /// Tipo concreto del scheduler de esta capa (Arch fijado a Cortex-M).
@@ -50,6 +51,18 @@ pub type FaultObserver = fn(&FaultReport);
 static mut SCHEDULER: Sched = Sched::new();
 /// Observador de fault registrado por la placa (opcional).
 static mut FAULT_OBSERVER: Option<FaultObserver> = None;
+
+/// Telemetría de faults persistente entre resets (F4.4).
+///
+/// Vive en la sección `.uninit` de `cortex-m-rt`: el runtime NO la pone a cero al
+/// arrancar, así que su contenido (contadores, último post-mortem, conteo de
+/// arranques) SOBREVIVE a un reset por watchdog o por fault. La validez se decide
+/// por el `magic` en [`telemetry_init`]: arranque en frío (basura) reinicia,
+/// reset en caliente preserva el historial. No tiene inicializador const porque
+/// `.uninit` no se inicializa; solo se toca tras [`telemetry_init`].
+#[link_section = ".uninit.RUGUS_FAULT_TELEMETRY"]
+static mut FAULT_TELEMETRY: core::mem::MaybeUninit<FaultTelemetry> =
+    core::mem::MaybeUninit::uninit();
 
 /// Canal IPC único (id 0) por el que userland envía peticiones de I/O por valor
 /// a un driver privilegiado. SPSC: el productor es el dispatch del syscall (una
@@ -92,6 +105,65 @@ pub unsafe fn install(observer: Option<FaultObserver>) {
             checkin,
         });
     }
+}
+
+/// Inicializa la telemetría de faults persistente (F4.4) y devuelve `true` si
+/// fue un **reset en caliente** (datos previos preservados) o `false` si fue un
+/// **arranque en frío** (contadores reiniciados).
+///
+/// Llamar UNA vez desde `main`, en arranque temprano (antes de `spawn`/`start`).
+/// Valida el `magic` de la región `.uninit`: como esa RAM puede contener basura
+/// tras un power-on, esta función SOLO lee `magic` (un `u32`, cualquier patrón es
+/// válido de leer) antes de decidir; nunca interpreta campos sin sellar.
+///
+/// # Safety
+///
+/// Solo desde `main`, single-thread, una vez. Sella la región `.uninit`.
+pub unsafe fn telemetry_init() -> bool {
+    // SAFETY: arranque single-thread; `boot()` solo lee `magic` (válido de leer
+    // sobre cualquier patrón de bits) antes de sellar/reiniciar el resto.
+    unsafe { (*addr_of_mut!(FAULT_TELEMETRY)).assume_init_mut().boot() }
+}
+
+/// Número de arranques observados desde el último arranque en frío (incluye el
+/// actual). Llamar tras [`telemetry_init`].
+pub fn boot_count() -> u32 {
+    telemetry_ref().boot_count
+}
+
+/// Faults totales acumulados entre resets. Llamar tras [`telemetry_init`].
+pub fn total_faults() -> u32 {
+    telemetry_ref().total_faults
+}
+
+/// Faults contabilizados para la tarea `idx`. Llamar tras [`telemetry_init`].
+pub fn faults_for(idx: usize) -> u32 {
+    telemetry_ref().faults_for(idx)
+}
+
+/// `true` si el sistema debe entrar en safe-mode (demasiados faults totales o una
+/// tarea reincidente). El supervisor lo consulta para dejar de respawnear y
+/// degradarse de forma controlada en lugar de entrar en bucle de crash/respawn.
+pub fn safe_mode() -> bool {
+    telemetry_ref().safe_mode()
+}
+
+/// Último post-mortem registrado: `(kind, task_id, pc, addr)`, o `None` si no ha
+/// habido ningún fault. Pensado para volcarlo por log al arrancar.
+pub fn last_fault() -> Option<(u8, u8, u32, u32)> {
+    let t = telemetry_ref();
+    if t.has_last {
+        Some((t.last_kind, t.last_task, t.last_pc, t.last_addr))
+    } else {
+        None
+    }
+}
+
+#[inline]
+fn telemetry_ref() -> &'static FaultTelemetry {
+    // SAFETY: sellada por `telemetry_init` antes de cualquier lectura; lecturas
+    // en cooperativo.
+    unsafe { (*addr_of!(FAULT_TELEMETRY)).assume_init_ref() }
 }
 
 /// Trampolín de preempción invocado por la ISR de SysTick: rutea al scheduler.
@@ -449,6 +521,12 @@ fn fault_hook(report: FaultReport) -> ! {
     // SAFETY: contexto de fault (handler mode), single-thread; observer y
     // scheduler registrados en `install`.
     unsafe {
+        // Post-mortem persistente: contabiliza el fault en la telemetría `.uninit`
+        // ANTES de matar la tarea, para que sobreviva incluso si el siguiente paso
+        // acaba en reset por watchdog.
+        (*addr_of_mut!(FAULT_TELEMETRY))
+            .assume_init_mut()
+            .record(&report);
         if let Some(observer) = FAULT_OBSERVER {
             observer(&report);
         }
