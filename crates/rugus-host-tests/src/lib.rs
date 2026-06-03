@@ -295,7 +295,8 @@ mod sync_tests {
     #[test]
     fn priority_inheritance_boosts_and_restores() {
         let mut s = Sched::new();
-        s.spawn(plain_stack(512), dummy_entry, Priority::App).unwrap(); // idx 0 (baja)
+        s.spawn(plain_stack(512), dummy_entry, Priority::App)
+            .unwrap(); // idx 0 (baja)
         s.spawn(plain_stack(512), dummy_entry, Priority::Service)
             .unwrap(); // idx 1 (media)
         s.spawn(plain_stack(512), dummy_entry, Priority::Kernel)
