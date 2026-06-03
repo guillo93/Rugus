@@ -1186,6 +1186,29 @@ impl<A: Arch> Scheduler<A> {
         idx < self.count && self.task_ref(idx).state == TaskState::Killed
     }
 
+    /// Etiqueta legible del estado de la tarea `idx` para diagnóstico (consola
+    /// `ps`). `"-"` si el índice está fuera de rango.
+    pub fn task_state_name(&self, idx: usize) -> &'static str {
+        if idx >= self.count {
+            return "-";
+        }
+        match self.task_ref(idx).state {
+            TaskState::Ready => "READY",
+            TaskState::Sleeping(_) => "SLEEP",
+            TaskState::BlockedMutex(_) => "B-MTX",
+            TaskState::BlockedSem(_) => "B-SEM",
+            TaskState::BlockedRecv(_) => "B-RCV",
+            TaskState::BlockedSend(_) => "B-SND",
+            TaskState::Killed => "KILL",
+        }
+    }
+
+    /// `true` si la tarea `idx` es userland (nPRIV, dominio App con sandbox MPU);
+    /// `false` si es privilegiada o el índice no existe.
+    pub fn is_user_task(&self, idx: usize) -> bool {
+        idx < self.count && matches!(self.task_ref(idx).mode, TaskMode::User)
+    }
+
     /// Tamaño total del stack de la tarea `idx` en bytes (0 si no existe).
     pub fn stack_len(&self, idx: usize) -> u32 {
         if idx >= self.count {

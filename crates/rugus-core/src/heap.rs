@@ -20,3 +20,19 @@ pub unsafe fn init(start: *mut u8, size: usize) {
         HEAP.lock().init(start, size);
     }
 }
+
+/// Bytes actualmente asignados en el heap.
+pub fn used() -> usize {
+    HEAP.lock().used()
+}
+
+/// Bytes libres en el heap.
+pub fn free() -> usize {
+    HEAP.lock().free()
+}
+
+/// Tamaño total del heap (usado + libre).
+pub fn size() -> usize {
+    let h = HEAP.lock();
+    h.used() + h.free()
+}

@@ -21,3 +21,6 @@ rugus-arch-cortex-m = { workspace = true }
 [features]
 default = []
 defmt = ["dep:defmt", "rugus-core/log", "rugus-arch-cortex-m/defmt"]
+# Expone estadísticas del heap del sistema en la consola (`mem`). Reenvía al
+# heap global de `rugus-core`; sin esta feature `heap_*` devuelven 0.
+alloc = ["rugus-core/alloc"]

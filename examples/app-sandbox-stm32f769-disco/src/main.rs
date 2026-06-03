@@ -27,6 +27,7 @@
 #![no_main]
 #![allow(static_mut_refs)]
 
+use cortex_m::peripheral::NVIC;
 use rugus_arch_cortex_m::{platform_init, time, MpuLayout};
 use rugus_core::sched::Priority;
 use rugus_core::syscall::user as svc_user;
@@ -38,9 +39,11 @@ use rugus_hal_stm32f7::fmc::{self, SDRAM_BASE};
 use rugus_hal_stm32f7::gpio::{DiscoLed, LedPin};
 use rugus_hal_stm32f7::iwdg::Iwdg;
 use rugus_hal_stm32f7::pac;
+use rugus_hal_stm32f7::pac::{interrupt, Interrupt};
 use rugus_hal_stm32f7::rcc;
 use rugus_hal_stm32f7::timer::{PwmCheck, Timebase};
-use rugus_hal_stm32f7::usart::{Usart2, CONSOLE_BAUD};
+use rugus_hal_stm32f7::usart::{self, Usart2, CONSOLE_BAUD};
+use rugus_kernel::console::{Console, ConsoleOut, RxRing};
 use rugus_kernel::status::{self, StatusLeds};
 use rugus_runtime::entry;
 
@@ -107,6 +110,36 @@ static mut WATCHDOG: Option<Iwdg> = None;
 /// Botón B1 (PA0) cableado a EXTI0. Mantiene viva la config del IRQ; el conteo
 /// de eventos lo lee el supervisor por [`exti::events`].
 static mut BUTTON: Option<Button> = None;
+
+/// Anillo de recepción de la consola: el handler `USART2` (productor) encola cada
+/// byte; el supervisor (consumidor) lo drena hacia [`CONSOLE`]. SPSC sin bloqueo.
+static RX_RING: RxRing = RxRing::new();
+/// Consola de operador interactiva (F4.5): parsea ps/mem/faults/respawn/reboot.
+static mut CONSOLE: Console = Console::new();
+/// Puerto UART de la consola (PA2 TX / PA3 RX). Lo conduce el supervisor para el
+/// eco y las respuestas; el RX llega por IRQ vía [`RX_RING`].
+static mut CONSOLE_UART: Option<Usart2> = None;
+
+/// Sumidero de salida de la consola sobre el UART: escribe byte a byte (bloqueante
+/// a nivel de byte; las cadenas de consola son cortas).
+struct UartSink<'a>(&'a mut Usart2);
+
+impl ConsoleOut for UartSink<'_> {
+    fn write_str(&mut self, s: &str) {
+        for &b in s.as_bytes() {
+            self.0.write_byte(b);
+        }
+    }
+}
+
+/// Handler de USART2: drena el byte recibido al anillo de la consola. Leer `RDR`
+/// limpia `RXNE` y desactiva la pendiente de la IRQ.
+#[interrupt]
+fn USART2() {
+    if let Some(b) = usart::isr_read_byte() {
+        let _ = RX_RING.push(b);
+    }
+}
 
 fn kernel_task() -> ! {
     defmt::info!("kernel task (LD Red) started");
@@ -206,6 +239,15 @@ fn kernel_task() -> ! {
                             let _ = led.toggle();
                         }
                     }
+                }
+            }
+            // Consola UART (F4.5): emite el banner una vez y drena los bytes que
+            // llegaron por IRQ de RX, procesándolos (eco + parser de comandos).
+            if let Some(u) = CONSOLE_UART.as_mut() {
+                let mut sink = UartSink(u);
+                CONSOLE.greet(&mut sink);
+                while let Some(b) = RX_RING.pop() {
+                    CONSOLE.feed(b, &mut sink);
                 }
             }
         }
@@ -353,6 +395,17 @@ fn main() -> ! {
         WATCHDOG = Some(Iwdg::start_windowed());
     }
     defmt::info!("IWDG armed (windowed, kick window ~1-2 s)");
+
+    // Consola de operador interactiva (F4.5): PA2 TX / PA3 RX @ 115200 8N1, RX por
+    // IRQ. El supervisor drena el anillo y procesa los comandos (ps/mem/faults/
+    // respawn/reboot). Se crea tras el autotest de loopback, que ya validó la IP.
+    unsafe {
+        let mut uart = Usart2::new(clocks.pclk1, CONSOLE_BAUD);
+        uart.enable_rx_irq();
+        NVIC::unmask(Interrupt::USART2);
+        CONSOLE_UART = Some(uart);
+    }
+    defmt::info!("UART console ready (PA2/PA3 @ 115200, RX IRQ)");
 
     unsafe {
         // El LED de fault lo conduce ahora el servicio `status` desde el latch
