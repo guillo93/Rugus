@@ -9,6 +9,24 @@
 #![no_std]
 #![deny(unsafe_op_in_unsafe_fn)]
 #![warn(missing_docs)]
+// Garantía panic-free (F4.8): el corazón determinista del kernel no debe contener
+// puntos de pánico EXPLÍCITOS. Estos lints fallan la compilación (CI `-D warnings`)
+// si alguien introduce `unwrap`/`expect`/`panic!`/`todo!`/`unimplemented!`/
+// `unreachable!`, empujando hacia manejo explícito de errores (`Option`/`Errno`).
+// (Los pánicos IMPLÍCITOS por índice/overflow se acotan por invariantes de
+// `MAX_TASKS`/bandas y, en release, `overflow-checks=false` los hace wrap no-pánico.)
+// El módulo de tests (host) se exime: aserciones y helpers pueden entrar en pánico.
+#![cfg_attr(
+    not(test),
+    deny(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::todo,
+        clippy::unimplemented,
+        clippy::unreachable
+    )
+)]
 
 pub mod arch;
 pub mod channel;

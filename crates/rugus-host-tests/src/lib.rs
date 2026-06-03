@@ -753,3 +753,90 @@ mod fault_tests {
         assert_eq!(copy.addr, Some(0x4000_0000));
     }
 }
+
+/// Determinismo del scheduler (F4.8): la planificación es una función pura del
+/// estado observable (tabla de tareas + reloj explícito). No hay fuentes de
+/// no-determinismo (RNG, reloj implícito, orden de hash): la MISMA secuencia de
+/// operaciones produce SIEMPRE la MISMA secuencia de tareas, y la rotación
+/// round-robin tiene periodo acotado e igual al nº de tareas listas en la banda.
+/// Esto sustenta el análisis de latencia: el peor caso de `pick`/`preempt_tick`
+/// es un barrido O(MAX_TASKS) sin recursión ni espera no acotada.
+#[cfg(test)]
+mod determinism_tests {
+    use super::*;
+    use rugus_core::sched::{Priority, Scheduler};
+
+    type Sched = Scheduler<MockArch>;
+
+    /// Construye un scheduler con `n` tareas kernel y lo arranca de forma
+    /// reproducible (reloj reseteado).
+    fn fresh(n: usize) -> Sched {
+        let mut s = Sched::new();
+        for _ in 0..n {
+            s.spawn(plain_stack(512), dummy_entry, Priority::Kernel)
+                .expect("spawn");
+        }
+        reset_mock();
+        s.force_start_for_test();
+        s
+    }
+
+    /// Ejecuta `steps` cesiones y devuelve la secuencia de TaskId servidos.
+    fn run_yield_sequence(s: &mut Sched, steps: usize) -> Vec<u8> {
+        let mut seq = Vec::with_capacity(steps + 1);
+        seq.push(s.current_id().0);
+        for _ in 0..steps {
+            s.yield_now();
+            seq.push(s.current_id().0);
+        }
+        seq
+    }
+
+    #[test]
+    fn identical_runs_produce_identical_schedule() {
+        // Dos schedulers construidos y operados de forma idéntica deben generar
+        // EXACTAMENTE la misma traza de planificación: planificación determinista.
+        let mut a = fresh(4);
+        let mut b = fresh(4);
+        let seq_a = run_yield_sequence(&mut a, 64);
+        let seq_b = run_yield_sequence(&mut b, 64);
+        assert_eq!(seq_a, seq_b);
+    }
+
+    #[test]
+    fn round_robin_period_equals_ready_count() {
+        // Con N tareas listas en una banda, la rotación round-robin es cíclica de
+        // periodo exactamente N (sin deriva): tras N cesiones se vuelve al inicio.
+        for n in 2..=4usize {
+            let mut s = fresh(n);
+            let seq = run_yield_sequence(&mut s, n);
+            // El primer y el (N+1)-ésimo elemento coinciden (cierre del ciclo)...
+            assert_eq!(
+                seq.first(),
+                seq.last(),
+                "el ciclo debe cerrarse tras {n} cesiones"
+            );
+            // ...y los N primeros son una permutación de todos los TaskId [0, N).
+            let mut band: Vec<u8> = seq[..n].to_vec();
+            band.sort_unstable();
+            let all: Vec<u8> = (0..n as u8).collect();
+            assert_eq!(band, all, "round-robin debe servir cada tarea una vez");
+        }
+    }
+
+    #[test]
+    fn preempt_tick_is_deterministic_across_runs() {
+        // La preempción por rodaja también es función pura del estado: misma
+        // cadencia de ticks → misma traza.
+        fn drive(steps: usize) -> Vec<u8> {
+            let mut s = fresh(3);
+            let mut seq = vec![s.current_id().0];
+            for _ in 0..steps {
+                s.preempt_tick();
+                seq.push(s.current_id().0);
+            }
+            seq
+        }
+        assert_eq!(drive(50), drive(50));
+    }
+}
