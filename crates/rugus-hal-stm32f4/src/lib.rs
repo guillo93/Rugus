@@ -22,5 +22,6 @@ pub mod exti;
 pub mod gpio;
 pub mod iwdg;
 pub mod rcc;
+pub mod reset;
 pub mod timer;
 pub mod usart;

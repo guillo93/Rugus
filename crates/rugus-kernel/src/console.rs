@@ -26,7 +26,7 @@
 //! - `ps` — tabla de tareas (idx, prioridad, modo, estado, stack usado/total).
 //! - `mem` — uso del heap (usado/libre/total).
 //! - `faults` — telemetría persistente (arranques, faults totales, por tarea,
-//!   último post-mortem, safe-mode).
+//!   último post-mortem, safe-mode, causa del último reset).
 //! - `respawn <n>` — revive la tarea `n` si está `KILL`.
 //! - `reboot` — reset del sistema (`SCB.AIRCR.SYSRESETREQ`).
 
@@ -262,6 +262,10 @@ fn cmd_faults(out: &mut impl ConsoleOut) {
     } else {
         ""
     });
+    out.write_str("\r\n");
+    // Causa del último reset (F4.6): power-on / iwdg / software / pin / brownout.
+    out.write_str("ultimo reset: ");
+    out.write_str(crate::reset_cause());
     out.write_str("\r\n");
     for idx in 0..crate::task_count() {
         let c = crate::faults_for(idx);
