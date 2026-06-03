@@ -167,6 +167,29 @@ fn telemetry_ref() -> &'static FaultTelemetry {
     unsafe { (*addr_of!(FAULT_TELEMETRY)).assume_init_ref() }
 }
 
+/// Nombre de la causa del último reset (la placa la lee de su RCC_CSR y la
+/// publica aquí). El kernel no conoce el periférico: solo guarda el `&str` para
+/// que la consola y el log de arranque lo muestren.
+static mut RESET_CAUSE: &str = "?";
+
+/// Publica la causa del último reset (F4.6). La placa la obtiene de su HAL
+/// (`reset::read_and_clear().name()`) al arrancar.
+///
+/// # Safety
+/// Llamar una sola vez en el arranque single-thread, antes de `start`.
+pub unsafe fn set_reset_cause(name: &'static str) {
+    // SAFETY: escritura única en arranque cooperativo single-thread.
+    unsafe {
+        RESET_CAUSE = name;
+    }
+}
+
+/// Causa del último reset publicada por la placa, o `"?"` si no se fijó.
+pub fn reset_cause() -> &'static str {
+    // SAFETY: se fija una vez al arranque; lecturas cooperativas posteriores.
+    unsafe { RESET_CAUSE }
+}
+
 /// Trampolín de preempción invocado por la ISR de SysTick: rutea al scheduler.
 fn preempt_tick() {
     // SAFETY: corre en la ISR de SysTick; el modo hilo enmascara SysTick

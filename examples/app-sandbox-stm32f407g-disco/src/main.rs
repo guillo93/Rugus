@@ -151,8 +151,9 @@ fn kernel_task() -> ! {
     let mut last_btn = exti::events();
     let mut hog_pings = 0u32;
     // Cadencia del kick del IWDG windowed: hay que alimentar DENTRO de la ventana
-    // [~1 s, ~2 s] tras la última recarga. Alimentar antes (bucle desbocado) o
-    // después (cuelgue) resetea. ~1.5 s deja margen frente al jitter del muestreo.
+    // [~0.5 s, ~4 s] nominal tras la última recarga. Alimentar antes (bucle
+    // desbocado) o después (cuelgue) resetea. ~1.5 s queda centrado y deja margen
+    // amplio frente al jitter del muestreo y a la tolerancia del LSI sin calibrar.
     const IWDG_KICK_MS: u32 = 1_500;
     let mut last_kick = time::now_ms();
     loop {
@@ -372,6 +373,12 @@ fn main() -> ! {
         if rugus_kernel::safe_mode() {
             defmt::error!("SAFE-MODE activo: demasiados faults acumulados");
         }
+        // Causa del último reset (F4.6): leer+limpiar RCC_CSR distingue power-on
+        // de un reset por IWDG (cuelgue contenido), por software (`reboot`) o por
+        // pin NRST. Se publica al kernel para la consola (`faults`) y se loguea.
+        let cause = rugus_hal_stm32f4::reset::read_and_clear();
+        rugus_kernel::set_reset_cause(cause.name());
+        defmt::info!("reset cause: {=str}", cause.name());
     }
 
     static mut HEAP: [u8; 32 * 1024] = [0; 32 * 1024];
@@ -416,7 +423,7 @@ fn main() -> ! {
     unsafe {
         WATCHDOG = Some(Iwdg::start_windowed());
     }
-    defmt::info!("IWDG armed (windowed, kick window ~1-2 s)");
+    defmt::info!("IWDG armed (windowed, ventana kick ~0.5-4 s nominal)");
 
     // Consola de operador interactiva (F4.5): PA2 TX / PA3 RX @ 115200 8N1, RX por
     // IRQ. El supervisor drena el anillo y procesa los comandos (ps/mem/faults/
