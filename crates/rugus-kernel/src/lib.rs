@@ -87,6 +87,8 @@ pub unsafe fn install(observer: Option<FaultObserver>) {
             mutex_unlock,
             sem_wait,
             sem_post,
+            chan_send,
+            chan_recv,
         });
     }
 }
@@ -171,6 +173,20 @@ pub fn cpu_sem_post(id: usize) -> i32 {
     unsafe { scheduler_mut().sem_post(id) }
 }
 
+/// Envía `msg` por el canal IPC `chan` desde una tarea privilegiada, con
+/// `timeout_ms` (`0` no bloquea; `u32::MAX` indefinido). Cooperativo.
+pub fn cpu_chan_send(chan: usize, msg: u32, timeout_ms: u32) -> i32 {
+    // SAFETY: scheduler poseído; cooperativo sin reentrada concurrente.
+    unsafe { scheduler_mut().chan_send(chan, msg, timeout_ms) }
+}
+
+/// Recibe del canal IPC `chan` desde una tarea privilegiada, escribiendo el
+/// mensaje en `out`. Bloquea hasta `timeout_ms` ms si está vacío.
+pub fn cpu_chan_recv(chan: usize, timeout_ms: u32, out: &mut u32) -> i32 {
+    // SAFETY: igual que cpu_chan_send.
+    unsafe { scheduler_mut().chan_recv(chan, timeout_ms, out) }
+}
+
 /// Inicializa el semáforo `id` con `count` permisos. Llamar desde `main` antes
 /// de [`start`].
 ///
@@ -212,6 +228,14 @@ pub unsafe fn sync_selftest() -> bool {
     ok &= s.sem_try_wait(0);
     // Restaura el semáforo a 0 para que el uso real arranque limpio.
     s.sem_init(0, 0);
+    // Canal IPC (sin arrancar → no bloqueante): send encola, recv desencola FIFO.
+    let mut got = 0u32;
+    ok &= s.chan_send(0, 0xC0FFEE, 0) == 0;
+    ok &= s.chan_send(0, 0xBEEF, 0) == 0;
+    ok &= s.chan_recv(0, 0, &mut got) == 0 && got == 0xC0FFEE;
+    ok &= s.chan_recv(0, 0, &mut got) == 0 && got == 0xBEEF;
+    // Canal vacío sin bloquear → Ebusy.
+    ok &= s.chan_recv(0, 0, &mut got) == Errno::Ebusy as i32;
     ok
 }
 
@@ -290,6 +314,28 @@ fn sem_wait(id: u32) -> i32 {
 fn sem_post(id: u32) -> i32 {
     // SAFETY: igual que mutex_lock.
     unsafe { scheduler_mut().sem_post(id as usize) }
+}
+
+/// Hook de `Id::ChanSend`: envía `msg` por el canal `chan` con `timeout_ms`.
+fn chan_send(chan: u32, msg: u32, timeout_ms: u32) -> i32 {
+    // SAFETY: igual que mutex_lock.
+    unsafe { scheduler_mut().chan_send(chan as usize, msg, timeout_ms) }
+}
+
+/// Hook de `Id::ChanRecv`: recibe del canal `chan` con `timeout_ms` y escribe el
+/// mensaje en `out_ptr` (rango ya validado por el dispatch).
+fn chan_recv(chan: u32, timeout_ms: u32, out_ptr: u32) -> i32 {
+    let mut msg = 0u32;
+    // SAFETY: igual que mutex_lock.
+    let r = unsafe { scheduler_mut().chan_recv(chan as usize, timeout_ms, &mut msg) };
+    if r == 0 {
+        // SAFETY: el dispatch validó [out_ptr, out_ptr+4) contra la región del
+        // llamante (o es privilegiado, confiado) antes de invocar este hook.
+        unsafe {
+            (out_ptr as *mut u32).write_volatile(msg);
+        }
+    }
+    r
 }
 
 fn yield_now() {

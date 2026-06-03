@@ -17,6 +17,15 @@ pub const MAX_MUTEXES: usize = 4;
 /// Máximo de semáforos contadores gestionados por el kernel.
 pub const MAX_SEMAPHORES: usize = 4;
 
+/// Máximo de canales IPC bloqueantes gestionados por el kernel.
+pub const MAX_CHANNELS: usize = 4;
+
+/// Capacidad (mensajes en vuelo) del buffer de cada canal IPC.
+pub const CHAN_CAPACITY: usize = 4;
+
+/// Valor de `timeout_ms` que indica "esperar indefinidamente" (sin plazo).
+pub const TIMEOUT_FOREVER: u32 = u32::MAX;
+
 /// Patrón de relleno de stack para medir el uso máximo (high-water mark).
 ///
 /// En `spawn` el stack se pinta entero con este byte; las posiciones que la
@@ -62,6 +71,12 @@ enum TaskState {
     /// Bloqueada esperando el semáforo indicado. La despierta un
     /// [`Scheduler::sem_post`].
     BlockedSem(u8),
+    /// Bloqueada esperando recibir de un canal IPC (índice). La despierta un
+    /// [`Scheduler::chan_send`] o el vencimiento de su plazo (`block_deadline`).
+    BlockedRecv(u8),
+    /// Bloqueada esperando que un canal IPC lleno tenga hueco (índice). La
+    /// despierta un [`Scheduler::chan_recv`] o el vencimiento de su plazo.
+    BlockedSend(u8),
     Killed,
 }
 
@@ -107,6 +122,62 @@ impl SemCb {
     }
 }
 
+/// Bloque de control de un canal IPC bloqueante con buffer FIFO acotado.
+///
+/// Un `send` encola un mensaje (o bloquea con plazo si el buffer está lleno) y
+/// despierta al receptor bloqueado de mayor prioridad. Un `recv` desencola (o
+/// bloquea con plazo si está vacío) y despierta al emisor bloqueado de mayor
+/// prioridad al liberar hueco. La latencia de bloqueo está acotada por el plazo
+/// (`timeout_ms`), sin busy-wait: el durmiente cede el CPU y el scheduler lo
+/// reevalúa al despertar.
+#[derive(Clone, Copy)]
+struct ChanCb {
+    /// Buffer circular de mensajes opacos (`u32`).
+    buf: [u32; CHAN_CAPACITY],
+    /// Índice del primer mensaje válido.
+    head: u8,
+    /// Número de mensajes en vuelo (`0..=CHAN_CAPACITY`).
+    len: u8,
+    /// Bitmask de tareas bloqueadas esperando recibir.
+    recv_waiters: u8,
+    /// Bitmask de tareas bloqueadas esperando hueco para enviar.
+    send_waiters: u8,
+}
+
+impl ChanCb {
+    const fn new() -> Self {
+        Self {
+            buf: [0; CHAN_CAPACITY],
+            head: 0,
+            len: 0,
+            recv_waiters: 0,
+            send_waiters: 0,
+        }
+    }
+
+    /// Encola `msg` si hay hueco. `true` si lo encoló.
+    fn push(&mut self, msg: u32) -> bool {
+        if (self.len as usize) >= CHAN_CAPACITY {
+            return false;
+        }
+        let tail = (self.head as usize + self.len as usize) % CHAN_CAPACITY;
+        self.buf[tail] = msg;
+        self.len += 1;
+        true
+    }
+
+    /// Desencola el mensaje más antiguo (FIFO) si lo hay.
+    fn pop(&mut self) -> Option<u32> {
+        if self.len == 0 {
+            return None;
+        }
+        let msg = self.buf[self.head as usize];
+        self.head = ((self.head as usize + 1) % CHAN_CAPACITY) as u8;
+        self.len -= 1;
+        Some(msg)
+    }
+}
+
 struct TaskSlot<A: Arch> {
     context: A::Context,
     /// Prioridad EFECTIVA usada por [`Scheduler::pick_next`]. Puede subir por
@@ -126,6 +197,10 @@ struct TaskSlot<A: Arch> {
     /// un fault: repintar el stack y reconstruir el frame inicial exige re-llamar
     /// a [`Arch::init_task_stack`] con la misma `entry`.
     entry: fn() -> !,
+    /// Plazo (ms, reloj monotónico) tras el cual un bloqueo IPC vence por
+    /// timeout. `None` mientras la tarea no está bloqueada con plazo o el bloqueo
+    /// es indefinido ([`TIMEOUT_FOREVER`]).
+    block_deadline: Option<u32>,
 }
 
 /// Número de bandas de prioridad (ver [`Priority`]).
@@ -159,6 +234,8 @@ pub struct Scheduler<A: Arch> {
     mutexes: [MutexCb; MAX_MUTEXES],
     /// Bloques de control de semáforos contadores (id = índice).
     semaphores: [SemCb; MAX_SEMAPHORES],
+    /// Bloques de control de canales IPC bloqueantes (id = índice).
+    channels: [ChanCb; MAX_CHANNELS],
 }
 
 impl<A: Arch> Scheduler<A> {
@@ -173,6 +250,7 @@ impl<A: Arch> Scheduler<A> {
             slice_ticks: 0,
             mutexes: [MutexCb::new(); MAX_MUTEXES],
             semaphores: [SemCb::new(); MAX_SEMAPHORES],
+            channels: [ChanCb::new(); MAX_CHANNELS],
         }
     }
 
@@ -241,6 +319,7 @@ impl<A: Arch> Scheduler<A> {
             stack_base: base,
             stack_len,
             entry,
+            block_deadline: None,
         };
         self.tasks[self.count].write(slot);
         let id = TaskId(self.count as u8);
@@ -499,6 +578,10 @@ impl<A: Arch> Scheduler<A> {
         for id in 0..MAX_SEMAPHORES {
             self.semaphores[id].waiters &= !bit;
         }
+        for id in 0..MAX_CHANNELS {
+            self.channels[id].recv_waiters &= !bit;
+            self.channels[id].send_waiters &= !bit;
+        }
     }
 
     // --- Sincronización con herencia de prioridad (F4.1) ---
@@ -668,6 +751,163 @@ impl<A: Arch> Scheduler<A> {
             return 0xFF;
         }
         self.task_ref(idx).priority as u8
+    }
+
+    // --- IPC bloqueante con timeout/deadline (F4.2) ---
+
+    /// Calcula el plazo absoluto (ms) de un bloqueo con `timeout_ms` relativo.
+    /// `None` si es no bloqueante (`0`) o indefinido ([`TIMEOUT_FOREVER`]).
+    fn block_deadline(timeout_ms: u32) -> Option<u32> {
+        if timeout_ms == 0 || timeout_ms == TIMEOUT_FOREVER {
+            None
+        } else {
+            Some(A::now_ms().wrapping_add(timeout_ms))
+        }
+    }
+
+    /// Despierta al receptor bloqueado de mayor prioridad del canal `chan`, si lo
+    /// hay (lo saca de la lista de waiters y lo marca listo). El llamante debe
+    /// sostener la sección crítica. Devuelve `true` si despertó a alguien.
+    fn wake_one_recv(&mut self, chan: usize) -> bool {
+        match self.highest_priority_waiter(self.channels[chan].recv_waiters) {
+            Some(w) => {
+                self.channels[chan].recv_waiters &= !(1 << w);
+                // SAFETY: w < count; slot inicializado en spawn.
+                unsafe {
+                    let slot = self.tasks[w].assume_init_mut();
+                    slot.state = TaskState::Ready;
+                    slot.block_deadline = None;
+                }
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Despierta al emisor bloqueado de mayor prioridad del canal `chan`, si lo
+    /// hay. El llamante debe sostener la sección crítica. `true` si despertó.
+    fn wake_one_send(&mut self, chan: usize) -> bool {
+        match self.highest_priority_waiter(self.channels[chan].send_waiters) {
+            Some(w) => {
+                self.channels[chan].send_waiters &= !(1 << w);
+                // SAFETY: w < count; slot inicializado en spawn.
+                unsafe {
+                    let slot = self.tasks[w].assume_init_mut();
+                    slot.state = TaskState::Ready;
+                    slot.block_deadline = None;
+                }
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Envía `msg` por el canal IPC `chan`, bloqueando hasta `timeout_ms` ms si el
+    /// buffer está lleno (`0` = no bloqueante; [`TIMEOUT_FOREVER`] = indefinido).
+    ///
+    /// Devuelve `0` al encolar, [`Errno::Ebusy`](crate::Errno) si está lleno y no
+    /// bloquea, [`Errno::Etimedout`](crate::Errno) si vence el plazo, o
+    /// [`Errno::Einval`](crate::Errno) si `chan` no existe. Latencia acotada por
+    /// el plazo, sin busy-wait: el emisor cede el CPU mientras espera hueco.
+    pub fn chan_send(&mut self, chan: usize, msg: u32, timeout_ms: u32) -> i32 {
+        if chan >= MAX_CHANNELS {
+            return crate::Errno::Einval as i32;
+        }
+        // Antes de arrancar el scheduler no se puede ceder: degrada a no bloqueante.
+        if !self.started {
+            return if self.channels[chan].push(msg) {
+                0
+            } else {
+                crate::Errno::Ebusy as i32
+            };
+        }
+        let me = self.current;
+        let deadline = Self::block_deadline(timeout_ms);
+        loop {
+            let guard = A::enter_critical();
+            if self.channels[chan].push(msg) {
+                let woke = self.wake_one_recv(chan);
+                A::exit_critical(guard);
+                if woke {
+                    self.yield_now();
+                }
+                return 0;
+            }
+            if timeout_ms == 0 {
+                A::exit_critical(guard);
+                return crate::Errno::Ebusy as i32;
+            }
+            if let Some(d) = deadline {
+                if A::now_ms().wrapping_sub(d) as i32 >= 0 {
+                    A::exit_critical(guard);
+                    return crate::Errno::Etimedout as i32;
+                }
+            }
+            self.channels[chan].send_waiters |= 1 << me;
+            // SAFETY: me < count; slot inicializado en spawn.
+            unsafe {
+                let slot = self.tasks[me].assume_init_mut();
+                slot.state = TaskState::BlockedSend(chan as u8);
+                slot.block_deadline = deadline;
+            }
+            A::exit_critical(guard);
+            self.switch_until_ready(me);
+        }
+    }
+
+    /// Recibe un mensaje del canal IPC `chan` en `out`, bloqueando hasta
+    /// `timeout_ms` ms si está vacío (`0` = no bloqueante; [`TIMEOUT_FOREVER`] =
+    /// indefinido).
+    ///
+    /// Devuelve `0` y escribe `out` al recibir, [`Errno::Ebusy`](crate::Errno) si
+    /// está vacío y no bloquea, [`Errno::Etimedout`](crate::Errno) si vence el
+    /// plazo, o [`Errno::Einval`](crate::Errno) si `chan` no existe.
+    pub fn chan_recv(&mut self, chan: usize, timeout_ms: u32, out: &mut u32) -> i32 {
+        if chan >= MAX_CHANNELS {
+            return crate::Errno::Einval as i32;
+        }
+        if !self.started {
+            return match self.channels[chan].pop() {
+                Some(m) => {
+                    *out = m;
+                    0
+                }
+                None => crate::Errno::Ebusy as i32,
+            };
+        }
+        let me = self.current;
+        let deadline = Self::block_deadline(timeout_ms);
+        loop {
+            let guard = A::enter_critical();
+            if let Some(m) = self.channels[chan].pop() {
+                *out = m;
+                let woke = self.wake_one_send(chan);
+                A::exit_critical(guard);
+                if woke {
+                    self.yield_now();
+                }
+                return 0;
+            }
+            if timeout_ms == 0 {
+                A::exit_critical(guard);
+                return crate::Errno::Ebusy as i32;
+            }
+            if let Some(d) = deadline {
+                if A::now_ms().wrapping_sub(d) as i32 >= 0 {
+                    A::exit_critical(guard);
+                    return crate::Errno::Etimedout as i32;
+                }
+            }
+            self.channels[chan].recv_waiters |= 1 << me;
+            // SAFETY: me < count; slot inicializado en spawn.
+            unsafe {
+                let slot = self.tasks[me].assume_init_mut();
+                slot.state = TaskState::BlockedRecv(chan as u8);
+                slot.block_deadline = deadline;
+            }
+            A::exit_critical(guard);
+            self.switch_until_ready(me);
+        }
     }
 
     /// Adquisición de mutex (solo contabilidad, sin conmutar). Devuelve `true` si
@@ -878,13 +1118,38 @@ impl<A: Arch> Scheduler<A> {
     fn wake_expired(&mut self) {
         let now = A::now_ms();
         for i in 0..self.count {
-            if let TaskState::Sleeping(wake_at) = self.task_ref(i).state {
-                if now.wrapping_sub(wake_at) as i32 >= 0 {
-                    // SAFETY: i < count; slot inicializado en spawn.
-                    unsafe {
-                        self.tasks[i].assume_init_mut().state = TaskState::Ready;
+            match self.task_ref(i).state {
+                TaskState::Sleeping(wake_at) => {
+                    if now.wrapping_sub(wake_at) as i32 >= 0 {
+                        // SAFETY: i < count; slot inicializado en spawn.
+                        unsafe {
+                            self.tasks[i].assume_init_mut().state = TaskState::Ready;
+                        }
                     }
                 }
+                // Bloqueo IPC con plazo: al vencer se quita de la lista de waiters
+                // del canal y se marca lista. El `chan_recv`/`chan_send` que la
+                // reanude reintenta la operación; al fallar y ver el plazo vencido
+                // devuelve `Etimedout`.
+                TaskState::BlockedRecv(chan) | TaskState::BlockedSend(chan) => {
+                    if let Some(deadline) = self.task_ref(i).block_deadline {
+                        if now.wrapping_sub(deadline) as i32 >= 0 {
+                            let bit = 1u8 << i;
+                            if let TaskState::BlockedRecv(_) = self.task_ref(i).state {
+                                self.channels[chan as usize].recv_waiters &= !bit;
+                            } else {
+                                self.channels[chan as usize].send_waiters &= !bit;
+                            }
+                            // SAFETY: i < count; slot inicializado en spawn.
+                            unsafe {
+                                let slot = self.tasks[i].assume_init_mut();
+                                slot.state = TaskState::Ready;
+                                slot.block_deadline = None;
+                            }
+                        }
+                    }
+                }
+                _ => {}
             }
         }
     }
@@ -981,6 +1246,57 @@ impl<A: Arch> Scheduler<A> {
                 self.tasks[idx].assume_init_mut().state = TaskState::Killed;
             }
         }
+    }
+
+    /// Número de mensajes en vuelo en el canal `chan`.
+    ///
+    /// Solo con la feature `test-util`.
+    #[cfg(feature = "test-util")]
+    pub fn chan_len_for_test(&self, chan: usize) -> usize {
+        self.channels[chan].len as usize
+    }
+
+    /// `true` si la tarea `idx` está bloqueada esperando recibir del canal `chan`.
+    ///
+    /// Solo con la feature `test-util`.
+    #[cfg(feature = "test-util")]
+    pub fn is_blocked_on_recv_for_test(&self, idx: usize, chan: usize) -> bool {
+        idx < self.count && self.task_ref(idx).state == TaskState::BlockedRecv(chan as u8)
+    }
+
+    /// `true` si la tarea `idx` está bloqueada esperando enviar al canal `chan`.
+    ///
+    /// Solo con la feature `test-util`.
+    #[cfg(feature = "test-util")]
+    pub fn is_blocked_on_send_for_test(&self, idx: usize, chan: usize) -> bool {
+        idx < self.count && self.task_ref(idx).state == TaskState::BlockedSend(chan as u8)
+    }
+
+    /// Bloquea la tarea actual esperando recibir del canal `chan` con plazo
+    /// absoluto `deadline` (solo contabilidad, sin el bucle de conmutación que en
+    /// el host no progresaría). Permite probar el vencimiento por timeout.
+    ///
+    /// Solo con la feature `test-util`.
+    #[cfg(feature = "test-util")]
+    pub fn block_recv_for_test(&mut self, chan: usize, deadline: u32) {
+        let me = self.current;
+        self.channels[chan].recv_waiters |= 1 << me;
+        // SAFETY: me < count; slot inicializado en spawn.
+        unsafe {
+            let slot = self.tasks[me].assume_init_mut();
+            slot.state = TaskState::BlockedRecv(chan as u8);
+            slot.block_deadline = Some(deadline);
+        }
+    }
+
+    /// Ejecuta el barrido de despertar por plazo vencido (`Sleeping` y bloqueos
+    /// IPC con `timeout`). Expone la lógica que [`Self::pick_next`] corre en cada
+    /// elección, para probar el vencimiento sin un `Arch` real.
+    ///
+    /// Solo con la feature `test-util`.
+    #[cfg(feature = "test-util")]
+    pub fn wake_expired_for_test(&mut self) {
+        self.wake_expired();
     }
 }
 
