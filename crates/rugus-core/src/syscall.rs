@@ -20,6 +20,8 @@ pub enum Id {
     Log = 0x03,
     IpcSend = 0x10,
     IpcRecv = 0x11,
+    ChanSend = 0x12,
+    ChanRecv = 0x13,
     MutexLock = 0x20,
     MutexUnlock = 0x21,
     SemWait = 0x22,
@@ -44,6 +46,8 @@ impl Id {
             0x03 => Some(Self::Log),
             0x10 => Some(Self::IpcSend),
             0x11 => Some(Self::IpcRecv),
+            0x12 => Some(Self::ChanSend),
+            0x13 => Some(Self::ChanRecv),
             0x20 => Some(Self::MutexLock),
             0x21 => Some(Self::MutexUnlock),
             0x22 => Some(Self::SemWait),
@@ -88,6 +92,13 @@ pub struct Hooks {
     pub sem_wait: fn(id: u32) -> i32,
     /// Devuelve un permiso al semáforo `id` (despierta a un waiter).
     pub sem_post: fn(id: u32) -> i32,
+    /// Envía `msg` por el canal IPC `chan` con `timeout_ms` (bloquea con plazo
+    /// si está lleno). Todo por valor en registros: sin punteros que validar.
+    pub chan_send: fn(chan: u32, msg: u32, timeout_ms: u32) -> i32,
+    /// Recibe del canal IPC `chan` con `timeout_ms` y escribe el mensaje en
+    /// `out_ptr` (4 bytes, ya validado por [`validate_user_range`] en el
+    /// dispatch). Retorna `0` al recibir, [`Errno`] negativo en error/timeout.
+    pub chan_recv: fn(chan: u32, timeout_ms: u32, out_ptr: u32) -> i32,
 }
 
 static mut HOOKS: Option<Hooks> = None;
@@ -219,6 +230,31 @@ pub fn dispatch(id: Id, args: [u32; 4]) -> i32 {
                 }
             }
         }
+        Id::ChanSend => {
+            // chan=args[0], msg=args[1], timeout_ms=args[2]; todo por valor.
+            // SAFETY: hook registrado antes de userland.
+            unsafe {
+                match HOOKS {
+                    Some(h) => (h.chan_send)(args[0], args[1], args[2]),
+                    None => Errno::Efault as i32,
+                }
+            }
+        }
+        Id::ChanRecv => {
+            // chan=args[0], timeout_ms=args[1], out_ptr=args[2] (4 bytes).
+            // Syscall con puntero: valida el rango de salida ANTES de que el hook
+            // escriba en él (contrato de [`dispatch`]).
+            match validate_user_range(args[2], 4) {
+                // SAFETY: hook registrado antes de userland; rango validado.
+                Ok(()) => unsafe {
+                    match HOOKS {
+                        Some(h) => (h.chan_recv)(args[0], args[1], args[2]),
+                        None => Errno::Efault as i32,
+                    }
+                },
+                Err(e) => e as i32,
+            }
+        }
         Id::MutexLock => sync_call(args[0], |h| h.mutex_lock),
         Id::MutexUnlock => sync_call(args[0], |h| h.mutex_unlock),
         Id::SemWait => sync_call(args[0], |h| h.sem_wait),
@@ -311,6 +347,50 @@ pub mod user {
                 in("r1") msg,
                 lateout("r0") ret,
                 options(nomem, nostack)
+            );
+        }
+        ret
+    }
+
+    /// Envía `msg` por el canal IPC bloqueante `chan` (`Id::ChanSend`) con
+    /// `timeout_ms` (bloquea con plazo si está lleno; `0` no bloquea,
+    /// `u32::MAX` indefinido). `chan`/`msg`/`timeout_ms` viajan en `r0`/`r1`/`r2`.
+    #[inline(always)]
+    pub fn chan_send(chan: u32, msg: u32, timeout_ms: u32) -> i32 {
+        let ret: i32;
+        // SAFETY: SVC con r0=chan, r1=msg, r2=timeout; dispatch lee args[0..3].
+        unsafe {
+            core::arch::asm!(
+                "svc 0x12",
+                in("r0") chan,
+                in("r1") msg,
+                in("r2") timeout_ms,
+                lateout("r0") ret,
+                options(nomem, nostack)
+            );
+        }
+        ret
+    }
+
+    /// Recibe del canal IPC bloqueante `chan` (`Id::ChanRecv`) con `timeout_ms`,
+    /// escribiendo el mensaje en `*out` si retorna `0`. `chan`/`timeout_ms`/`out`
+    /// viajan en `r0`/`r1`/`r2`; el dispatch valida el rango de `out` (4 bytes)
+    /// contra la región del llamante antes de que el kernel escriba.
+    #[inline(always)]
+    pub fn chan_recv(chan: u32, timeout_ms: u32, out: &mut u32) -> i32 {
+        let ret: i32;
+        let out_ptr = out as *mut u32 as u32;
+        // SAFETY: SVC con r0=chan, r1=timeout, r2=out_ptr. Sin `nomem`: el kernel
+        // escribe en `*out` durante el syscall, así que el compilador no puede
+        // asumir que la memoria queda intacta.
+        unsafe {
+            core::arch::asm!(
+                "svc 0x13",
+                in("r0") chan,
+                in("r1") timeout_ms,
+                in("r2") out_ptr,
+                lateout("r0") ret,
+                options(nostack)
             );
         }
         ret

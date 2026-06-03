@@ -200,6 +200,9 @@ fn main() -> ! {
             mutex_unlock: |_id| rugus_core::Errno::Einval as i32,
             sem_wait: |_id| rugus_core::Errno::Einval as i32,
             sem_post: |_id| rugus_core::Errno::Einval as i32,
+            // Ni IPC bloqueante por canal (sin multitarea que bloquear).
+            chan_send: |_chan, _msg, _to| rugus_core::Errno::Einval as i32,
+            chan_recv: |_chan, _to, _out| rugus_core::Errno::Einval as i32,
         });
         lite::register(services::hooks());
         CONSOLE = Some(console);

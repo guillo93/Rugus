@@ -358,6 +358,109 @@ mod sync_tests {
 }
 
 #[cfg(test)]
+mod ipc_tests {
+    //! IPC bloqueante por canal con timeout/deadline (F4.2).
+    //!
+    //! La API bloqueante (`chan_send`/`chan_recv` con espera) usaría
+    //! `switch_until_ready`, que con el `switch_context` no-op del host no
+    //! progresaría. Por eso se ejercen: (a) la ruta NO bloqueante (`timeout = 0`),
+    //! (b) la contabilidad de despertar vía accesores `*_for_test`.
+    use super::*;
+    use rugus_core::sched::{Priority, Scheduler, CHAN_CAPACITY};
+    use rugus_core::Errno;
+
+    type Sched = Scheduler<MockArch>;
+
+    #[test]
+    fn channel_fifo_non_blocking() {
+        let mut s = Sched::new();
+        s.spawn(plain_stack(512), dummy_entry, Priority::Kernel)
+            .unwrap();
+        s.force_start_for_test();
+        s.set_current_for_test(0);
+
+        let mut got = 0u32;
+        // Encola dos; se reciben en orden FIFO.
+        assert_eq!(s.chan_send(0, 0x11, 0), 0);
+        assert_eq!(s.chan_send(0, 0x22, 0), 0);
+        assert_eq!(s.chan_len_for_test(0), 2);
+        assert_eq!(s.chan_recv(0, 0, &mut got), 0);
+        assert_eq!(got, 0x11);
+        assert_eq!(s.chan_recv(0, 0, &mut got), 0);
+        assert_eq!(got, 0x22);
+        // Vacío y sin bloquear → Ebusy.
+        assert_eq!(s.chan_recv(0, 0, &mut got), Errno::Ebusy as i32);
+    }
+
+    #[test]
+    fn channel_full_non_blocking_returns_ebusy() {
+        let mut s = Sched::new();
+        s.spawn(plain_stack(512), dummy_entry, Priority::Kernel)
+            .unwrap();
+        s.force_start_for_test();
+        s.set_current_for_test(0);
+
+        for i in 0..CHAN_CAPACITY {
+            assert_eq!(s.chan_send(0, i as u32, 0), 0);
+        }
+        // Buffer lleno y sin bloquear → Ebusy.
+        assert_eq!(s.chan_send(0, 0xFF, 0), Errno::Ebusy as i32);
+    }
+
+    #[test]
+    fn send_wakes_blocked_receiver() {
+        let mut s = Sched::new();
+        s.spawn(plain_stack(512), dummy_entry, Priority::Kernel)
+            .unwrap(); // idx 0
+        s.spawn(plain_stack(512), dummy_entry, Priority::Kernel)
+            .unwrap(); // idx 1
+        s.force_start_for_test();
+
+        // idx0 se bloquea esperando recibir (plazo lejano, no vence).
+        s.set_current_for_test(0);
+        s.block_recv_for_test(0, 1_000_000);
+        assert!(s.is_blocked_on_recv_for_test(0, 0));
+        assert!(!s.task_alive(0));
+
+        // idx1 envía: encola el mensaje y despierta a idx0.
+        s.set_current_for_test(1);
+        assert_eq!(s.chan_send(0, 0xCAFE, 0), 0);
+        assert!(!s.is_blocked_on_recv_for_test(0, 0));
+        assert!(s.task_alive(0)); // idx0 vuelve a estar Ready
+        assert_eq!(s.chan_len_for_test(0), 1); // mensaje en el buffer
+
+        // idx0 reanuda y desencola su mensaje.
+        s.set_current_for_test(0);
+        let mut got = 0u32;
+        assert_eq!(s.chan_recv(0, 0, &mut got), 0);
+        assert_eq!(got, 0xCAFE);
+    }
+
+    #[test]
+    fn blocked_receiver_times_out_on_deadline() {
+        let mut s = Sched::new();
+        s.spawn(plain_stack(512), dummy_entry, Priority::Kernel)
+            .unwrap();
+        reset_mock();
+        s.force_start_for_test();
+        s.set_current_for_test(0);
+
+        // Bloqueo con plazo en t=100 ms.
+        s.block_recv_for_test(0, 100);
+        // Antes del plazo: sigue bloqueado.
+        set_clock(50);
+        s.wake_expired_for_test();
+        assert!(s.is_blocked_on_recv_for_test(0, 0));
+        // Al alcanzar el plazo: el barrido lo despierta (lo reanudaría con
+        // Etimedout) y lo saca de la lista de waiters.
+        set_clock(100);
+        s.wake_expired_for_test();
+        assert!(!s.is_blocked_on_recv_for_test(0, 0));
+        assert!(s.task_alive(0));
+    }
+}
+
+#[cfg(test)]
 mod mpu_sandbox_tests {
     use super::*;
     use rugus_core::sched::{Priority, Scheduler};
@@ -421,6 +524,12 @@ mod abi_tests {
     fn h_sync(_id: u32) -> i32 {
         0
     }
+    fn h_chan_send(_chan: u32, _msg: u32, _timeout: u32) -> i32 {
+        99
+    }
+    fn h_chan_recv(_chan: u32, _timeout: u32, _out_ptr: u32) -> i32 {
+        0
+    }
 
     #[test]
     fn abi_version_is_v1() {
@@ -430,7 +539,8 @@ mod abi_tests {
     #[test]
     fn id_from_raw_roundtrips_known_and_rejects_unknown() {
         for raw in [
-            0x00u8, 0x01, 0x02, 0x03, 0x10, 0x11, 0x20, 0x21, 0x22, 0x23, 0x30, 0x40, 0xFE, 0xFF,
+            0x00u8, 0x01, 0x02, 0x03, 0x10, 0x11, 0x12, 0x13, 0x20, 0x21, 0x22, 0x23, 0x30, 0x40,
+            0xFE, 0xFF,
         ] {
             let id = Id::from_raw(raw).expect("id conocido");
             assert_eq!(id as u8, raw);
@@ -454,6 +564,8 @@ mod abi_tests {
             mutex_unlock: h_sync,
             sem_wait: h_sync,
             sem_post: h_sync,
+            chan_send: h_chan_send,
+            chan_recv: h_chan_recv,
         };
         // SAFETY: test single-uso del estado global; sin concurrencia con otros.
         unsafe {
@@ -480,6 +592,13 @@ mod abi_tests {
         assert_eq!(dispatch(Id::MutexUnlock, [0, 0, 0, 0]), 0);
         assert_eq!(dispatch(Id::SemWait, [0, 0, 0, 0]), 0);
         assert_eq!(dispatch(Id::SemPost, [0, 0, 0, 0]), 0);
+        // ChanSend: por valor (chan/msg/timeout) → rutea al hook → 99.
+        assert_eq!(dispatch(Id::ChanSend, [0, 0xAB, 0, 0]), 99);
+        // ChanRecv: valida el out-ptr (args[2]) contra la región userland antes
+        // del hook; out_ptr dentro de [0x2000_0000,+0x1000) → ok → hook → 0.
+        assert_eq!(dispatch(Id::ChanRecv, [0, 0, 0x2000_0000, 0]), 0);
+        // out_ptr fuera de la región del llamante → Efault (sin tocar el hook).
+        assert!(dispatch(Id::ChanRecv, [0, 0, 0x1FFF_FFFF, 0]) < 0);
         // Syscalls aún no implementadas devuelven Errno negativo.
         assert!(dispatch(Id::Log, [0; 4]) < 0);
         assert!(dispatch(Id::NetSocket, [0; 4]) < 0);
