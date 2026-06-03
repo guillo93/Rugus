@@ -60,6 +60,12 @@ const GUARD_SIZE_FIELD: u8 = 4;
 
 const RASR_ENABLE: u32 = 1 << 0;
 
+/// Bit XN (eXecute-Never) del RASR. Política W^X (F4.7): toda región escribible
+/// (RAM kernel, SDRAM/heap, stack de app) se marca exec-never; el código vive
+/// SOLO en flash (RX, write-never). Así una escritura maliciosa o accidental a
+/// RAM no puede convertirse en código ejecutable (no hay W∧X en ninguna región).
+const RASR_XN: u32 = 1 << 28;
+
 /// TEX=0, C=1, B=1 — SRAM normal write-back (permite accesos no alineados M7).
 const ATTR_NORMAL_WB: u32 = (1 << 17) | (1 << 16);
 /// TEX=0, C=1, B=0 — flash normal read-only.
@@ -150,6 +156,7 @@ pub fn init(mpu: &mut MPU, layout: &MpuLayout) {
         0,
     );
     // Región 1: SDRAM — kernel heap, solo privilegiado (si la placa la tiene).
+    // W^X (F4.7): heap escribible ⇒ exec-never (xn=true).
     if layout.sdram_size == 0 {
         disable_region(mpu, region::SDRAM);
     } else {
@@ -159,18 +166,20 @@ pub fn init(mpu: &mut MPU, layout: &MpuLayout) {
             layout.sdram_base,
             layout.sdram_size,
             ap::PRIV_RW,
-            false,
+            true,
             ATTR_NORMAL_WB,
         );
     }
     // Región 2: SRAM — kernel data/stacks, solo privilegiado.
+    // W^X (F4.7): RAM escribible ⇒ exec-never (xn=true). El código del kernel
+    // vive en flash (región 3, RX); nada se ejecuta desde SRAM.
     configure_region(
         mpu,
         region::KERNEL_RAM,
         layout.ram_base,
         layout.ram_size,
         ap::PRIV_RW,
-        false,
+        true,
         ATTR_NORMAL_WB,
     );
     // Región 3: flash — RX user+priv.
@@ -226,7 +235,9 @@ pub fn app_region_for(base: u32, len: u32) -> (u32, u32) {
     let size = region_size_for(len as usize);
     let aligned = align_down(base, size);
     let rbar = aligned & !0x1F;
-    let rasr = RASR_ENABLE | ap::FULL_RW | ATTR_NORMAL_WB | ((size as u32) << 1);
+    // W^X (F4.7): el stack de la app es RW ⇒ exec-never. Userland no puede
+    // ejecutar shellcode depositado en su propia pila (el código está en flash).
+    let rasr = RASR_ENABLE | ap::FULL_RW | ATTR_NORMAL_WB | RASR_XN | ((size as u32) << 1);
     (rbar, rasr)
 }
 
@@ -244,15 +255,46 @@ pub fn app_region_for(base: u32, len: u32) -> (u32, u32) {
 /// `KERNEL_RAM`/`APP_STACK`, así que protege tanto a tareas privilegiadas como
 /// userland. `RASR` ya trae ENABLE + XN; `RBAR` sin nº de región ni VALID.
 pub fn guard_region_for(base: u32) -> (u32, u32) {
-    const XN: u32 = 1 << 28;
     let rbar = base & !0x1F;
-    let rasr = RASR_ENABLE | ap::NONE | ATTR_NORMAL_WB | XN | ((GUARD_SIZE_FIELD as u32) << 1);
+    let rasr = RASR_ENABLE | ap::NONE | ATTR_NORMAL_WB | RASR_XN | ((GUARD_SIZE_FIELD as u32) << 1);
     (rbar, rasr)
+}
+
+/// Audita la invariante W^X (F4.7) sobre las regiones MPU actualmente
+/// programadas: ninguna región habilitada puede ser a la vez escribible Y
+/// ejecutable. Devuelve `true` si la política se cumple en las 8 regiones.
+///
+/// "Escribible" = AP ∈ {priv-RW `0b001`, full-RW `0b011`}; "ejecutable" = bit XN
+/// a 0. Pensado para llamarse al arranque tras [`init`] (las regiones por-tarea
+/// `APP_STACK`/`STACK_GUARD` aún no están activas, pero sus generadores
+/// `app_region_for`/`guard_region_for` ya fijan XN, así que el barrido por
+/// switch tampoco rompe la invariante). Defensa en profundidad: detecta una
+/// regresión de atributos antes de exponer la superficie a userland.
+pub fn audit_wx(mpu: &mut MPU) -> bool {
+    const AP_PRIV_RW: u32 = 0b001;
+    const AP_FULL_RW: u32 = 0b011;
+    for rn in 0u8..8 {
+        // SAFETY: lectura de registros MPU; RNR exclusivo en este barrido único.
+        let rasr = unsafe {
+            mpu.rnr.write(rn as u32);
+            mpu.rasr.read()
+        };
+        if rasr & RASR_ENABLE == 0 {
+            continue;
+        }
+        let ap = (rasr >> 24) & 0b111;
+        let writable = ap == AP_PRIV_RW || ap == AP_FULL_RW;
+        let executable = rasr & RASR_XN == 0;
+        if writable && executable {
+            return false;
+        }
+    }
+    true
 }
 
 fn configure_region(mpu: &mut MPU, rn: u8, base: u32, size: u8, ap: u32, xn: bool, attr: u32) {
     let rbar = base & !0x1F;
-    let xn_bit = if xn { 1u32 << 28 } else { 0 };
+    let xn_bit = if xn { RASR_XN } else { 0 };
     let rasr = RASR_ENABLE | ap | attr | xn_bit | ((size as u32) << 1);
     // SAFETY: MPU deshabilitada o RNR exclusivo en init/switch cooperativo.
     unsafe {
