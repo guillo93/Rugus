@@ -83,6 +83,10 @@ pub unsafe fn install(observer: Option<FaultObserver>) {
             current_domain,
             current_user_region,
             ipc_send,
+            mutex_lock,
+            mutex_unlock,
+            sem_wait,
+            sem_post,
         });
     }
 }
@@ -141,6 +145,76 @@ pub fn cpu_sleep_ms(ms: u32) {
     unsafe { scheduler_mut().sleep_ms(ms) }
 }
 
+/// Toma el mutex `id` desde una tarea PRIVILEGIADA (bloquea con herencia de
+/// prioridad si está ocupado). Cooperativo.
+pub fn cpu_mutex_lock(id: usize) -> i32 {
+    // SAFETY: scheduler poseído; cooperativo sin reentrada concurrente.
+    unsafe { scheduler_mut().mutex_lock(id) }
+}
+
+/// Libera el mutex `id` desde una tarea privilegiada.
+pub fn cpu_mutex_unlock(id: usize) -> i32 {
+    // SAFETY: igual que cpu_mutex_lock.
+    unsafe { scheduler_mut().mutex_unlock(id) }
+}
+
+/// Consume un permiso del semáforo `id` desde una tarea privilegiada (bloquea
+/// si no hay).
+pub fn cpu_sem_wait(id: usize) -> i32 {
+    // SAFETY: igual que cpu_mutex_lock.
+    unsafe { scheduler_mut().sem_wait(id) }
+}
+
+/// Devuelve un permiso al semáforo `id` desde una tarea privilegiada.
+pub fn cpu_sem_post(id: usize) -> i32 {
+    // SAFETY: igual que cpu_mutex_lock.
+    unsafe { scheduler_mut().sem_post(id) }
+}
+
+/// Inicializa el semáforo `id` con `count` permisos. Llamar desde `main` antes
+/// de [`start`].
+///
+/// # Safety
+///
+/// Solo desde `main`, arranque single-thread, antes de lanzar tareas.
+pub unsafe fn sem_init(id: usize, count: u32) {
+    // SAFETY: arranque single-thread garantizado por el caller.
+    unsafe { scheduler_mut().sem_init(id, count) }
+}
+
+/// Autotest determinista (no bloqueante) de la sincronización del kernel.
+///
+/// Llamar desde `main` DESPUÉS de [`spawn`] (para que exista la tarea 0) y ANTES
+/// de [`start`]: con el scheduler aún sin arrancar, lock/wait degradan a su forma
+/// no bloqueante, así que el test verifica la contabilidad de mutex y semáforo
+/// sin conmutar. La corrección de la herencia de prioridad y el bloqueo se cubre
+/// en `rugus-host-tests`. Devuelve `true` si todos los invariantes se cumplen.
+///
+/// # Safety
+///
+/// Solo desde `main`, single-thread, tras al menos un [`spawn`].
+pub unsafe fn sync_selftest() -> bool {
+    // SAFETY: arranque single-thread; tarea 0 ya registrada.
+    let s = unsafe { scheduler_mut() };
+    let mut ok = true;
+    // Mutex 0 libre → se toma; re-lock por el dueño es no-op exitoso.
+    ok &= s.mutex_try_lock(0);
+    ok &= s.mutex_try_lock(0);
+    // Liberar deja el mutex libre; un segundo unlock por quien no es dueño falla.
+    ok &= s.mutex_unlock(0) == 0;
+    ok &= s.mutex_unlock(0) == Errno::Edenied as i32;
+    // Semáforo 0 con 2 permisos: dos waits pasan, el tercero no; tras post vuelve.
+    s.sem_init(0, 2);
+    ok &= s.sem_try_wait(0);
+    ok &= s.sem_try_wait(0);
+    ok &= !s.sem_try_wait(0);
+    ok &= s.sem_post(0) == 0;
+    ok &= s.sem_try_wait(0);
+    // Restaura el semáforo a 0 para que el uso real arranque limpio.
+    s.sem_init(0, 0);
+    ok
+}
+
 /// `true` si la tarea `idx` fue matada por un fault contenido.
 pub fn task_killed(idx: usize) -> bool {
     scheduler_ref().is_killed(idx)
@@ -191,6 +265,31 @@ fn ipc_send(chan: u32, msg: u32) -> i32 {
         Ok(()) => 0,
         Err(_) => Errno::Ebusy as i32,
     }
+}
+
+/// Hook de `Id::MutexLock`: toma el mutex `id` (bloquea con herencia de
+/// prioridad si está ocupado).
+fn mutex_lock(id: u32) -> i32 {
+    // SAFETY: scheduler poseído; cooperativo sin reentrada concurrente.
+    unsafe { scheduler_mut().mutex_lock(id as usize) }
+}
+
+/// Hook de `Id::MutexUnlock`: libera el mutex `id`.
+fn mutex_unlock(id: u32) -> i32 {
+    // SAFETY: igual que mutex_lock.
+    unsafe { scheduler_mut().mutex_unlock(id as usize) }
+}
+
+/// Hook de `Id::SemWait`: consume un permiso del semáforo `id` (bloquea si no hay).
+fn sem_wait(id: u32) -> i32 {
+    // SAFETY: igual que mutex_lock.
+    unsafe { scheduler_mut().sem_wait(id as usize) }
+}
+
+/// Hook de `Id::SemPost`: devuelve un permiso al semáforo `id`.
+fn sem_post(id: u32) -> i32 {
+    // SAFETY: igual que mutex_lock.
+    unsafe { scheduler_mut().sem_post(id as usize) }
 }
 
 fn yield_now() {

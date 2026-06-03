@@ -195,6 +195,11 @@ fn main() -> ! {
             current_user_region: || (&*addr_of!(SCHEDULER)).current_user_region(),
             // El appliance lite no expone IPC userland: rechaza con Einval.
             ipc_send: |_chan, _msg| rugus_core::Errno::Einval as i32,
+            // Tampoco expone sincronización userland (sin scheduler multitarea).
+            mutex_lock: |_id| rugus_core::Errno::Einval as i32,
+            mutex_unlock: |_id| rugus_core::Errno::Einval as i32,
+            sem_wait: |_id| rugus_core::Errno::Einval as i32,
+            sem_post: |_id| rugus_core::Errno::Einval as i32,
         });
         lite::register(services::hooks());
         CONSOLE = Some(console);

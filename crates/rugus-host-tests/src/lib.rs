@@ -280,6 +280,84 @@ mod scheduler_tests {
 }
 
 #[cfg(test)]
+mod sync_tests {
+    //! Sincronización con herencia de prioridad (F4.1).
+    //!
+    //! `MockArch::switch_context` es un no-op, así que la API bloqueante
+    //! (`mutex_lock`/`sem_wait`) entraría en bucle infinito en host. Por eso
+    //! estos tests ejercen la contabilidad vía accesores `*_for_test` y la API
+    //! no bloqueante (`try_lock`/`try_wait`/`post`/`unlock`).
+    use super::*;
+    use rugus_core::sched::{Priority, Scheduler};
+
+    type Sched = Scheduler<MockArch>;
+
+    #[test]
+    fn priority_inheritance_boosts_and_restores() {
+        let mut s = Sched::new();
+        s.spawn(plain_stack(512), dummy_entry, Priority::App)
+            .unwrap(); // idx 0 (baja)
+        s.spawn(plain_stack(512), dummy_entry, Priority::Service)
+            .unwrap(); // idx 1 (media)
+        s.spawn(plain_stack(512), dummy_entry, Priority::Kernel)
+            .unwrap(); // idx 2 (alta)
+        s.force_start_for_test();
+
+        // idx0 (App=2) toma el mutex 0.
+        s.set_current_for_test(0);
+        assert!(s.mutex_acquire_for_test(0));
+        assert_eq!(s.mutex_owner_for_test(0), Some(0));
+        assert_eq!(s.task_priority(0), Priority::App as u8);
+
+        // idx2 (Kernel=0) intenta el mutex 0 → se bloquea y eleva al dueño.
+        s.set_current_for_test(2);
+        assert!(!s.mutex_acquire_for_test(0));
+        assert!(s.is_blocked_on_mutex_for_test(2, 0));
+        // El dueño (idx0) hereda la prioridad del waiter más alto (Kernel=0).
+        assert_eq!(s.task_priority(0), Priority::Kernel as u8);
+
+        // idx0 libera: la propiedad pasa a idx2 y la prioridad del 0 se restaura.
+        s.set_current_for_test(0);
+        assert_eq!(s.mutex_unlock(0), 0);
+        assert_eq!(s.mutex_owner_for_test(0), Some(2));
+        assert_eq!(s.task_priority(0), Priority::App as u8);
+        assert!(s.task_alive(2)); // idx2 vuelve a estar Ready
+    }
+
+    #[test]
+    fn mutex_unlock_by_non_owner_is_denied() {
+        let mut s = Sched::new();
+        s.spawn(plain_stack(512), dummy_entry, Priority::Kernel)
+            .unwrap(); // idx 0
+        s.spawn(plain_stack(512), dummy_entry, Priority::Kernel)
+            .unwrap(); // idx 1
+        s.force_start_for_test();
+
+        s.set_current_for_test(0);
+        assert!(s.mutex_acquire_for_test(0));
+        // idx1 no es dueño → Edenied.
+        s.set_current_for_test(1);
+        assert_eq!(s.mutex_unlock(0), rugus_core::Errno::Edenied as i32);
+    }
+
+    #[test]
+    fn semaphore_counting_try_wait_and_post() {
+        let mut s = Sched::new();
+        s.spawn(plain_stack(512), dummy_entry, Priority::Kernel)
+            .unwrap(); // idx 0
+        s.force_start_for_test();
+        s.set_current_for_test(0);
+
+        s.sem_init(0, 2);
+        assert!(s.sem_try_wait(0)); // 2 → 1
+        assert!(s.sem_try_wait(0)); // 1 → 0
+        assert!(!s.sem_try_wait(0)); // 0 → agotado
+        assert_eq!(s.sem_post(0), 0); // 0 → 1
+        assert!(s.sem_try_wait(0)); // 1 → 0
+    }
+}
+
+#[cfg(test)]
 mod mpu_sandbox_tests {
     use super::*;
     use rugus_core::sched::{Priority, Scheduler};
@@ -340,6 +418,9 @@ mod abi_tests {
     fn h_ipc(_chan: u32, _msg: u32) -> i32 {
         42
     }
+    fn h_sync(_id: u32) -> i32 {
+        0
+    }
 
     #[test]
     fn abi_version_is_v1() {
@@ -348,7 +429,9 @@ mod abi_tests {
 
     #[test]
     fn id_from_raw_roundtrips_known_and_rejects_unknown() {
-        for raw in [0x00u8, 0x01, 0x02, 0x03, 0x10, 0x11, 0x30, 0x40, 0xFE, 0xFF] {
+        for raw in [
+            0x00u8, 0x01, 0x02, 0x03, 0x10, 0x11, 0x20, 0x21, 0x22, 0x23, 0x30, 0x40, 0xFE, 0xFF,
+        ] {
             let id = Id::from_raw(raw).expect("id conocido");
             assert_eq!(id as u8, raw);
         }
@@ -367,6 +450,10 @@ mod abi_tests {
             current_domain: h_domain,
             current_user_region: region_user,
             ipc_send: h_ipc,
+            mutex_lock: h_sync,
+            mutex_unlock: h_sync,
+            sem_wait: h_sync,
+            sem_post: h_sync,
         };
         // SAFETY: test single-uso del estado global; sin concurrencia con otros.
         unsafe {
@@ -388,6 +475,11 @@ mod abi_tests {
         assert_eq!(dispatch(Id::YieldNow, [0; 4]), 0);
         assert_eq!(dispatch(Id::SleepMs, [10, 0, 0, 0]), 0);
         assert_eq!(dispatch(Id::IpcSend, [1, 2, 0, 0]), 42);
+        // Syscalls de sincronización: rutean al hook (id en args[0]) → 0.
+        assert_eq!(dispatch(Id::MutexLock, [0, 0, 0, 0]), 0);
+        assert_eq!(dispatch(Id::MutexUnlock, [0, 0, 0, 0]), 0);
+        assert_eq!(dispatch(Id::SemWait, [0, 0, 0, 0]), 0);
+        assert_eq!(dispatch(Id::SemPost, [0, 0, 0, 0]), 0);
         // Syscalls aún no implementadas devuelven Errno negativo.
         assert!(dispatch(Id::Log, [0; 4]) < 0);
         assert!(dispatch(Id::NetSocket, [0; 4]) < 0);
