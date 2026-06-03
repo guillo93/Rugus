@@ -370,6 +370,14 @@ fn main() -> ! {
     usart_selftest(clocks.pclk1);
 
     platform_init(&mut cp, &MpuLayout::STM32F769);
+    // Auditoría W^X (F4.7): ninguna región MPU es a la vez escribible y ejecutable
+    // (RAM/SDRAM/stack son exec-never; el código vive solo en flash RX). Defensa en
+    // profundidad: detecta una regresión de atributos antes de exponerse a userland.
+    if rugus_arch_cortex_m::mpu_audit_wx(&mut cp.MPU) {
+        defmt::info!("W^X audit: PASS (ninguna region W&X)");
+    } else {
+        defmt::error!("W^X audit: FAIL (region escribible y ejecutable)");
+    }
     time::init(&mut cp.SYST, clocks.hclk);
 
     // Autotest de periféricos analógicos/temporización (TIM2 base µs, TIM3 PWM,
