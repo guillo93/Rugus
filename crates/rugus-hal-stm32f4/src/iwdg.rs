@@ -66,7 +66,7 @@ impl Iwdg {
     }
 
     /// Como [`Self::start`] pero en **modo windowed**: además del límite superior
-    /// (~2 s sin kick → reset por cuelgue), fija una ventana inferior ([`WINR_HALF`])
+    /// (~2 s sin kick → reset por cuelgue), fija una ventana inferior (`WINR_HALF`)
     /// de modo que alimentar demasiado pronto (< ~1 s tras la recarga) también
     /// resetea. Detecta un supervisor en bucle desbocado, no solo uno parado.
     ///
