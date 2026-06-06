@@ -348,6 +348,13 @@ pub struct Scheduler<A: Arch> {
     barriers: [BarrierCb; MAX_BARRIERS],
     /// Bloques de control de grupos de eventos (id = índice).
     event_groups: [EventGroupCb; MAX_EVENT_GROUPS],
+    /// Nº acumulado de deadlocks (ciclos en el grafo de espera de mutex)
+    /// detectados al bloquear una tarea (F5.D.3). Telemetría observable por el
+    /// kernel; `rugus-core` no registra ni aborta (queda LOG-FREE).
+    deadlocks: u32,
+    /// Última arista que cerró un ciclo: `(tarea, mutex)` que la dejó bloqueada
+    /// formando el deadlock. `None` si nunca se detectó uno.
+    last_deadlock: Option<(u8, u8)>,
 }
 
 impl<A: Arch> Scheduler<A> {
@@ -366,6 +373,8 @@ impl<A: Arch> Scheduler<A> {
             condvars: [CondCb::new(); MAX_CONDVARS],
             barriers: [BarrierCb::new(); MAX_BARRIERS],
             event_groups: [EventGroupCb::new(); MAX_EVENT_GROUPS],
+            deadlocks: 0,
+            last_deadlock: None,
         }
     }
 
@@ -1472,9 +1481,60 @@ impl<A: Arch> Scheduler<A> {
                     self.tasks[me].assume_init_mut().state = TaskState::BlockedMutex(id as u8);
                 }
                 self.recompute_priority(owner as usize);
+                // F5.D.3: con la nueva arista `me`→mutex(id)→owner ya registrada,
+                // comprueba si se cerró un ciclo en el grafo de espera. Solo
+                // anota telemetría; no aborta para no romper el determinismo del
+                // kernel (queda LOG-FREE). El supervisor decide qué hacer.
+                if self.mutex_wait_cycle(me) {
+                    self.deadlocks = self.deadlocks.saturating_add(1);
+                    self.last_deadlock = Some((me as u8, id as u8));
+                }
                 false
             }
         }
+    }
+
+    /// Recorre el grafo de espera `tarea`→`mutex`→`dueño` desde `start` y
+    /// devuelve `true` si vuelve a `start`, es decir, si la última arista cerró
+    /// un ciclo (deadlock). Acotado a `MAX_TASKS` saltos: cualquier ciclo que
+    /// contenga `start` se cierra en ≤ `MAX_TASKS` pasos, y el tope evita un
+    /// bucle infinito si hubiera un ciclo que NO pasa por `start`.
+    ///
+    /// Detección, no prevención: se llama justo después de marcar `start` como
+    /// [`TaskState::BlockedMutex`], cuando la arista nueva es la que puede haber
+    /// creado el ciclo.
+    fn mutex_wait_cycle(&self, start: usize) -> bool {
+        let mut t = start;
+        for _ in 0..MAX_TASKS {
+            let mid = match self.task_ref(t).state {
+                TaskState::BlockedMutex(mid) => mid as usize,
+                // Cadena interrumpida: el dueño no espera ningún mutex → no hay
+                // ciclo a través de `start`.
+                _ => return false,
+            };
+            match self.mutexes[mid].owner {
+                // Mutex libre (carrera): sin dueño no hay arista que seguir.
+                None => return false,
+                Some(o) => {
+                    let o = o as usize;
+                    if o == start {
+                        return true;
+                    }
+                    t = o;
+                }
+            }
+        }
+        false
+    }
+
+    /// Nº de deadlocks (ciclos de espera de mutex) detectados desde el arranque.
+    pub fn deadlock_count(&self) -> u32 {
+        self.deadlocks
+    }
+
+    /// Última arista `(tarea, mutex)` que cerró un ciclo, o `None` si no hubo.
+    pub fn last_deadlock(&self) -> Option<(u8, u8)> {
+        self.last_deadlock
     }
 
     /// Elige el índice del waiter de mayor prioridad efectiva en `mask` (empate →

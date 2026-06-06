@@ -154,6 +154,7 @@ fn kernel_task() -> ! {
     let mut last_log_s = u32::MAX;
     let mut respawns = 0u32;
     let mut recoveries = 0u32;
+    let mut last_deadlocks = 0u32;
     let mut last_btn = exti::events();
     // Cadencia del kick del IWDG windowed: hay que alimentar DENTRO de la ventana
     // [~0.5 s, ~4 s] nominal tras la última recarga. Alimentar antes (bucle
@@ -225,6 +226,21 @@ fn kernel_task() -> ! {
                     }
                 }
             }
+        }
+        // Detección de deadlock (F5.D.3): si una toma de mutex cerró un ciclo en
+        // el grafo de espera, el contador del kernel sube. Lo anunciamos una vez
+        // por ciclo nuevo con la arista culpable; el kernel no aborta, solo anota.
+        let deadlocks = rugus_kernel::deadlock_count();
+        if deadlocks != last_deadlocks {
+            if let Some((task, mtx)) = rugus_kernel::last_deadlock() {
+                defmt::warn!(
+                    "supervisor: deadlock detectado (#{=u32}) tarea={=u8} mutex={=u8}",
+                    deadlocks,
+                    task,
+                    mtx
+                );
+            }
+            last_deadlocks = deadlocks;
         }
         let killed = rugus_kernel::killed_count();
         // SAFETY: los LEDs solo los toca esta tarea privilegiada, cooperativa.
