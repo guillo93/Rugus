@@ -350,6 +350,20 @@ pub fn cpu_event_wait(id: usize, mask: u32, wait_all: bool, timeout_ms: u32) -> 
     unsafe { scheduler_mut().event_wait(id, mask, wait_all, timeout_ms) }
 }
 
+/// Nº de deadlocks (ciclos de espera de mutex) detectados desde el arranque.
+///
+/// El detector (F5.D.3) anota cada vez que una toma de mutex cierra un ciclo en
+/// el grafo de espera `tarea`→`mutex`→`dueño`. No aborta: el supervisor puede
+/// vigilar este contador para registrar, alertar o autorreparar.
+pub fn deadlock_count() -> u32 {
+    scheduler_ref().deadlock_count()
+}
+
+/// Última arista `(tarea, mutex)` que cerró un ciclo de espera, o `None`.
+pub fn last_deadlock() -> Option<(u8, u8)> {
+    scheduler_ref().last_deadlock()
+}
+
 /// Arma la monitorización de liveness de la tarea `idx`: debe emitir un
 /// `checkin` cada `period_ms` ms como máximo o el supervisor la considerará
 /// colgada. Llamar desde `main` o desde el supervisor.

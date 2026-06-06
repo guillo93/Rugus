@@ -420,6 +420,77 @@ mod sync_tests {
     }
 
     #[test]
+    fn deadlock_cycle_is_detected_via_wait_graph() {
+        // Deadlock clásico de 2 tareas con 2 mutexes (orden de toma cruzado):
+        //   idx0 retiene m0 y pide m1 (de idx1) → se bloquea.
+        //   idx1 retiene m1 y pide m0 (de idx0) → cierra el ciclo del grafo de
+        //   espera owner→mutex. La detección (F5.D.3) debe anotarlo.
+        let mut s = Sched::new();
+        s.spawn(plain_stack(512), dummy_entry, Priority::App)
+            .unwrap(); // idx 0
+        s.spawn(plain_stack(512), dummy_entry, Priority::App)
+            .unwrap(); // idx 1
+        s.force_start_for_test();
+
+        // Sin contención todavía: ningún deadlock.
+        s.set_current_for_test(0);
+        assert!(s.mutex_acquire_for_test(0)); // idx0 ← m0
+        s.set_current_for_test(1);
+        assert!(s.mutex_acquire_for_test(1)); // idx1 ← m1
+        assert_eq!(s.deadlock_count(), 0);
+
+        // idx0 pide m1 (de idx1) → se bloquea, pero aún no hay ciclo (idx1 corre).
+        s.set_current_for_test(0);
+        assert!(!s.mutex_acquire_for_test(1));
+        assert!(s.is_blocked_on_mutex_for_test(0, 1));
+        assert_eq!(s.deadlock_count(), 0, "una sola arista no cierra ciclo");
+
+        // idx1 pide m0 (de idx0) → cierra el ciclo: deadlock detectado.
+        s.set_current_for_test(1);
+        assert!(!s.mutex_acquire_for_test(0));
+        assert!(s.is_blocked_on_mutex_for_test(1, 0));
+        assert_eq!(s.deadlock_count(), 1, "el ciclo idx0↔idx1 debe detectarse");
+        assert_eq!(
+            s.last_deadlock(),
+            Some((1, 0)),
+            "la arista que cerró el ciclo es (idx1, m0)"
+        );
+    }
+
+    #[test]
+    fn linear_blocking_chain_is_not_a_deadlock() {
+        // Cadena lineal de 3 niveles SIN ciclo (la misma del test de PI
+        // transitiva): nadie espera un mutex que retenga una tarea aguas abajo,
+        // así que el detector NO debe marcar deadlock.
+        let mut s = Sched::new();
+        s.spawn(plain_stack(512), dummy_entry, Priority::App)
+            .unwrap(); // idx 0
+        s.spawn(plain_stack(512), dummy_entry, Priority::Service)
+            .unwrap(); // idx 1
+        s.spawn(plain_stack(512), dummy_entry, Priority::Kernel)
+            .unwrap(); // idx 2
+        s.force_start_for_test();
+
+        s.set_current_for_test(0);
+        assert!(s.mutex_acquire_for_test(0)); // idx0 ← m0
+        s.set_current_for_test(1);
+        assert!(s.mutex_acquire_for_test(1)); // idx1 ← m1
+
+        // idx1 espera m0 (de idx0); idx2 espera m1 (de idx1). Cadena abierta.
+        s.set_current_for_test(1);
+        assert!(!s.mutex_acquire_for_test(0));
+        s.set_current_for_test(2);
+        assert!(!s.mutex_acquire_for_test(1));
+
+        assert_eq!(
+            s.deadlock_count(),
+            0,
+            "una cadena lineal de bloqueo no es un deadlock"
+        );
+        assert_eq!(s.last_deadlock(), None);
+    }
+
+    #[test]
     fn mutex_unlock_by_non_owner_is_denied() {
         let mut s = Sched::new();
         s.spawn(plain_stack(512), dummy_entry, Priority::Kernel)
