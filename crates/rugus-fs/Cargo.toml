@@ -8,6 +8,14 @@ license.workspace      = true
 authors.workspace      = true
 repository.workspace   = true
 
+# Los tests de lógica viven en el workspace host `rugus-host-tests` (excluido del
+# workspace embebido) para que `cargo clippy --all-targets --target thumbv7*` no
+# intente compilar el harness de test (std) en un target no_std. Mismo patrón que
+# `rugus-net`.
+[lib]
+test  = false
+bench = false
+
 [dependencies]
 rugus-hal = { workspace = true }
 heapless  = { workspace = true }

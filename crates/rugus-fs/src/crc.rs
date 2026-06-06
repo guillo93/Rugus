@@ -16,19 +16,3 @@ pub fn crc32(data: &[u8]) -> u32 {
     }
     !crc
 }
-
-#[cfg(test)]
-mod tests {
-    use super::crc32;
-
-    #[test]
-    fn vector_check() {
-        // Vector estándar: CRC-32 de "123456789" = 0xCBF43926.
-        assert_eq!(crc32(b"123456789"), 0xCBF4_3926);
-    }
-
-    #[test]
-    fn empty_is_zero() {
-        assert_eq!(crc32(b""), 0);
-    }
-}

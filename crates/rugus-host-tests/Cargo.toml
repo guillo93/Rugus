@@ -20,3 +20,9 @@ name = "rugus_host_tests"
 # este crate está EXCLUIDO del workspace embebido, esa feature no se filtra a los
 # binarios del kernel (la unificación de features no cruza la frontera).
 rugus-core = { path = "../rugus-core", features = ["test-util"] }
+
+[dev-dependencies]
+# La FS log-structured se testea aquí (workspace host) con el backend RAM-NOR
+# (`mock`); en el workspace embebido `rugus-fs` lleva `test = false`.
+rugus-fs  = { path = "../rugus-fs", features = ["mock"] }
+rugus-hal = { path = "../rugus-hal" }
