@@ -24,3 +24,10 @@ rugus-hal           = { workspace = true }
 rugus-hal-stm32f4   = { workspace = true, features = ["stm32f407"] }
 rugus-core          = { workspace = true, features = ["log", "alloc"] }
 rugus-arch-cortex-m = { workspace = true, features = ["defmt"] }
+
+[features]
+# Perfil de bajo consumo (producción, sin debugger): el supervisor duerme con
+# `cpu_sleep_ms` y el scheduler entra en WFI real cuando no queda otra tarea
+# lista. Por defecto (off) se usa busy-wait paced para preservar RTT en
+# desarrollo. RTT no está disponible bajo `lowpower` por diseño.
+lowpower = []

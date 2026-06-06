@@ -61,7 +61,15 @@ const GOOD_IDX: usize = 2;
 
 /// Cadencia de muestreo del supervisor (~40 ms a 216 MHz): suficientemente
 /// fino para que cada LED dibuje su patrón propio sin entrar en `wfi`.
+/// Solo en el perfil por defecto (busy-wait paced, RTT-friendly).
+#[cfg(not(feature = "lowpower"))]
 const SAMPLE_CYCLES: u32 = 216_000_000 / 25;
+
+/// Periodo de sueño del supervisor en el perfil `lowpower` (~40 ms): mismo ritmo
+/// de muestreo que el busy-wait, pero cediendo el CPU con `cpu_sleep_ms` para que
+/// el scheduler entre en WFI real cuando no quede otra tarea lista.
+#[cfg(feature = "lowpower")]
+const SAMPLE_MS: u32 = 40;
 
 /// Mensaje IPC "conmuta el LED de userland": good_app lo envía por syscall y el
 /// supervisor privilegiado lo ejecuta sobre el GPIO. Protocolo opaco al kernel.
@@ -258,12 +266,25 @@ fn kernel_task() -> ! {
             last_log_s = now_s;
             defmt::debug!("supervisor: alive killed={=usize} @ {=u32} ms", killed, now);
         }
-        // Muestreo ACTIVO (paced busy-wait + yield), no `sleep`: mantiene una
-        // tarea siempre lista para que el scheduler no entre en `wfi`. En
-        // Cortex-M el WFI apaga el reloj de debug y ST-Link/probe-rs pierde RTT.
-        // La ruta de bajo consumo (sleep/wake real) la ejercita `good_app`.
-        cortex_m::asm::delay(SAMPLE_CYCLES);
-        rugus_kernel::cpu_yield();
+        // Idle del supervisor. Dos perfiles seleccionables en build:
+        //
+        // - Por defecto (DESARROLLO): muestreo ACTIVO (paced busy-wait + yield),
+        //   NO `sleep`. Mantiene una tarea siempre lista para que el scheduler no
+        //   entre en `wfi`: en Cortex-M el WFI apaga el reloj de debug y
+        //   ST-Link/probe-rs pierde RTT. Prioriza la observabilidad por RTT.
+        //
+        // - Feature `lowpower` (PRODUCCIÓN, sin debugger): el supervisor duerme
+        //   con `cpu_sleep_ms`. Sin hog_app en esta placa, al dormir el supervisor
+        //   y good_app TODAS las tareas quedan durmientes → el scheduler entra en
+        //   WFI real (bajo consumo, tickless-lite: el core duerme entre ticks de
+        //   SysTick). RTT no está disponible por diseño en este perfil.
+        #[cfg(not(feature = "lowpower"))]
+        {
+            cortex_m::asm::delay(SAMPLE_CYCLES);
+            rugus_kernel::cpu_yield();
+        }
+        #[cfg(feature = "lowpower")]
+        rugus_kernel::cpu_sleep_ms(SAMPLE_MS);
     }
 }
 
