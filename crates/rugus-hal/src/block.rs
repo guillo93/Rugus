@@ -9,9 +9,9 @@
 //! - **read**: lectura de bytes arbitrarios en cualquier dirección.
 //! - **program**: escritura que solo puede pasar bits de `1`→`0`; el llamante
 //!   debe haber borrado antes la zona. Granularidad de página
-//!   ([`BlockDevice::PROG_SIZE`], típicamente 256 B en NOR).
+//!   ([`BlockDevice::prog_size`], típicamente 256 B en NOR).
 //! - **erase**: pone una región a todos-`1` (`0xFF`). Granularidad de sector
-//!   ([`BlockDevice::ERASE_SIZE`], típicamente 4 KiB en NOR).
+//!   ([`BlockDevice::erase_size`], típicamente 4 KiB en NOR).
 //!
 //! Las direcciones y longitudes se expresan en bytes desde el inicio del medio.
 
