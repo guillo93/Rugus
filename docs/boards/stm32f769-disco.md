@@ -40,6 +40,8 @@ at `192.168.0.112:8443` — see
 | `app-sandbox-stm32f769-disco` | G2 |
 | `eth-link-stm32f769-disco` | G4 step 1 |
 | `https-get-stm32f769-disco` | G4 |
+| `net-service-stm32f769-disco` | F5.B.1 (pila IP como servicio) |
+| `net-userland-stm32f769-disco` | F5.B.2 (sockets UDP+TCP cliente userland por syscall+IPC bajo MPU) |
 
 ## Multi-board lab
 
