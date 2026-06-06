@@ -1073,32 +1073,65 @@ impl<A: Arch> Scheduler<A> {
         best
     }
 
-    /// Recalcula la prioridad efectiva de la tarea `t`: su base, elevada a la
-    /// prioridad efectiva más alta entre los waiters de TODOS los mutexes que
-    /// retiene. Núcleo de la herencia de prioridad.
-    fn recompute_priority(&mut self, t: usize) {
-        let mut eff = self.task_ref(t).base_priority as u8;
-        for id in 0..MAX_MUTEXES {
-            if self.mutexes[id].owner == Some(t as u8) {
-                let mut w = self.mutexes[id].waiters;
-                while w != 0 {
-                    let i = w.trailing_zeros() as usize;
-                    w &= w - 1;
-                    let wp = self.task_ref(i).priority as u8;
-                    if wp < eff {
-                        eff = wp;
+    /// Recalcula la prioridad efectiva de la tarea `start` y **propaga la
+    /// herencia de forma transitiva** por la cadena de bloqueo owner→owner.
+    ///
+    /// Núcleo de la herencia de prioridad. Para cada tarea de la cadena, su
+    /// prioridad efectiva es su base elevada a la efectiva más alta entre los
+    /// waiters de TODOS los mutexes que retiene. Como en el bucle interno se lee
+    /// la prioridad EFECTIVA de cada waiter, un waiter ya elevado contribuye su
+    /// boost (transitividad en el VALOR). Lo que añade esta versión sobre la
+    /// herencia de un solo nivel es la PROPAGACIÓN ascendente: si al recalcular
+    /// `t` su prioridad cambia y `t` está a su vez `BlockedMutex` esperando un
+    /// mutex que retiene otra tarea, esa otra tarea (su dueño) también debe
+    /// reevaluarse, y así sucesivamente. Esto resuelve la inversión de prioridad
+    /// encadenada (A espera mutex de B, que espera mutex de C): el boost de A
+    /// llega hasta C.
+    ///
+    /// El walk está ACOTADO a `MAX_TASKS` saltos: una cadena de bloqueo legítima
+    /// no puede ser más larga que el nº de tareas, y el tope corta en seco un
+    /// eventual ciclo (deadlock de lógica) sin colgar el kernel. Además se corta
+    /// en cuanto un nivel no cambia de prioridad (punto fijo alcanzado).
+    fn recompute_priority(&mut self, start: usize) {
+        let mut t = start;
+        for _ in 0..MAX_TASKS {
+            let mut eff = self.task_ref(t).base_priority as u8;
+            for id in 0..MAX_MUTEXES {
+                if self.mutexes[id].owner == Some(t as u8) {
+                    let mut w = self.mutexes[id].waiters;
+                    while w != 0 {
+                        let i = w.trailing_zeros() as usize;
+                        w &= w - 1;
+                        let wp = self.task_ref(i).priority as u8;
+                        if wp < eff {
+                            eff = wp;
+                        }
                     }
                 }
             }
-        }
-        let p = match eff {
-            0 => Priority::Kernel,
-            1 => Priority::Service,
-            _ => Priority::App,
-        };
-        // SAFETY: t < count; slot inicializado en spawn.
-        unsafe {
-            self.tasks[t].assume_init_mut().priority = p;
+            let p = match eff {
+                0 => Priority::Kernel,
+                1 => Priority::Service,
+                _ => Priority::App,
+            };
+            let changed = (self.task_ref(t).priority as u8) != (p as u8);
+            // SAFETY: t < count; slot inicializado en spawn.
+            unsafe {
+                self.tasks[t].assume_init_mut().priority = p;
+            }
+            // Punto fijo: si este nivel no cambió, los de arriba tampoco lo harán.
+            if !changed {
+                break;
+            }
+            // Propaga hacia arriba: si `t` espera un mutex de otra tarea, su dueño
+            // hereda el cambio. Si `t` no está bloqueado en un mutex, fin de cadena.
+            match self.task_ref(t).state {
+                TaskState::BlockedMutex(mid) => match self.mutexes[mid as usize].owner {
+                    Some(o) if (o as usize) != t => t = o as usize,
+                    _ => break,
+                },
+                _ => break,
+            }
         }
     }
 
