@@ -305,6 +305,51 @@ pub fn cpu_condvar_broadcast(cv: usize) -> i32 {
     unsafe { scheduler_mut().condvar_broadcast(cv) }
 }
 
+/// Configura la barrera `id` para que abra al converger `threshold` tareas.
+/// Llamar desde `main` antes de [`start`].
+///
+/// # Safety
+///
+/// Solo desde `main`, single-thread, antes de lanzar tareas.
+pub unsafe fn barrier_init(id: usize, threshold: u32) {
+    // SAFETY: arranque single-thread garantizado por el caller.
+    unsafe { scheduler_mut().barrier_init(id, threshold) }
+}
+
+/// Espera en la barrera `id` desde una tarea privilegiada: bloquea hasta que
+/// converjan `threshold` tareas. Cooperativo.
+pub fn cpu_barrier_wait(id: usize) -> i32 {
+    // SAFETY: scheduler poseído; cooperativo sin reentrada concurrente.
+    unsafe { scheduler_mut().barrier_wait(id) }
+}
+
+/// Fija (OR) `bits` en el grupo de eventos `id` y despierta a las tareas cuya
+/// espera quede satisfecha.
+pub fn cpu_event_set(id: usize, bits: u32) -> i32 {
+    // SAFETY: scheduler poseído; cooperativo sin reentrada concurrente.
+    unsafe { scheduler_mut().event_set(id, bits) }
+}
+
+/// Limpia (AND-NOT) `bits` del grupo de eventos `id`.
+pub fn cpu_event_clear(id: usize, bits: u32) -> i32 {
+    // SAFETY: igual que cpu_event_set.
+    unsafe { scheduler_mut().event_clear(id, bits) }
+}
+
+/// Bits actualmente fijados en el grupo de eventos `id`.
+pub fn cpu_event_get(id: usize) -> u32 {
+    // SAFETY: igual que cpu_event_set.
+    unsafe { scheduler_mut().event_get(id) }
+}
+
+/// Espera bits en el grupo de eventos `id` desde una tarea privilegiada.
+/// `wait_all`: todos los bits de `mask` (`true`) o cualquiera (`false`).
+/// `timeout_ms`: `0` no bloquea, `u32::MAX` indefinido. Cooperativo.
+pub fn cpu_event_wait(id: usize, mask: u32, wait_all: bool, timeout_ms: u32) -> i32 {
+    // SAFETY: scheduler poseído; cooperativo sin reentrada concurrente.
+    unsafe { scheduler_mut().event_wait(id, mask, wait_all, timeout_ms) }
+}
+
 /// Arma la monitorización de liveness de la tarea `idx`: debe emitir un
 /// `checkin` cada `period_ms` ms como máximo o el supervisor la considerará
 /// colgada. Llamar desde `main` o desde el supervisor.
@@ -398,6 +443,26 @@ pub unsafe fn sync_selftest() -> bool {
     ok &= s.condvar_signal(0) == 0;
     ok &= s.condvar_broadcast(0) == 0;
     ok &= s.condvar_wait(0, 0, 0) == Errno::Ebusy as i32;
+    // Barreras y grupos de eventos (F5.D.2), rutas no bloqueantes verificables sin
+    // arrancar: id fuera de rango → Einval; barrera sin configurar (threshold 0) →
+    // Einval. Con threshold válido pero el scheduler aún parado, barrier_wait degrada
+    // a Ebusy. Los eventos validan id, y un roundtrip set→get→clear comprueba la
+    // máscara de bits. La semántica de bloqueo/apertura/timeout real se cubre en
+    // `rugus-host-tests`.
+    ok &= s.barrier_wait(99) == Errno::Einval as i32;
+    ok &= s.barrier_wait(0) == Errno::Einval as i32; // sin configurar
+    s.barrier_init(0, 2);
+    ok &= s.barrier_wait(0) == Errno::Ebusy as i32; // configurada pero sin start
+    s.barrier_init(0, 0); // restaura desconfigurada para uso real
+    ok &= s.event_set(99, 1) == Errno::Einval as i32;
+    ok &= s.event_wait(99, 1, false, 0) == Errno::Einval as i32;
+    ok &= s.event_clear(99, 1) == Errno::Einval as i32;
+    ok &= s.event_set(0, 0b1010) == 0;
+    ok &= s.event_get(0) == 0b1010;
+    ok &= s.event_wait(0, 0b0010, false, 0) == 0; // ya satisfecho → no bloquea
+    ok &= s.event_wait(0, 0b0100, false, 0) == Errno::Ebusy as i32; // no satisfecho
+    ok &= s.event_clear(0, 0b1010) == 0;
+    ok &= s.event_get(0) == 0; // limpio para el uso real
     ok
 }
 

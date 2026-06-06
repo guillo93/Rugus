@@ -23,6 +23,12 @@ pub const MAX_CHANNELS: usize = 4;
 /// Máximo de variables de condición gestionadas por el kernel.
 pub const MAX_CONDVARS: usize = 4;
 
+/// Máximo de barreras de sincronización gestionadas por el kernel.
+pub const MAX_BARRIERS: usize = 2;
+
+/// Máximo de grupos de eventos (event groups) gestionados por el kernel.
+pub const MAX_EVENT_GROUPS: usize = 2;
+
 /// Capacidad (mensajes en vuelo) del buffer de cada canal IPC.
 pub const CHAN_CAPACITY: usize = 4;
 
@@ -85,6 +91,13 @@ enum TaskState {
     /// vencimiento de su plazo (`block_deadline`). Al reanudar, `condvar_wait`
     /// re-adquiere incondicionalmente el mutex asociado.
     BlockedCond(u8),
+    /// Bloqueada en una barrera (índice) esperando a que lleguen las demás. La
+    /// libera la última tarea que alcanza el umbral ([`Scheduler::barrier_wait`]).
+    BlockedBarrier(u8),
+    /// Bloqueada esperando bits en un grupo de eventos (índice). La despierta un
+    /// [`Scheduler::event_set`] que satisface su máscara (`event_mask`/
+    /// `event_wait_all`) o el vencimiento de su plazo (`block_deadline`).
+    BlockedEvent(u8),
     Killed,
 }
 
@@ -205,6 +218,53 @@ impl CondCb {
     }
 }
 
+/// Bloque de control de una barrera de sincronización de N tareas.
+///
+/// Las tareas que llaman a [`Scheduler::barrier_wait`] se acumulan bloqueadas
+/// hasta que su número alcanza `threshold`; entonces la última en llegar las
+/// libera a todas de golpe y la barrera se reinicia (reutilizable por ciclos).
+#[derive(Clone, Copy)]
+struct BarrierCb {
+    /// Número de tareas que deben converger para abrir la barrera. `0` = barrera
+    /// sin configurar (cualquier `barrier_wait` la trata como no inicializada).
+    threshold: u8,
+    /// Bitmask de tareas actualmente bloqueadas en la barrera (las "llegadas").
+    waiters: u8,
+}
+
+impl BarrierCb {
+    const fn new() -> Self {
+        Self {
+            threshold: 0,
+            waiters: 0,
+        }
+    }
+}
+
+/// Bloque de control de un grupo de eventos (event group): un conjunto de bits
+/// de evento que varias tareas pueden fijar/limpiar y por los que otras esperan.
+///
+/// Cada tarea que espera ([`Scheduler::event_wait`]) registra una máscara y un
+/// modo (cualquier bit / todos los bits); [`Scheduler::event_set`] despierta a
+/// las que su condición quede satisfecha. La limpieza de bits es explícita
+/// ([`Scheduler::event_clear`]), de semántica predecible (sin auto-clear).
+#[derive(Clone, Copy)]
+struct EventGroupCb {
+    /// Bits de evento actualmente fijados (1 = activo).
+    bits: u8,
+    /// Bitmask de tareas bloqueadas esperando en este grupo.
+    waiters: u8,
+}
+
+impl EventGroupCb {
+    const fn new() -> Self {
+        Self {
+            bits: 0,
+            waiters: 0,
+        }
+    }
+}
+
 struct TaskSlot<A: Arch> {
     context: A::Context,
     /// Prioridad EFECTIVA usada por [`Scheduler::pick_next`]. Puede subir por
@@ -240,6 +300,13 @@ struct TaskSlot<A: Arch> {
     /// [`Scheduler::liveness_checkin`]; el monitor declara colgada a la tarea si
     /// el reloj lo rebasa. `None` si no está monitorizada.
     liveness_deadline: Option<u32>,
+    /// Máscara de bits que la tarea espera mientras está `BlockedEvent`. Solo
+    /// válida en ese estado; fuera de él se ignora.
+    event_mask: u8,
+    /// Modo de espera de eventos: `true` exige que TODOS los bits de
+    /// `event_mask` estén fijados; `false`, que esté CUALQUIERA. Solo válido en
+    /// `BlockedEvent`.
+    event_wait_all: bool,
 }
 
 /// Número de bandas de prioridad (ver [`Priority`]).
@@ -277,6 +344,10 @@ pub struct Scheduler<A: Arch> {
     channels: [ChanCb; MAX_CHANNELS],
     /// Bloques de control de variables de condición (id = índice).
     condvars: [CondCb; MAX_CONDVARS],
+    /// Bloques de control de barreras de sincronización (id = índice).
+    barriers: [BarrierCb; MAX_BARRIERS],
+    /// Bloques de control de grupos de eventos (id = índice).
+    event_groups: [EventGroupCb; MAX_EVENT_GROUPS],
 }
 
 impl<A: Arch> Scheduler<A> {
@@ -293,6 +364,8 @@ impl<A: Arch> Scheduler<A> {
             semaphores: [SemCb::new(); MAX_SEMAPHORES],
             channels: [ChanCb::new(); MAX_CHANNELS],
             condvars: [CondCb::new(); MAX_CONDVARS],
+            barriers: [BarrierCb::new(); MAX_BARRIERS],
+            event_groups: [EventGroupCb::new(); MAX_EVENT_GROUPS],
         }
     }
 
@@ -364,6 +437,8 @@ impl<A: Arch> Scheduler<A> {
             block_deadline: None,
             liveness_period: None,
             liveness_deadline: None,
+            event_mask: 0,
+            event_wait_all: false,
         };
         self.tasks[self.count].write(slot);
         let id = TaskId(self.count as u8);
@@ -633,6 +708,12 @@ impl<A: Arch> Scheduler<A> {
         }
         for id in 0..MAX_CONDVARS {
             self.condvars[id].waiters &= !bit;
+        }
+        for id in 0..MAX_BARRIERS {
+            self.barriers[id].waiters &= !bit;
+        }
+        for id in 0..MAX_EVENT_GROUPS {
+            self.event_groups[id].waiters &= !bit;
         }
     }
 
@@ -952,6 +1033,182 @@ impl<A: Arch> Scheduler<A> {
             self.yield_now();
         }
         0
+    }
+
+    // --- Barreras de sincronización (F5.D.2) ---
+
+    /// Configura la barrera `id` para que abra cuando converjan `threshold`
+    /// tareas. `threshold` se acota a [`MAX_TASKS`]; `0` deja la barrera sin
+    /// configurar. Llamar desde `main` antes de arrancar. No-op si `id` no existe.
+    pub fn barrier_init(&mut self, id: usize, threshold: u32) {
+        if id < MAX_BARRIERS {
+            self.barriers[id].threshold = threshold.min(MAX_TASKS as u32) as u8;
+            self.barriers[id].waiters = 0;
+        }
+    }
+
+    /// Registra la llegada de la tarea `me` a la barrera `id` (bajo sección
+    /// crítica) y, si con ella se alcanza el umbral, libera a TODAS las llegadas y
+    /// reinicia la barrera. Devuelve `true` si la barrera abrió (la tarea NO se
+    /// bloquea), `false` si quedó bloqueada esperando a las demás.
+    fn barrier_arrive(&mut self, id: usize, me: usize) -> bool {
+        let guard = A::enter_critical();
+        self.barriers[id].waiters |= 1 << me;
+        let opened = (self.barriers[id].waiters.count_ones() as u8) >= self.barriers[id].threshold;
+        if opened {
+            let mut w = self.barriers[id].waiters;
+            self.barriers[id].waiters = 0;
+            while w != 0 {
+                let i = w.trailing_zeros() as usize;
+                w &= w - 1;
+                // SAFETY: i < count; slot inicializado en spawn.
+                unsafe {
+                    self.tasks[i].assume_init_mut().state = TaskState::Ready;
+                }
+            }
+        } else {
+            // SAFETY: me < count; slot inicializado en spawn.
+            unsafe {
+                self.tasks[me].assume_init_mut().state = TaskState::BlockedBarrier(id as u8);
+            }
+        }
+        A::exit_critical(guard);
+        opened
+    }
+
+    /// Espera en la barrera `id`: bloquea hasta que `threshold` tareas hayan
+    /// llamado, momento en que todas se reanudan. Reutilizable (la barrera se
+    /// reinicia al abrir). Devuelve 0, [`Errno::Einval`](crate::Errno) si `id` no
+    /// existe o no está configurada, o [`Errno::Ebusy`](crate::Errno) si el
+    /// scheduler aún no arrancó (no se puede bloquear).
+    pub fn barrier_wait(&mut self, id: usize) -> i32 {
+        if id >= MAX_BARRIERS || self.barriers[id].threshold == 0 {
+            return crate::Errno::Einval as i32;
+        }
+        if !self.started {
+            return crate::Errno::Ebusy as i32;
+        }
+        let me = self.current;
+        if self.barrier_arrive(id, me) {
+            // Última en llegar: abrió la barrera. Cede para que las recién
+            // liberadas (quizá de mayor prioridad) corran de inmediato.
+            self.yield_now();
+        } else {
+            self.switch_until_ready(me);
+        }
+        0
+    }
+
+    // --- Grupos de eventos / event groups (F5.D.2) ---
+
+    /// `true` si los `bits` actuales satisfacen la espera de `mask` en el modo
+    /// dado: `all` exige todos los bits de la máscara; si no, basta cualquiera.
+    fn event_satisfied(bits: u8, mask: u8, all: bool) -> bool {
+        if all {
+            (bits & mask) == mask
+        } else {
+            (bits & mask) != 0
+        }
+    }
+
+    /// Fija (OR) los `bits` indicados en el grupo de eventos `id` y despierta a
+    /// todas las tareas cuya condición de espera quede satisfecha. No limpia bits
+    /// (semántica manual, ver [`Self::event_clear`]). Devuelve 0 o
+    /// [`Errno::Einval`](crate::Errno) si `id` no existe.
+    pub fn event_set(&mut self, id: usize, bits: u32) -> i32 {
+        if id >= MAX_EVENT_GROUPS {
+            return crate::Errno::Einval as i32;
+        }
+        let guard = A::enter_critical();
+        self.event_groups[id].bits |= bits as u8;
+        let cur = self.event_groups[id].bits;
+        let mut w = self.event_groups[id].waiters;
+        let mut woke = false;
+        while w != 0 {
+            let i = w.trailing_zeros() as usize;
+            w &= w - 1;
+            let (tm, ta) = {
+                let s = self.task_ref(i);
+                (s.event_mask, s.event_wait_all)
+            };
+            if Self::event_satisfied(cur, tm, ta) {
+                self.event_groups[id].waiters &= !(1 << i);
+                // SAFETY: i < count; slot inicializado en spawn.
+                unsafe {
+                    let slot = self.tasks[i].assume_init_mut();
+                    slot.state = TaskState::Ready;
+                    slot.block_deadline = None;
+                }
+                woke = true;
+            }
+        }
+        A::exit_critical(guard);
+        if woke && self.started {
+            self.yield_now();
+        }
+        0
+    }
+
+    /// Limpia (AND-NOT) los `bits` indicados del grupo de eventos `id`. Devuelve 0
+    /// o [`Errno::Einval`](crate::Errno) si `id` no existe.
+    pub fn event_clear(&mut self, id: usize, bits: u32) -> i32 {
+        if id >= MAX_EVENT_GROUPS {
+            return crate::Errno::Einval as i32;
+        }
+        self.event_groups[id].bits &= !(bits as u8);
+        0
+    }
+
+    /// Bits de evento actualmente fijados en el grupo `id` (0 si `id` no existe).
+    pub fn event_get(&self, id: usize) -> u32 {
+        if id >= MAX_EVENT_GROUPS {
+            return 0;
+        }
+        self.event_groups[id].bits as u32
+    }
+
+    /// Espera bits en el grupo de eventos `id`. `wait_all`: `true` exige TODOS los
+    /// bits de `mask`; `false`, CUALQUIERA. `timeout_ms`: `0` no bloquea,
+    /// [`TIMEOUT_FOREVER`] sin plazo, otro = plazo relativo. NO limpia los bits al
+    /// volver (el llamante decide con [`Self::event_clear`]). Devuelve 0 si la
+    /// condición se cumplió, [`Errno::Ebusy`](crate::Errno) si `timeout_ms==0` y no
+    /// estaba lista, [`Errno::Etimedout`](crate::Errno) si venció el plazo, o
+    /// [`Errno::Einval`](crate::Errno) si `id` no existe.
+    pub fn event_wait(&mut self, id: usize, mask: u32, wait_all: bool, timeout_ms: u32) -> i32 {
+        if id >= MAX_EVENT_GROUPS {
+            return crate::Errno::Einval as i32;
+        }
+        let me = self.current;
+        let m = mask as u8;
+        let deadline = Self::block_deadline(timeout_ms);
+        loop {
+            let guard = A::enter_critical();
+            if Self::event_satisfied(self.event_groups[id].bits, m, wait_all) {
+                A::exit_critical(guard);
+                return 0;
+            }
+            if timeout_ms == 0 || !self.started {
+                A::exit_critical(guard);
+                return crate::Errno::Ebusy as i32;
+            }
+            if let Some(d) = deadline {
+                if A::now_ms().wrapping_sub(d) as i32 >= 0 {
+                    A::exit_critical(guard);
+                    return crate::Errno::Etimedout as i32;
+                }
+            }
+            self.event_groups[id].waiters |= 1 << me;
+            // SAFETY: me < count; slot inicializado en spawn.
+            unsafe {
+                let slot = self.tasks[me].assume_init_mut();
+                slot.state = TaskState::BlockedEvent(id as u8);
+                slot.event_mask = m;
+                slot.event_wait_all = wait_all;
+                slot.block_deadline = deadline;
+            }
+            A::exit_critical(guard);
+            self.switch_until_ready(me);
+        }
     }
 
     /// Inicializa el semáforo `id` con `count` permisos. Llamar desde `main`
@@ -1401,6 +1658,8 @@ impl<A: Arch> Scheduler<A> {
             TaskState::BlockedRecv(_) => "B-RCV",
             TaskState::BlockedSend(_) => "B-SND",
             TaskState::BlockedCond(_) => "B-CND",
+            TaskState::BlockedBarrier(_) => "B-BAR",
+            TaskState::BlockedEvent(_) => "B-EVT",
             TaskState::Killed => "KILL",
         }
     }
@@ -1499,6 +1758,22 @@ impl<A: Arch> Scheduler<A> {
                     if let Some(deadline) = self.task_ref(i).block_deadline {
                         if now.wrapping_sub(deadline) as i32 >= 0 {
                             self.condvars[cv as usize].waiters &= !(1u8 << i);
+                            // SAFETY: i < count; slot inicializado en spawn.
+                            unsafe {
+                                let slot = self.tasks[i].assume_init_mut();
+                                slot.state = TaskState::Ready;
+                                slot.block_deadline = None;
+                            }
+                        }
+                    }
+                }
+                // Espera de eventos con plazo: al vencer se quita de la lista de
+                // waiters del grupo y se marca lista. `event_wait` re-evalúa la
+                // condición (falsa) y, al ver el plazo vencido, devuelve Etimedout.
+                TaskState::BlockedEvent(eg) => {
+                    if let Some(deadline) = self.task_ref(i).block_deadline {
+                        if now.wrapping_sub(deadline) as i32 >= 0 {
+                            self.event_groups[eg as usize].waiters &= !(1u8 << i);
                             // SAFETY: i < count; slot inicializado en spawn.
                             unsafe {
                                 let slot = self.tasks[i].assume_init_mut();
@@ -1703,6 +1978,52 @@ impl<A: Arch> Scheduler<A> {
     #[cfg(feature = "test-util")]
     pub fn cond_waiters_for_test(&self, cv: usize) -> u32 {
         self.condvars[cv].waiters.count_ones()
+    }
+
+    /// Registra la llegada de la tarea actual a la barrera `id` sin el bucle de
+    /// conmutación (que en el host no progresaría). `true` si la barrera abrió.
+    ///
+    /// Solo con la feature `test-util`.
+    #[cfg(feature = "test-util")]
+    pub fn barrier_arrive_for_test(&mut self, id: usize) -> bool {
+        let me = self.current;
+        self.barrier_arrive(id, me)
+    }
+
+    /// `true` si la tarea `idx` está bloqueada en la barrera `id`.
+    ///
+    /// Solo con la feature `test-util`.
+    #[cfg(feature = "test-util")]
+    pub fn is_blocked_on_barrier_for_test(&self, idx: usize, id: usize) -> bool {
+        idx < self.count && self.task_ref(idx).state == TaskState::BlockedBarrier(id as u8)
+    }
+
+    /// `true` si la tarea `idx` está bloqueada esperando en el grupo de eventos
+    /// `id`.
+    ///
+    /// Solo con la feature `test-util`.
+    #[cfg(feature = "test-util")]
+    pub fn is_blocked_on_event_for_test(&self, idx: usize, id: usize) -> bool {
+        idx < self.count && self.task_ref(idx).state == TaskState::BlockedEvent(id as u8)
+    }
+
+    /// Bloquea la tarea actual esperando `mask` en el grupo de eventos `id` con
+    /// plazo absoluto `deadline` (solo la contabilidad, sin el bucle de
+    /// conmutación). Permite probar `event_set` y el vencimiento por timeout.
+    ///
+    /// Solo con la feature `test-util`.
+    #[cfg(feature = "test-util")]
+    pub fn block_event_for_test(&mut self, id: usize, mask: u32, wait_all: bool, deadline: u32) {
+        let me = self.current;
+        self.event_groups[id].waiters |= 1 << me;
+        // SAFETY: me < count; slot inicializado en spawn.
+        unsafe {
+            let slot = self.tasks[me].assume_init_mut();
+            slot.state = TaskState::BlockedEvent(id as u8);
+            slot.event_mask = mask as u8;
+            slot.event_wait_all = wait_all;
+            slot.block_deadline = Some(deadline);
+        }
     }
 }
 
