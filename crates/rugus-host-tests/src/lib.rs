@@ -325,6 +325,55 @@ mod sync_tests {
     }
 
     #[test]
+    fn priority_inheritance_propagates_transitively() {
+        // Cadena de bloqueo de 3 niveles (inversión de prioridad encadenada):
+        //   idx2 (Kernel) espera m1 ── que retiene idx1 (Service)
+        //   idx1 (Service) espera m0 ── que retiene idx0 (App)
+        // La herencia DEBE propagarse transitivamente: el boost de idx2 tiene que
+        // llegar hasta idx0 (Kernel), no quedarse en idx1 (herencia de un nivel).
+        let mut s = Sched::new();
+        s.spawn(plain_stack(512), dummy_entry, Priority::App)
+            .unwrap(); // idx 0 (baja)
+        s.spawn(plain_stack(512), dummy_entry, Priority::Service)
+            .unwrap(); // idx 1 (media)
+        s.spawn(plain_stack(512), dummy_entry, Priority::Kernel)
+            .unwrap(); // idx 2 (alta)
+        s.force_start_for_test();
+
+        // idx0 toma m0; idx1 toma m1.
+        s.set_current_for_test(0);
+        assert!(s.mutex_acquire_for_test(0));
+        s.set_current_for_test(1);
+        assert!(s.mutex_acquire_for_test(1));
+
+        // idx1 intenta m0 (de idx0) → se bloquea; idx0 hereda Service.
+        s.set_current_for_test(1);
+        assert!(!s.mutex_acquire_for_test(0));
+        assert!(s.is_blocked_on_mutex_for_test(1, 0));
+        assert_eq!(s.task_priority(0), Priority::Service as u8);
+
+        // idx2 intenta m1 (de idx1) → se bloquea; idx1 hereda Kernel y el boost
+        // se PROPAGA por la cadena hasta idx0, que también pasa a Kernel.
+        s.set_current_for_test(2);
+        assert!(!s.mutex_acquire_for_test(1));
+        assert!(s.is_blocked_on_mutex_for_test(2, 1));
+        assert_eq!(s.task_priority(1), Priority::Kernel as u8);
+        assert_eq!(
+            s.task_priority(0),
+            Priority::Kernel as u8,
+            "el boost de idx2 debe propagarse transitivamente hasta idx0"
+        );
+
+        // idx0 libera m0: cede la propiedad a idx1 y suelta su prioridad prestada.
+        // idx1 sigue Kernel (aún retiene m1 con idx2 esperando); idx0 vuelve a App.
+        s.set_current_for_test(0);
+        assert_eq!(s.mutex_unlock(0), 0);
+        assert_eq!(s.mutex_owner_for_test(0), Some(1));
+        assert_eq!(s.task_priority(0), Priority::App as u8);
+        assert_eq!(s.task_priority(1), Priority::Kernel as u8);
+    }
+
+    #[test]
     fn mutex_unlock_by_non_owner_is_denied() {
         let mut s = Sched::new();
         s.spawn(plain_stack(512), dummy_entry, Priority::Kernel)
