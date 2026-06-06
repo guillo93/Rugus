@@ -25,6 +25,7 @@ members = [
   "examples/app-sandbox-stm32f407g-disco",
   "examples/app-sandbox-stm32f769-disco",
   "examples/eth-link-stm32f769-disco",
+  "examples/net-service-stm32f769-disco",
 ]
 
 # Crates host-side (std, triple del PC). Se EXCLUYEN del workspace embebido para
@@ -66,7 +67,7 @@ critical-section  = "1.2"
 heapless          = { version = "0.9", default-features = false }
 bitflags          = { version = "2.6", default-features = false }
 linked_list_allocator = { version = "0.10", default-features = false, features = ["use_spin"] }
-smoltcp           = { version = "0.12", default-features = false, features = ["medium-ethernet", "proto-ipv4", "proto-dhcpv4", "socket-dhcpv4", "socket-tcp", "defmt"] }
+smoltcp           = { version = "0.12", default-features = false, features = ["medium-ethernet", "proto-ipv4", "proto-dhcpv4", "socket-dhcpv4", "socket-tcp", "socket-udp", "defmt"] }
 embedded-tls      = { version = "0.18", default-features = false }
 embedded-io       = { version = "0.7", default-features = false }
 rand_core         = { version = "0.6", default-features = false }

@@ -25,7 +25,9 @@ const MPU_RASR_XN: u32 = 1 << 28;
 ///
 /// Secuencia BSP ST + Cortex-M7 ARMv7-M ARM B3.5:
 /// 1. MPU off (`CTRL=0`) para reconfigurar sin race con Mem/Bus fault.
-/// 2. Programar región 1 (RBAR/RASR) como Normal-Non-Cacheable, full access, XN.
+/// 2. Programar región 6 (RBAR/RASR) como Normal-Non-Cacheable, full access, XN
+///    — número alto para ganar la prioridad de solapamiento si hay un mapa MPU
+///    previo (p. ej. `platform_init`).
 /// 3. MPU on con `PRIVDEFENA` para que el resto del mapa siga gobernado por
 ///    los atributos por defecto.
 pub fn configure_eth_mpu(mpu: &mut MPU) {
@@ -36,7 +38,16 @@ pub fn configure_eth_mpu(mpu: &mut MPU) {
         cortex_m::asm::dsb();
         cortex_m::asm::isb();
 
-        mpu.rnr.write(1);
+        // Región 6 (alta): en ARMv7-M, ante solapamiento de regiones gana la de
+        // MAYOR número. Si el arranque ya programó un mapa MPU completo (p. ej.
+        // `platform_init`, cuya región KERNEL_RAM=2 cubre toda la SRAM interna
+        // 0x2000_0000–0x2007_FFFF e INCLUYE la ventana ETH), una región ETH baja
+        // (1) perdería la prioridad y los descriptores DMA quedarían cacheables:
+        // el motor leería OWN=0 obsoleto de RAM y el TX se colgaría en estado
+        // *suspended*. Con la región 6 la ventana ETH gana siempre y permanece
+        // Normal-Non-Cacheable. Es inocuo cuando se usa de forma aislada
+        // (eth-link/https-get): no hay solapamiento y la 6 está libre.
+        mpu.rnr.write(6);
         mpu.rbar.write(ETH_DMA_BASE);
         mpu.rasr.write(
             MPU_RASR_ENABLE
