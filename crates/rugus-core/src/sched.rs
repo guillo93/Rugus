@@ -589,8 +589,11 @@ impl<A: Arch> Scheduler<A> {
                 A::exit_critical(guard);
                 return;
             }
+            // Tick dinámico (F5.A): duerme el core hasta el próximo plazo en vez de
+            // ser interrumpido cada ms. Snapshot del plazo bajo la sección crítica.
+            let wake = self.next_wake_ms();
             A::exit_critical(guard);
-            A::wait_for_interrupt();
+            A::idle(wake);
         }
     }
 
@@ -626,7 +629,8 @@ impl<A: Arch> Scheduler<A> {
                     A::wait_for_interrupt();
                 }
             }
-            A::wait_for_interrupt();
+            // Quedan durmientes: espera al próximo plazo con tick dinámico (F5.A).
+            A::idle(self.next_wake_ms());
         };
         self.current = next_idx;
         // Reinicia la rodaja igual que TODA conmutación (yield_now/preempt_tick):
@@ -1647,8 +1651,11 @@ impl<A: Arch> Scheduler<A> {
                 A::exit_critical(guard);
                 // Reanudada más tarde: el tope del loop reevalúa el estado.
             } else {
+                // Tick dinámico (F5.A): plazo del próximo despertar bajo la
+                // sección crítica, luego duerme el core hasta él.
+                let wake = self.next_wake_ms();
                 A::exit_critical(guard);
-                A::wait_for_interrupt();
+                A::idle(wake);
             }
         }
     }
@@ -1846,6 +1853,69 @@ impl<A: Arch> Scheduler<A> {
                 _ => {}
             }
         }
+    }
+
+    /// Plazo absoluto (ms, reloj monotónico) del PRÓXIMO despertar por tiempo: el
+    /// instante más cercano en que `wake_expired` volvería `Ready` a alguna
+    /// tarea. `None` si ninguna tarea espera por tiempo (todas listas, o bloqueadas
+    /// sin plazo en mutex/semáforo/barrera, o muertas).
+    ///
+    /// Es el insumo del tick dinámico (F5.A): cuando el núcleo va a dormir (`wfi`),
+    /// la capa de tiempo reprograma el temporizador a ESTE plazo en vez de seguir
+    /// interrumpiendo cada milisegundo. Sólo cuenta los estados cuyo despertar lo
+    /// dispara el reloj: `Sleeping` y los bloqueos IPC/condvar/evento CON plazo. Los
+    /// plazos de liveness NO entran: no vuelven `Ready` a nadie (sólo los observa el
+    /// supervisor, que se autodespierta con su propio `Sleeping`).
+    ///
+    /// Comparación envolvente con signo (igual que `wake_expired`): el
+    /// "más cercano" es el de menor `deadline - now` interpretado como `i32`.
+    pub fn next_deadline(&self) -> Option<u32> {
+        let now = A::now_ms();
+        let mut best: Option<u32> = None;
+        let mut consider = |cand: u32| {
+            best = Some(match best {
+                None => cand,
+                Some(b) => {
+                    if (cand.wrapping_sub(now) as i32) < (b.wrapping_sub(now) as i32) {
+                        cand
+                    } else {
+                        b
+                    }
+                }
+            });
+        };
+        for i in 0..self.count {
+            let slot = self.task_ref(i);
+            match slot.state {
+                TaskState::Sleeping(wake_at) => consider(wake_at),
+                TaskState::BlockedRecv(_)
+                | TaskState::BlockedSend(_)
+                | TaskState::BlockedCond(_)
+                | TaskState::BlockedEvent(_) => {
+                    if let Some(d) = slot.block_deadline {
+                        consider(d);
+                    }
+                }
+                _ => {}
+            }
+        }
+        best
+    }
+
+    /// Milisegundos (relativos a *ahora*) hasta el próximo despertar por tiempo,
+    /// saturados a `0` si el plazo ya venció. `None` si no hay ninguno (el núcleo
+    /// puede dormir indefinidamente hasta una IRQ externa). Azúcar sobre
+    /// [`Self::next_deadline`] para la capa de tiempo del arch.
+    pub fn next_wake_ms(&self) -> Option<u32> {
+        let now = A::now_ms();
+        self.next_deadline().map(|d| {
+            let rel = d.wrapping_sub(now) as i32;
+            if rel < 0 {
+                0
+            } else {
+                rel as u32
+            }
+        })
     }
 
     fn pick_next(&mut self, from: usize) -> usize {

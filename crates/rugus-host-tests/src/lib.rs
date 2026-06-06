@@ -246,6 +246,77 @@ mod scheduler_tests {
     }
 
     #[test]
+    fn next_deadline_none_when_all_ready() {
+        // Sin durmientes ni bloqueos con plazo, no hay despertar por tiempo.
+        let mut s = Sched::new();
+        s.spawn(plain_stack(512), dummy_entry, Priority::Kernel)
+            .unwrap();
+        s.spawn(plain_stack(512), dummy_entry, Priority::Kernel)
+            .unwrap();
+        reset_mock();
+        s.force_start_for_test();
+        assert_eq!(s.next_deadline(), None);
+        assert_eq!(s.next_wake_ms(), None);
+    }
+
+    #[test]
+    fn next_deadline_reports_earliest_sleeper() {
+        let mut s = Sched::new();
+        s.spawn(plain_stack(512), dummy_entry, Priority::Kernel)
+            .unwrap(); // idx 0
+        s.spawn(plain_stack(512), dummy_entry, Priority::Kernel)
+            .unwrap(); // idx 1
+        s.spawn(plain_stack(512), dummy_entry, Priority::Kernel)
+            .unwrap(); // idx 2
+        s.spawn(plain_stack(512), dummy_entry, Priority::Kernel)
+            .unwrap(); // idx 3 — permanece Ready para que cada sleep_ms retorne
+        reset_mock();
+        s.force_start_for_test();
+        // Tres tareas duermen 200/75/500 ms; la cuarta queda lista (evita que el
+        // sleep_ms entre en el wfi sin Ready). El próximo despertar es a los 75 ms.
+        s.sleep_ms(200);
+        s.sleep_ms(75);
+        s.sleep_ms(500);
+        assert_eq!(s.next_wake_ms(), Some(75));
+        // El plazo absoluto más cercano es 75 (reloj aún en 0).
+        assert_eq!(s.next_deadline(), Some(75));
+    }
+
+    #[test]
+    fn next_wake_saturates_to_zero_when_overdue() {
+        let mut s = Sched::new();
+        s.spawn(plain_stack(512), dummy_entry, Priority::Kernel)
+            .unwrap();
+        s.spawn(plain_stack(512), dummy_entry, Priority::Kernel)
+            .unwrap();
+        reset_mock();
+        s.force_start_for_test();
+        s.sleep_ms(100);
+        // El reloj pasa del plazo SIN que nadie haya hecho pick_next (no se ha
+        // despertado al durmiente todavía): el tiempo restante satura a 0.
+        set_clock(150);
+        assert_eq!(s.next_wake_ms(), Some(0));
+    }
+
+    #[test]
+    fn next_deadline_wraps_around_u32() {
+        // Cerca del wrap de u32: un plazo "después" del wrap sigue siendo el más
+        // cercano si su distancia con signo es menor (misma aritmética que
+        // wake_expired). reloj=u32::MAX-10, sleeper despierta en +20 → wrap a 9.
+        let mut s = Sched::new();
+        s.spawn(plain_stack(512), dummy_entry, Priority::Kernel)
+            .unwrap();
+        s.spawn(plain_stack(512), dummy_entry, Priority::Kernel)
+            .unwrap();
+        reset_mock();
+        s.force_start_for_test();
+        set_clock(u32::MAX - 10);
+        s.sleep_ms(20);
+        assert_eq!(s.next_wake_ms(), Some(20));
+        assert_eq!(s.next_deadline(), Some(9)); // (MAX-10)+20 con wrap
+    }
+
+    #[test]
     fn kill_marks_state_and_counts() {
         let mut s = Sched::new();
         s.spawn(plain_stack(512), dummy_entry, Priority::Kernel)

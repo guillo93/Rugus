@@ -125,6 +125,14 @@ impl Arch for CortexM {
         cortex_m::asm::wfi();
     }
 
+    /// Espera ociosa con tick dinámico (F5.A.1) cuando la feature `tickless`
+    /// está activa: reprograma SysTick al próximo plazo del scheduler. Sin la
+    /// feature degrada al `wfi` simple del default del trait (tick fijo 1 kHz).
+    #[cfg(feature = "tickless")]
+    fn idle(next_wake_ms: Option<u32>) {
+        time::idle_until(next_wake_ms);
+    }
+
     fn reset() -> ! {
         cortex_m::peripheral::SCB::sys_reset();
     }

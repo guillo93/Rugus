@@ -46,6 +46,7 @@ at `192.168.0.112:8443` — see
 | `qspi-probe-stm32f769-disco` | F5.C.1 (driver QSPI NOR MX25L51245G como `BlockDevice`) |
 | `fs-probe-stm32f769-disco` | F5.C.2 (almacén log-structured `rugus-fs` sobre QSPI; set/get + remontaje + contador de arranques persistente) |
 | `fs-userland-stm32f769-disco` | F5.C.3 (API de ficheros userland open/read/write/close por syscall+IPC bajo MPU sobre `rugus-fs`; persiste config + log circular de faults) |
+| `tickless-stm32f769-disco` | F5.A.1 (tick dinámico: el scheduler reprograma SysTick al próximo plazo en idle; LED 1 Hz exacto con ~16 IRQs/s vs 1000 fijas, sin deriva del reloj) |
 
 ## Multi-board lab
 

@@ -27,3 +27,8 @@ defmt = ["dep:defmt", "rugus-core/log"]
 # base de tiempo) debe poner `default-features = false` en la dependencia de
 # este crate para evitar el doble símbolo en el link.
 systick = []
+# Tick dinámico (F5.A.1): en idle, reprograma SysTick al próximo plazo del
+# scheduler en vez de interrumpir cada milisegundo, reduciendo despertares
+# ociosos. Requiere `systick` (la contabilidad vive en su ISR). OFF por defecto:
+# los ejemplos conservan el tick fijo de 1 kHz salvo que lo activen.
+tickless = ["systick"]
