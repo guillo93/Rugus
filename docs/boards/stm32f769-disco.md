@@ -13,6 +13,7 @@ product board (G0–G4).
 | Onboard ST-Link | USB; V2-1 composite (`0483:374b` when F407 also connected) |
 | User LEDs | LD1 PJ13 (red), LD2 PJ5 (green), LD3 PA12, LD4 PD4 |
 | External SDRAM | 16 MB @ 0xC0_0000_00 (FMC) |
+| QSPI NOR flash | Macronix **MX25L51245G** 512 Mbit/64 MiB (JEDEC `C2 20 1A`) — CLK PB2, NCS PB6, IO0 PC9, IO1 PC10, IO2 PE2, IO3 PD13 |
 
 ## Ethernet (G4)
 
@@ -42,6 +43,7 @@ at `192.168.0.112:8443` — see
 | `https-get-stm32f769-disco` | G4 |
 | `net-service-stm32f769-disco` | F5.B.1 (pila IP como servicio) |
 | `net-userland-stm32f769-disco` | F5.B.2 (sockets UDP+TCP cliente userland por syscall+IPC bajo MPU) |
+| `qspi-probe-stm32f769-disco` | F5.C.1 (driver QSPI NOR MX25L51245G como `BlockDevice`) |
 
 ## Multi-board lab
 

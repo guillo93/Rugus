@@ -27,6 +27,7 @@ pub mod exti;
 pub mod fmc;
 pub mod gpio;
 pub mod iwdg;
+pub mod qspi;
 pub mod rcc;
 pub mod reset;
 pub mod timer;
