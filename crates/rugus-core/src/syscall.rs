@@ -31,6 +31,7 @@ pub enum Id {
     NetConnect = 0x31,
     NetSend = 0x32,
     NetRecv = 0x33,
+    NetClose = 0x34,
     CryptoSign = 0x40,
     RngFill = 0x41,
     PanicApp = 0xFE,
@@ -58,6 +59,7 @@ impl Id {
             0x31 => Some(Self::NetConnect),
             0x32 => Some(Self::NetSend),
             0x33 => Some(Self::NetRecv),
+            0x34 => Some(Self::NetClose),
             0x40 => Some(Self::CryptoSign),
             0x41 => Some(Self::RngFill),
             0xFE => Some(Self::PanicApp),
@@ -118,6 +120,44 @@ static mut HOOKS: Option<Hooks> = None;
 pub unsafe fn register(hooks: Hooks) {
     unsafe {
         HOOKS = Some(hooks);
+    }
+}
+
+/// Hooks del plano de control de red (F5.B.2). Se registran por separado de
+/// [`Hooks`] para no obligar a cada placa/ejemplo a proveer la pila de red:
+/// solo el servicio de red (`net-service`) los instala. Si no hay hooks de red,
+/// las syscalls `Net*` devuelven [`Errno::Enosys`] (fail-closed).
+///
+/// Diseño híbrido (F5.B.2): el *plano de control* (crear/conectar/cerrar socket)
+/// pasa por estas syscalls validadas por el dispatch; el *plano de datos* TX/RX
+/// viaja por canales IPC `ChanCb` (notificación por valor) sobre un pool de
+/// buffers compartido App-RW. Por eso aquí NO hay hooks de envío/recepción: los
+/// `Id::NetSend`/`Id::NetRecv` quedan reservados para una futura ruta directa.
+#[derive(Clone, Copy)]
+pub struct NetHooks {
+    /// Crea un socket. `kind`: 0=UDP, 1=TCP cliente. Retorna un handle (índice
+    /// de slot ≥ 0) o un [`Errno`] negativo. La tarea propietaria queda ligada
+    /// al socket para validar TX/RX posteriores.
+    pub net_socket: fn(kind: u32) -> i32,
+    /// Liga el socket a un extremo remoto. Para UDP fija destino y hace bind del
+    /// puerto local; para TCP inicia la conexión (handshake asíncrono). `ip_be`
+    /// es la IPv4 destino en orden de red (big-endian empacada en u32), `port`
+    /// el puerto remoto. Retorna `0` (en marcha) o [`Errno`] negativo.
+    pub net_connect: fn(handle: u32, ip_be: u32, port: u32) -> i32,
+    /// Cierra y libera el socket `handle` (debe pertenecer al llamante).
+    pub net_close: fn(handle: u32) -> i32,
+}
+
+static mut NET_HOOKS: Option<NetHooks> = None;
+
+/// Registra los hooks de red. Llamar una vez desde `main`, antes de `start()`.
+///
+/// # Safety
+///
+/// Solo desde main, antes de arrancar tareas; `NET_HOOKS` se lee sin sincronizar.
+pub unsafe fn register_net(hooks: NetHooks) {
+    unsafe {
+        NET_HOOKS = Some(hooks);
     }
 }
 
@@ -276,10 +316,13 @@ pub fn dispatch(id: Id, args: [u32; 4]) -> i32 {
         Id::MutexUnlock => sync_call(args[0], |h| h.mutex_unlock),
         Id::SemWait => sync_call(args[0], |h| h.sem_wait),
         Id::SemPost => sync_call(args[0], |h| h.sem_post),
+        // Plano de control de red (F5.B.2). Todo por valor en registros: no hay
+        // punteros que validar (el plano de datos va por ChanCb + pool).
+        Id::NetSocket => net_call(|h| (h.net_socket)(args[0])),
+        Id::NetConnect => net_call(|h| (h.net_connect)(args[0], args[1], args[2])),
+        Id::NetClose => net_call(|h| (h.net_close)(args[0])),
         Id::Log
         | Id::IpcRecv
-        | Id::NetSocket
-        | Id::NetConnect
         | Id::NetSend
         | Id::NetRecv
         | Id::CryptoSign
@@ -291,6 +334,18 @@ pub fn dispatch(id: Id, args: [u32; 4]) -> i32 {
         Id::PanicApp => {
             let _ = args;
             Errno::Einval as i32
+        }
+    }
+}
+
+/// Rutea un syscall de red al hook de red registrado. Fail-closed:
+/// [`Errno::Enosys`] si no hay servicio de red instalado.
+fn net_call(f: impl FnOnce(&NetHooks) -> i32) -> i32 {
+    // SAFETY: lectura de static; hooks inmutables tras init.
+    unsafe {
+        match NET_HOOKS {
+            Some(h) => f(&h),
+            None => Errno::Enosys as i32,
         }
     }
 }
@@ -445,6 +500,60 @@ pub mod user {
     #[inline(always)]
     pub fn sem_post(id: u32) -> i32 {
         svc_arg(0x23, id)
+    }
+
+    /// Crea un socket de red (`Id::NetSocket`). `kind`: 0=UDP, 1=TCP cliente.
+    /// `kind` viaja en `r0`. Retorna un handle (≥0) o [`crate::Errno`] negativo
+    /// ([`crate::Errno::Enosys`] si no hay servicio de red).
+    #[inline(always)]
+    pub fn net_socket(kind: u32) -> i32 {
+        let ret: i32;
+        // SAFETY: SVC con r0=kind; el dispatch lee args[0]. Sin punteros.
+        unsafe {
+            core::arch::asm!(
+                "svc 0x30",
+                in("r0") kind,
+                lateout("r0") ret,
+                options(nomem, nostack)
+            );
+        }
+        ret
+    }
+
+    /// Liga el socket `handle` a un extremo remoto (`Id::NetConnect`). `ip_be` es
+    /// la IPv4 destino en orden de red empacada en u32; `port` el puerto remoto.
+    /// `handle`/`ip_be`/`port` viajan en `r0`/`r1`/`r2`. Sin punteros.
+    #[inline(always)]
+    pub fn net_connect(handle: u32, ip_be: u32, port: u32) -> i32 {
+        let ret: i32;
+        // SAFETY: SVC con r0=handle, r1=ip_be, r2=port; dispatch lee args[0..3].
+        unsafe {
+            core::arch::asm!(
+                "svc 0x31",
+                in("r0") handle,
+                in("r1") ip_be,
+                in("r2") port,
+                lateout("r0") ret,
+                options(nomem, nostack)
+            );
+        }
+        ret
+    }
+
+    /// Cierra el socket `handle` (`Id::NetClose`). `handle` viaja en `r0`.
+    #[inline(always)]
+    pub fn net_close(handle: u32) -> i32 {
+        let ret: i32;
+        // SAFETY: SVC con r0=handle; el dispatch lee args[0]. Sin punteros.
+        unsafe {
+            core::arch::asm!(
+                "svc 0x34",
+                in("r0") handle,
+                lateout("r0") ret,
+                options(nomem, nostack)
+            );
+        }
+        ret
     }
 
     /// Ejecuta `SVC #imm` con un argumento en `r0` y devuelve `r0`. Los cuatro

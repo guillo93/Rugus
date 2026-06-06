@@ -17,8 +17,8 @@ pub mod time;
 pub use exceptions::enable_fault_handlers;
 pub use fault::set_fault_hook;
 pub use mpu::{
-    audit_wx as mpu_audit_wx, init as mpu_init, layout as mpu_layout, region as mpu_region,
-    MpuLayout,
+    app_region_for as mpu_app_region_for, audit_wx as mpu_audit_wx, init as mpu_init,
+    layout as mpu_layout, region as mpu_region, MpuLayout,
 };
 
 use rugus_core::arch::{Arch, CriticalGuard};

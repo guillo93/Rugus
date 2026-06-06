@@ -1015,6 +1015,7 @@ mod abi_tests {
     use rugus_core::sched::TaskId;
     use rugus_core::syscall::{dispatch, validate_user_range, Hooks, Id, ABI_VERSION};
     use rugus_core::Domain;
+    use rugus_core::Errno;
 
     fn h_yield() {}
     fn h_sleep(_ms: u32) {}
@@ -1043,6 +1044,15 @@ mod abi_tests {
         0
     }
     fn h_checkin() {}
+    fn h_net_socket(kind: u32) -> i32 {
+        100 + kind as i32
+    }
+    fn h_net_connect(handle: u32, ip_be: u32, port: u32) -> i32 {
+        (handle + ip_be + port) as i32
+    }
+    fn h_net_close(handle: u32) -> i32 {
+        200 + handle as i32
+    }
 
     #[test]
     fn abi_version_is_v1() {
@@ -1117,7 +1127,30 @@ mod abi_tests {
         assert_eq!(dispatch(Id::Checkin, [0; 4]), 0);
         // Syscalls aún no implementadas devuelven Errno negativo.
         assert!(dispatch(Id::Log, [0; 4]) < 0);
-        assert!(dispatch(Id::NetSocket, [0; 4]) < 0);
+        // Sin servicio de red registrado: las syscalls Net* devuelven Enosys.
+        assert_eq!(dispatch(Id::NetSocket, [0; 4]), Errno::Enosys as i32);
+        assert_eq!(dispatch(Id::NetConnect, [0; 4]), Errno::Enosys as i32);
+        assert_eq!(dispatch(Id::NetClose, [0; 4]), Errno::Enosys as i32);
+
+        // --- plano de control de red: rutea a los NetHooks registrados ---
+        let net_hooks = rugus_core::syscall::NetHooks {
+            net_socket: h_net_socket,
+            net_connect: h_net_connect,
+            net_close: h_net_close,
+        };
+        // SAFETY: test single-uso del estado global de red.
+        unsafe {
+            rugus_core::syscall::register_net(net_hooks);
+        }
+        // NetSocket(kind=1) → 100+1 = 101.
+        assert_eq!(dispatch(Id::NetSocket, [1, 0, 0, 0]), 101);
+        // NetConnect(handle=2, ip_be=3, port=4) → 2+3+4 = 9.
+        assert_eq!(dispatch(Id::NetConnect, [2, 3, 4, 0]), 9);
+        // NetClose(handle=5) → 200+5 = 205.
+        assert_eq!(dispatch(Id::NetClose, [5, 0, 0, 0]), 205);
+        // NetSend/NetRecv siguen reservados (plano de datos por ChanCb).
+        assert!(dispatch(Id::NetSend, [0; 4]) < 0);
+        assert!(dispatch(Id::NetRecv, [0; 4]) < 0);
 
         // --- llamante privilegiado: confiado (sin región) ---
         let priv_hooks = Hooks {

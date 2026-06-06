@@ -117,6 +117,26 @@ impl<'stack, D: Device> NetStack<'stack, D> {
         &mut self.sockets
     }
 
+    /// Inicia (no bloqueante) una conexión TCP cliente sobre `handle` hacia
+    /// `remote:remote_port` desde `local_port`. Devuelve `Ok(())` si el connect
+    /// se aceptó (el handshake prosigue en `poll`); `Err(())` si smoltcp lo
+    /// rechazó. Toma `iface` y `sockets` de forma disjunta (campos privados), lo
+    /// que resuelve el doble préstamo que tendría un llamante externo.
+    pub fn tcp_connect_start(
+        &mut self,
+        handle: SocketHandle,
+        remote: smoltcp::wire::IpAddress,
+        remote_port: u16,
+        local_port: u16,
+    ) -> Result<(), ()> {
+        use smoltcp::socket::tcp;
+        let cx = self.iface.context();
+        let socket = self.sockets.get_mut::<tcp::Socket>(handle);
+        socket
+            .connect(cx, (remote, remote_port), local_port)
+            .map_err(|_| ())
+    }
+
     /// Mutable reference to the Ethernet device.
     pub fn device_mut(&mut self) -> &mut D {
         self.device
