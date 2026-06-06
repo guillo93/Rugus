@@ -525,6 +525,14 @@ pub fn killed_count() -> usize {
     scheduler_ref().killed_count()
 }
 
+/// Milisegundos hasta el próximo despertar por tiempo (saturado a `0` si ya
+/// venció), o `None` si ninguna tarea espera por reloj. Insumo del tick dinámico
+/// (F5.A): la capa de tiempo del arch lo consulta antes de un `wfi` para decidir
+/// cuánto puede dormir sin perder un plazo de `sleep`/IPC/condvar/evento.
+pub fn next_wake_ms() -> Option<u32> {
+    scheduler_ref().next_wake_ms()
+}
+
 /// Revive una tarea `Killed` reconstruyendo su frame inicial; `true` si lo hizo.
 ///
 /// La invoca el supervisor privilegiado para autorreparar una app caída: arranca

@@ -70,6 +70,25 @@ pub trait Arch: 'static {
     /// Detiene el core hasta la próxima IRQ (para tarea idle).
     fn wait_for_interrupt();
 
+    /// Espera ociosa con conocimiento del próximo plazo del scheduler (F5.A).
+    ///
+    /// El scheduler la invoca cuando no hay ninguna tarea lista y va a dormir el
+    /// core. `next_wake_ms` es el resultado de
+    /// [`Scheduler::next_wake_ms`](crate::sched::Scheduler::next_wake_ms): los
+    /// milisegundos hasta el próximo despertar por reloj, o `None` si sólo una IRQ
+    /// externa puede reanudar al sistema.
+    ///
+    /// El backend puede usarlo para implementar un **tick dinámico**: reprogramar
+    /// su temporizador a ese plazo (en vez de interrumpir cada milisegundo) y
+    /// re-sincronizar el reloj al despertar, reduciendo los despertares ociosos.
+    /// La implementación por defecto ignora el plazo y degrada a
+    /// [`Self::wait_for_interrupt`] (tick fijo), de modo que un backend sin tick
+    /// dinámico conserva exactamente el comportamiento previo.
+    fn idle(next_wake_ms: Option<u32>) {
+        let _ = next_wake_ms;
+        Self::wait_for_interrupt();
+    }
+
     /// Reloj monotónico en milisegundos para temporización del scheduler.
     ///
     /// Base del sleep/wake cooperativo: el scheduler compara plazos contra este

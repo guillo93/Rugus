@@ -31,6 +31,7 @@ members = [
   "examples/qspi-probe-stm32f769-disco",
   "examples/fs-probe-stm32f769-disco",
   "examples/fs-userland-stm32f769-disco",
+  "examples/tickless-stm32f769-disco",
 ]
 
 # Crates host-side (std, triple del PC). Se EXCLUYEN del workspace embebido para
