@@ -217,7 +217,9 @@ fn main() -> ! {
     defmt::info!("boot_count: {} -> {}", prev, boots);
 
     // Registra el arranque en el log circular (kind=BOOT, arg=nº de arranque).
-    let seq = flog.record(&mut fs, FK_BOOT, boots).expect("faultlog record");
+    let seq = flog
+        .record(&mut fs, FK_BOOT, boots)
+        .expect("faultlog record");
     defmt::info!("evento de arranque registrado: fault #{=u32}", seq);
 
     // SAFETY: arranque single-thread; estos statics solo se inicializan aquí y a
@@ -277,10 +279,7 @@ fn hook_fs_open(key_id: u32) -> i32 {
         }
         for (i, slot) in FILES.iter_mut().enumerate() {
             if slot.is_none() || !slot.unwrap().used {
-                *slot = Some(FileSlot {
-                    used: true,
-                    key_id,
-                });
+                *slot = Some(FileSlot { used: true, key_id });
                 return i as i32;
             }
         }
@@ -361,7 +360,9 @@ fn resolve(handle: u32, slot: u32) -> Result<(&'static [u8], usize), i32> {
             _ => return Err(rugus_core::Errno::Einval as i32),
         }
     };
-    let key = CFG_KEYS.get(key_id).ok_or(rugus_core::Errno::Einval as i32)?;
+    let key = CFG_KEYS
+        .get(key_id)
+        .ok_or(rugus_core::Errno::Einval as i32)?;
     Ok((key, slot as usize))
 }
 
