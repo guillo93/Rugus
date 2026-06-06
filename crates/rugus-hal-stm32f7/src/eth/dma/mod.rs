@@ -266,8 +266,15 @@ impl<'rx, 'tx> EthernetDMA<'rx, 'tx> {
             self.eth_dma
                 .dmasr
                 .write(|w| w.tbus().set_bit().nis().set_bit());
-            self.tx_ring.demand_poll();
         }
+        // Re-arma SIEMPRE el demand-poll de TX: cuando una tarea genera tráfico
+        // saliente sostenido (p. ej. heartbeat UDP), el TX DMA puede entrar en
+        // estado *suspended* tras vaciar los descriptores disponibles sin dejar
+        // el sticky `tbus` activo. Sin un demand-poll incondicional el motor no
+        // reanuda y smoltcp reporta «device exhausted» indefinidamente. El
+        // demand-poll es una simple escritura a DMATPDR; es inocuo si el DMA ya
+        // está corriendo.
+        self.tx_ring.demand_poll();
         self.rx_ring.demand_poll();
     }
 }
