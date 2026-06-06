@@ -628,7 +628,10 @@ mod sync_tests {
         // Fija bit0: satisface a idx0 (any) pero no a idx1 (all).
         assert_eq!(s.event_set(0, 0b01), 0);
         assert!(!s.is_blocked_on_event_for_test(0, 0), "idx0 (any) despertó");
-        assert!(s.is_blocked_on_event_for_test(1, 0), "idx1 (all) sigue esperando");
+        assert!(
+            s.is_blocked_on_event_for_test(1, 0),
+            "idx1 (all) sigue esperando"
+        );
         assert_eq!(s.event_get(0), 0b01);
 
         // Fija bit1: ahora idx1 (all) tiene ambos bits → despierta.
@@ -662,7 +665,10 @@ mod sync_tests {
         );
         // Ids fuera de rango.
         assert_eq!(s.event_set(99, 1), rugus_core::Errno::Einval as i32);
-        assert_eq!(s.event_wait(99, 1, false, 0), rugus_core::Errno::Einval as i32);
+        assert_eq!(
+            s.event_wait(99, 1, false, 0),
+            rugus_core::Errno::Einval as i32
+        );
     }
 
     #[test]
@@ -680,7 +686,10 @@ mod sync_tests {
 
         set_clock(90);
         s.wake_expired_for_test();
-        assert!(s.is_blocked_on_event_for_test(0, 0), "antes del plazo, sigue");
+        assert!(
+            s.is_blocked_on_event_for_test(0, 0),
+            "antes del plazo, sigue"
+        );
 
         set_clock(100);
         s.wake_expired_for_test();
