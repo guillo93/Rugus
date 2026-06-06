@@ -557,6 +557,145 @@ mod sync_tests {
         assert_eq!(s.condvar_signal(99), rugus_core::Errno::Einval as i32);
         assert_eq!(s.condvar_broadcast(99), rugus_core::Errno::Einval as i32);
     }
+
+    // --- Barreras (F5.D.2) ---
+
+    #[test]
+    fn barrier_opens_when_threshold_reached() {
+        // Barrera de 3: las dos primeras llegadas bloquean; la tercera abre y
+        // libera a todas, dejando la barrera reiniciada (waiters=0).
+        let mut s = Sched::new();
+        for _ in 0..3 {
+            s.spawn(plain_stack(512), dummy_entry, Priority::Kernel)
+                .unwrap();
+        }
+        s.force_start_for_test();
+        s.barrier_init(0, 3);
+
+        s.set_current_for_test(0);
+        assert!(!s.barrier_arrive_for_test(0), "1ª llegada bloquea");
+        assert!(s.is_blocked_on_barrier_for_test(0, 0));
+
+        s.set_current_for_test(1);
+        assert!(!s.barrier_arrive_for_test(0), "2ª llegada bloquea");
+        assert!(s.is_blocked_on_barrier_for_test(1, 0));
+
+        s.set_current_for_test(2);
+        assert!(s.barrier_arrive_for_test(0), "3ª llegada abre la barrera");
+        // Todas reanudadas y barrera reiniciada.
+        assert!(s.task_alive(0));
+        assert!(s.task_alive(1));
+        assert!(s.task_alive(2));
+        assert!(!s.is_blocked_on_barrier_for_test(0, 0));
+
+        // Reutilizable: vuelve a bloquear en el siguiente ciclo.
+        s.set_current_for_test(0);
+        assert!(!s.barrier_arrive_for_test(0));
+        assert!(s.is_blocked_on_barrier_for_test(0, 0));
+    }
+
+    #[test]
+    fn barrier_wait_rejects_unconfigured_and_bad_id() {
+        let mut s = Sched::new();
+        s.spawn(plain_stack(512), dummy_entry, Priority::Kernel)
+            .unwrap();
+        s.force_start_for_test();
+        s.set_current_for_test(0);
+        // Id fuera de rango → Einval.
+        assert_eq!(s.barrier_wait(99), rugus_core::Errno::Einval as i32);
+        // Barrera sin configurar (threshold 0) → Einval.
+        assert_eq!(s.barrier_wait(0), rugus_core::Errno::Einval as i32);
+    }
+
+    // --- Grupos de eventos (F5.D.2) ---
+
+    #[test]
+    fn event_set_wakes_waiters_by_mask_mode() {
+        // idx0 espera CUALQUIERA de {bit0,bit1}; idx1 espera TODOS {bit0,bit1}.
+        // event_set(bit0) despierta solo a idx0; event_set(bit1) completa idx1.
+        let mut s = Sched::new();
+        s.spawn(plain_stack(512), dummy_entry, Priority::Kernel)
+            .unwrap(); // idx 0
+        s.spawn(plain_stack(512), dummy_entry, Priority::Kernel)
+            .unwrap(); // idx 1
+        s.force_start_for_test();
+
+        s.set_current_for_test(0);
+        s.block_event_for_test(0, 0b11, false, 10_000); // any
+        s.set_current_for_test(1);
+        s.block_event_for_test(0, 0b11, true, 10_000); // all
+
+        // Fija bit0: satisface a idx0 (any) pero no a idx1 (all).
+        assert_eq!(s.event_set(0, 0b01), 0);
+        assert!(!s.is_blocked_on_event_for_test(0, 0), "idx0 (any) despertó");
+        assert!(
+            s.is_blocked_on_event_for_test(1, 0),
+            "idx1 (all) sigue esperando"
+        );
+        assert_eq!(s.event_get(0), 0b01);
+
+        // Fija bit1: ahora idx1 (all) tiene ambos bits → despierta.
+        assert_eq!(s.event_set(0, 0b10), 0);
+        assert!(!s.is_blocked_on_event_for_test(1, 0), "idx1 (all) despertó");
+        assert_eq!(s.event_get(0), 0b11);
+    }
+
+    #[test]
+    fn event_wait_non_blocking_and_clear() {
+        let mut s = Sched::new();
+        s.spawn(plain_stack(512), dummy_entry, Priority::Kernel)
+            .unwrap();
+        s.force_start_for_test();
+        s.set_current_for_test(0);
+
+        // Sin bits y timeout 0 → Ebusy (no bloquea).
+        assert_eq!(
+            s.event_wait(0, 0b01, false, 0),
+            rugus_core::Errno::Ebusy as i32
+        );
+        // Con el bit fijado, la espera no bloqueante pasa.
+        assert_eq!(s.event_set(0, 0b01), 0);
+        assert_eq!(s.event_wait(0, 0b01, false, 0), 0);
+        // clear retira el bit; vuelve a fallar sin bloquear.
+        assert_eq!(s.event_clear(0, 0b01), 0);
+        assert_eq!(s.event_get(0), 0);
+        assert_eq!(
+            s.event_wait(0, 0b01, false, 0),
+            rugus_core::Errno::Ebusy as i32
+        );
+        // Ids fuera de rango.
+        assert_eq!(s.event_set(99, 1), rugus_core::Errno::Einval as i32);
+        assert_eq!(
+            s.event_wait(99, 1, false, 0),
+            rugus_core::Errno::Einval as i32
+        );
+    }
+
+    #[test]
+    fn event_wait_times_out_via_wake_expired() {
+        reset_mock();
+        let mut s = Sched::new();
+        s.spawn(plain_stack(512), dummy_entry, Priority::Kernel)
+            .unwrap();
+        s.force_start_for_test();
+        s.set_current_for_test(0);
+
+        set_clock(50);
+        s.block_event_for_test(0, 0b01, false, 100); // plazo t=100
+        assert!(s.is_blocked_on_event_for_test(0, 0));
+
+        set_clock(90);
+        s.wake_expired_for_test();
+        assert!(
+            s.is_blocked_on_event_for_test(0, 0),
+            "antes del plazo, sigue"
+        );
+
+        set_clock(100);
+        s.wake_expired_for_test();
+        assert!(!s.is_blocked_on_event_for_test(0, 0), "venció el plazo");
+        assert!(s.task_alive(0));
+    }
 }
 
 #[cfg(test)]
