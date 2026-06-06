@@ -450,6 +450,113 @@ mod sync_tests {
         assert_eq!(s.sem_post(0), 0); // 0 → 1
         assert!(s.sem_try_wait(0)); // 1 → 0
     }
+
+    #[test]
+    fn condvar_signal_wakes_highest_priority_waiter() {
+        // Dos tareas bloqueadas en la misma condvar; signal despierta SOLO a la de
+        // mayor prioridad (Kernel < App) y suelta el mutex que liberaron al dormir.
+        // Plazo lejano (clock=0) para que el barrido de yield_now no las venza.
+        reset_mock();
+        let mut s = Sched::new();
+        s.spawn(plain_stack(512), dummy_entry, Priority::App)
+            .unwrap(); // idx 0 (baja)
+        s.spawn(plain_stack(512), dummy_entry, Priority::Kernel)
+            .unwrap(); // idx 1 (alta)
+        s.force_start_for_test();
+
+        // idx0 toma el mutex 0 y se duerme en la condvar 0 (lo libera al dormir).
+        s.set_current_for_test(0);
+        assert!(s.mutex_acquire_for_test(0));
+        s.block_cond_for_test(0, 0, 10_000);
+        assert!(s.is_blocked_on_cond_for_test(0, 0));
+        assert_eq!(s.mutex_owner_for_test(0), None, "el wait soltó el mutex");
+
+        // idx1 también toma el mutex y se duerme en la condvar.
+        s.set_current_for_test(1);
+        assert!(s.mutex_acquire_for_test(0));
+        s.block_cond_for_test(0, 0, 10_000);
+        assert_eq!(s.cond_waiters_for_test(0), 2);
+
+        // signal despierta al de mayor prioridad (idx1, Kernel) y deja al otro.
+        assert_eq!(s.condvar_signal(0), 0);
+        assert!(
+            !s.is_blocked_on_cond_for_test(1, 0),
+            "idx1 (Kernel) despertó"
+        );
+        assert!(s.task_alive(1));
+        assert!(s.is_blocked_on_cond_for_test(0, 0), "idx0 sigue dormido");
+        assert_eq!(s.cond_waiters_for_test(0), 1);
+    }
+
+    #[test]
+    fn condvar_broadcast_wakes_all_waiters() {
+        let mut s = Sched::new();
+        s.spawn(plain_stack(512), dummy_entry, Priority::App)
+            .unwrap(); // idx 0
+        s.spawn(plain_stack(512), dummy_entry, Priority::Service)
+            .unwrap(); // idx 1
+        s.force_start_for_test();
+
+        for idx in 0..2 {
+            s.set_current_for_test(idx);
+            assert!(s.mutex_acquire_for_test(0));
+            s.block_cond_for_test(0, 0, 10_000);
+        }
+        assert_eq!(s.cond_waiters_for_test(0), 2);
+
+        assert_eq!(s.condvar_broadcast(0), 0);
+        assert_eq!(s.cond_waiters_for_test(0), 0, "broadcast vació la condvar");
+        assert!(s.task_alive(0));
+        assert!(s.task_alive(1));
+    }
+
+    #[test]
+    fn condvar_wait_times_out_via_wake_expired() {
+        // Un wait con plazo: al rebasar el reloj el deadline, el barrido lo saca de
+        // la condvar y lo marca Ready (condvar_wait devolvería Etimedout tras
+        // re-adquirir el mutex). Sin señal de por medio.
+        reset_mock();
+        let mut s = Sched::new();
+        s.spawn(plain_stack(512), dummy_entry, Priority::Kernel)
+            .unwrap(); // idx 0
+        s.force_start_for_test();
+
+        s.set_current_for_test(0);
+        assert!(s.mutex_acquire_for_test(0));
+        set_clock(50);
+        s.block_cond_for_test(0, 0, 100); // plazo absoluto t=100
+        assert!(s.is_blocked_on_cond_for_test(0, 0));
+
+        // Antes del plazo: sigue bloqueado.
+        set_clock(90);
+        s.wake_expired_for_test();
+        assert!(s.is_blocked_on_cond_for_test(0, 0));
+
+        // Tras el plazo: el barrido lo despierta y lo quita de la condvar.
+        set_clock(100);
+        s.wake_expired_for_test();
+        assert!(!s.is_blocked_on_cond_for_test(0, 0), "venció el plazo");
+        assert_eq!(s.cond_waiters_for_test(0), 0);
+        assert!(s.task_alive(0));
+    }
+
+    #[test]
+    fn condvar_wait_rejects_bad_ids_and_non_owner() {
+        let mut s = Sched::new();
+        s.spawn(plain_stack(512), dummy_entry, Priority::Kernel)
+            .unwrap(); // idx 0
+        s.force_start_for_test();
+        s.set_current_for_test(0);
+
+        // Ids fuera de rango → Einval.
+        assert_eq!(s.condvar_wait(99, 0, 0), rugus_core::Errno::Einval as i32);
+        assert_eq!(s.condvar_wait(0, 99, 0), rugus_core::Errno::Einval as i32);
+        // No es dueño del mutex → Edenied.
+        assert_eq!(s.condvar_wait(0, 0, 0), rugus_core::Errno::Edenied as i32);
+        // Ids inexistentes en signal/broadcast → Einval.
+        assert_eq!(s.condvar_signal(99), rugus_core::Errno::Einval as i32);
+        assert_eq!(s.condvar_broadcast(99), rugus_core::Errno::Einval as i32);
+    }
 }
 
 #[cfg(test)]

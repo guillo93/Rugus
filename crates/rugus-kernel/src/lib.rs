@@ -284,6 +284,27 @@ pub fn cpu_chan_recv(chan: usize, timeout_ms: u32, out: &mut u32) -> i32 {
     unsafe { scheduler_mut().chan_recv(chan, timeout_ms, out) }
 }
 
+/// Bloquea en la variable de condición `cv` liberando el mutex `mtx` (que la
+/// tarea privilegiada debe poseer) y lo re-adquiere al despertar. `timeout_ms`:
+/// `0` no bloquea, `u32::MAX` indefinido. Patrón canónico:
+/// `cpu_mutex_lock(m); while !cond { cpu_condvar_wait(c, m, t); } cpu_mutex_unlock(m);`.
+pub fn cpu_condvar_wait(cv: usize, mtx: usize, timeout_ms: u32) -> i32 {
+    // SAFETY: scheduler poseído; cooperativo sin reentrada concurrente.
+    unsafe { scheduler_mut().condvar_wait(cv, mtx, timeout_ms) }
+}
+
+/// Despierta al waiter de mayor prioridad bloqueado en la condvar `cv`.
+pub fn cpu_condvar_signal(cv: usize) -> i32 {
+    // SAFETY: igual que cpu_condvar_wait.
+    unsafe { scheduler_mut().condvar_signal(cv) }
+}
+
+/// Despierta a TODAS las tareas bloqueadas en la condvar `cv`.
+pub fn cpu_condvar_broadcast(cv: usize) -> i32 {
+    // SAFETY: igual que cpu_condvar_wait.
+    unsafe { scheduler_mut().condvar_broadcast(cv) }
+}
+
 /// Arma la monitorización de liveness de la tarea `idx`: debe emitir un
 /// `checkin` cada `period_ms` ms como máximo o el supervisor la considerará
 /// colgada. Llamar desde `main` o desde el supervisor.
@@ -366,6 +387,17 @@ pub unsafe fn sync_selftest() -> bool {
     ok &= s.chan_recv(0, 0, &mut got) == 0 && got == 0xBEEF;
     // Canal vacío sin bloquear → Ebusy.
     ok &= s.chan_recv(0, 0, &mut got) == Errno::Ebusy as i32;
+    // Variables de condición (F5.D.1), rutas no bloqueantes verificables sin
+    // arrancar: ids fuera de rango → Einval; signal/broadcast sobre una condvar
+    // vacía → 0 (no-op); con el scheduler aún parado, condvar_wait degrada a
+    // Ebusy sin intentar bloquear. La semántica de bloqueo/señal/timeout real se
+    // cubre en `rugus-host-tests`.
+    ok &= s.condvar_signal(99) == Errno::Einval as i32;
+    ok &= s.condvar_broadcast(99) == Errno::Einval as i32;
+    ok &= s.condvar_wait(99, 0, 0) == Errno::Einval as i32;
+    ok &= s.condvar_signal(0) == 0;
+    ok &= s.condvar_broadcast(0) == 0;
+    ok &= s.condvar_wait(0, 0, 0) == Errno::Ebusy as i32;
     ok
 }
 

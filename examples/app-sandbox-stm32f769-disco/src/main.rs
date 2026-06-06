@@ -457,7 +457,7 @@ fn main() -> ! {
         // tarea 0 registrada y antes de arrancar: verifica la contabilidad no
         // bloqueante; la herencia de prioridad y el bloqueo se validan en host.
         if rugus_kernel::sync_selftest() {
-            defmt::info!("sync selftest: PASS (mutex + semaphore + IPC)");
+            defmt::info!("sync selftest: PASS (mutex + sem + IPC + condvar)");
         } else {
             defmt::warn!("sync selftest: FAIL");
         }

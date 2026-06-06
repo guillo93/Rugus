@@ -20,6 +20,9 @@ pub const MAX_SEMAPHORES: usize = 4;
 /// Máximo de canales IPC bloqueantes gestionados por el kernel.
 pub const MAX_CHANNELS: usize = 4;
 
+/// Máximo de variables de condición gestionadas por el kernel.
+pub const MAX_CONDVARS: usize = 4;
+
 /// Capacidad (mensajes en vuelo) del buffer de cada canal IPC.
 pub const CHAN_CAPACITY: usize = 4;
 
@@ -77,6 +80,11 @@ enum TaskState {
     /// Bloqueada esperando que un canal IPC lleno tenga hueco (índice). La
     /// despierta un [`Scheduler::chan_recv`] o el vencimiento de su plazo.
     BlockedSend(u8),
+    /// Bloqueada en una variable de condición (índice). La despierta un
+    /// [`Scheduler::condvar_signal`]/[`Scheduler::condvar_broadcast`] o el
+    /// vencimiento de su plazo (`block_deadline`). Al reanudar, `condvar_wait`
+    /// re-adquiere incondicionalmente el mutex asociado.
+    BlockedCond(u8),
     Killed,
 }
 
@@ -178,6 +186,25 @@ impl ChanCb {
     }
 }
 
+/// Bloque de control de una variable de condición.
+///
+/// Una condvar no tiene estado propio más allá de la lista de tareas dormidas
+/// en ella: la condición lógica la evalúa el llamante (patrón canónico
+/// `while !cond { condvar_wait(cv, mtx) }`). El mutex asociado se pasa en cada
+/// `condvar_wait` y se libera/re-adquiere atómicamente respecto al bloqueo, de
+/// modo que no se pierden señales (lost-wakeup) entre soltar el mutex y dormir.
+#[derive(Clone, Copy)]
+struct CondCb {
+    /// Bitmask de tareas bloqueadas en esta condvar.
+    waiters: u8,
+}
+
+impl CondCb {
+    const fn new() -> Self {
+        Self { waiters: 0 }
+    }
+}
+
 struct TaskSlot<A: Arch> {
     context: A::Context,
     /// Prioridad EFECTIVA usada por [`Scheduler::pick_next`]. Puede subir por
@@ -248,6 +275,8 @@ pub struct Scheduler<A: Arch> {
     semaphores: [SemCb; MAX_SEMAPHORES],
     /// Bloques de control de canales IPC bloqueantes (id = índice).
     channels: [ChanCb; MAX_CHANNELS],
+    /// Bloques de control de variables de condición (id = índice).
+    condvars: [CondCb; MAX_CONDVARS],
 }
 
 impl<A: Arch> Scheduler<A> {
@@ -263,6 +292,7 @@ impl<A: Arch> Scheduler<A> {
             mutexes: [MutexCb::new(); MAX_MUTEXES],
             semaphores: [SemCb::new(); MAX_SEMAPHORES],
             channels: [ChanCb::new(); MAX_CHANNELS],
+            condvars: [CondCb::new(); MAX_CONDVARS],
         }
     }
 
@@ -601,6 +631,9 @@ impl<A: Arch> Scheduler<A> {
             self.channels[id].recv_waiters &= !bit;
             self.channels[id].send_waiters &= !bit;
         }
+        for id in 0..MAX_CONDVARS {
+            self.condvars[id].waiters &= !bit;
+        }
     }
 
     // --- Monitor de liveness / deadline por tarea (F4.3) ---
@@ -768,6 +801,21 @@ impl<A: Arch> Scheduler<A> {
             A::exit_critical(guard);
             return crate::Errno::Edenied as i32;
         }
+        self.release_mutex_owner(id, me);
+        A::exit_critical(guard);
+        // Si despertamos a alguien (potencialmente de mayor prioridad), cede para
+        // que el scheduler lo respete de inmediato.
+        if self.started {
+            self.yield_now();
+        }
+        0
+    }
+
+    /// Libera el mutex `id` cuyo dueño es `me`: transfiere la propiedad al waiter
+    /// de mayor prioridad (marcándolo listo) o lo deja libre, y recalcula la
+    /// prioridad efectiva de `me` (soltando la herencia prestada). El llamante
+    /// debe haber verificado la propiedad y sostener la sección crítica.
+    fn release_mutex_owner(&mut self, id: usize, me: usize) {
         match self.highest_priority_waiter(self.mutexes[id].waiters) {
             Some(w) => {
                 self.mutexes[id].waiters &= !(1 << w);
@@ -782,10 +830,125 @@ impl<A: Arch> Scheduler<A> {
         // Suelta la prioridad prestada: recomputa el efectivo desde la base y los
         // mutexes que aún retiene.
         self.recompute_priority(me);
+    }
+
+    // --- Variables de condición (F5.D.1) ---
+
+    /// Bloquea la tarea actual en la condvar `cv` liberando atómicamente el mutex
+    /// `mtx` (que debe poseer), y la re-adquiere incondicionalmente al despertar.
+    ///
+    /// Patrón canónico (evita lost-wakeups): el llamante sostiene `mtx`, evalúa la
+    /// condición y, si no se cumple, llama a `condvar_wait` dentro de un bucle
+    /// `while`. La liberación del mutex y el bloqueo ocurren bajo la misma sección
+    /// crítica, de modo que ninguna señal entre ambos pasos se pierde.
+    ///
+    /// `timeout_ms`: `0` = no bloquear (devuelve [`Errno::Etimedout`] tras
+    /// re-adquirir), [`TIMEOUT_FOREVER`] = sin plazo, otro = plazo relativo en ms.
+    /// Devuelve `0` si la despertó una señal, [`Errno::Etimedout`] si venció el
+    /// plazo (en ambos casos con `mtx` re-adquirido), [`Errno::Einval`] si los ids
+    /// no existen o [`Errno::Edenied`] si la tarea no es dueña de `mtx`.
+    pub fn condvar_wait(&mut self, cv: usize, mtx: usize, timeout_ms: u32) -> i32 {
+        if cv >= MAX_CONDVARS || mtx >= MAX_MUTEXES {
+            return crate::Errno::Einval as i32;
+        }
+        if !self.started {
+            // Sin scheduler no se puede bloquear ni reprogramar; no-op seguro.
+            return crate::Errno::Ebusy as i32;
+        }
+        let me = self.current;
+        if self.mutexes[mtx].owner != Some(me as u8) {
+            return crate::Errno::Edenied as i32;
+        }
+        let deadline = Self::block_deadline(timeout_ms);
+        // Soltar el mutex y dormir en la condvar de forma atómica (sin ventana de
+        // pérdida de señal entre ambos pasos).
+        {
+            let guard = A::enter_critical();
+            self.condvars[cv].waiters |= 1 << me;
+            // SAFETY: me < count; slot inicializado en spawn.
+            unsafe {
+                let slot = self.tasks[me].assume_init_mut();
+                slot.state = TaskState::BlockedCond(cv as u8);
+                slot.block_deadline = deadline;
+            }
+            self.release_mutex_owner(mtx, me);
+            A::exit_critical(guard);
+        }
+        self.switch_until_ready(me);
+        // Despertada por señal o por vencimiento del plazo. Determinar cuál antes
+        // de re-adquirir (el reloj manda; un race señal-vs-plazo en el mismo ms se
+        // reporta como timeout, inocuo: el mutex se re-adquiere igualmente).
+        let timed_out = match deadline {
+            Some(d) => A::now_ms().wrapping_sub(d) as i32 >= 0,
+            None => false,
+        };
+        // Re-adquirir el mutex incondicionalmente (semántica condvar).
+        loop {
+            let guard = A::enter_critical();
+            let got = self.mutex_acquire(mtx, me);
+            A::exit_critical(guard);
+            if got {
+                break;
+            }
+            self.switch_until_ready(me);
+        }
+        if timed_out {
+            crate::Errno::Etimedout as i32
+        } else {
+            0
+        }
+    }
+
+    /// Despierta al waiter de mayor prioridad bloqueado en la condvar `cv` (si lo
+    /// hay). No transfiere el mutex: el despertado lo re-adquiere en su
+    /// `condvar_wait`. Devuelve 0 o [`Errno::Einval`] si `cv` no existe.
+    pub fn condvar_signal(&mut self, cv: usize) -> i32 {
+        if cv >= MAX_CONDVARS {
+            return crate::Errno::Einval as i32;
+        }
+        let guard = A::enter_critical();
+        let woke = if let Some(w) = self.highest_priority_waiter(self.condvars[cv].waiters) {
+            self.condvars[cv].waiters &= !(1 << w);
+            // SAFETY: w < count; slot inicializado en spawn.
+            unsafe {
+                let slot = self.tasks[w].assume_init_mut();
+                slot.state = TaskState::Ready;
+                slot.block_deadline = None;
+            }
+            true
+        } else {
+            false
+        };
         A::exit_critical(guard);
-        // Si despertamos a alguien (potencialmente de mayor prioridad), cede para
-        // que el scheduler lo respete de inmediato.
-        if self.started {
+        if woke && self.started {
+            self.yield_now();
+        }
+        0
+    }
+
+    /// Despierta a TODAS las tareas bloqueadas en la condvar `cv`. Cada una
+    /// re-adquiere el mutex en su `condvar_wait` (de una en una, por la sección
+    /// crítica del re-lock). Devuelve 0 o [`Errno::Einval`] si `cv` no existe.
+    pub fn condvar_broadcast(&mut self, cv: usize) -> i32 {
+        if cv >= MAX_CONDVARS {
+            return crate::Errno::Einval as i32;
+        }
+        let guard = A::enter_critical();
+        let mut w = self.condvars[cv].waiters;
+        self.condvars[cv].waiters = 0;
+        let woke = w != 0;
+        while w != 0 {
+            let i = w.trailing_zeros() as usize;
+            w &= w - 1;
+            // SAFETY: i < count; slot inicializado en spawn.
+            unsafe {
+                let slot = self.tasks[i].assume_init_mut();
+                slot.state = TaskState::Ready;
+                slot.block_deadline = None;
+            }
+        }
+        A::exit_critical(guard);
+        if woke && self.started {
             self.yield_now();
         }
         0
@@ -1237,6 +1400,7 @@ impl<A: Arch> Scheduler<A> {
             TaskState::BlockedSem(_) => "B-SEM",
             TaskState::BlockedRecv(_) => "B-RCV",
             TaskState::BlockedSend(_) => "B-SND",
+            TaskState::BlockedCond(_) => "B-CND",
             TaskState::Killed => "KILL",
         }
     }
@@ -1319,6 +1483,22 @@ impl<A: Arch> Scheduler<A> {
                             } else {
                                 self.channels[chan as usize].send_waiters &= !bit;
                             }
+                            // SAFETY: i < count; slot inicializado en spawn.
+                            unsafe {
+                                let slot = self.tasks[i].assume_init_mut();
+                                slot.state = TaskState::Ready;
+                                slot.block_deadline = None;
+                            }
+                        }
+                    }
+                }
+                // Condvar con plazo: al vencer se quita de la lista de waiters de
+                // la condvar y se marca lista. `condvar_wait` re-adquiere el mutex
+                // y, al ver el plazo vencido, devuelve `Etimedout`.
+                TaskState::BlockedCond(cv) => {
+                    if let Some(deadline) = self.task_ref(i).block_deadline {
+                        if now.wrapping_sub(deadline) as i32 >= 0 {
+                            self.condvars[cv as usize].waiters &= !(1u8 << i);
                             // SAFETY: i < count; slot inicializado en spawn.
                             unsafe {
                                 let slot = self.tasks[i].assume_init_mut();
@@ -1488,6 +1668,41 @@ impl<A: Arch> Scheduler<A> {
     #[cfg(feature = "test-util")]
     pub fn is_killed_for_test(&self, idx: usize) -> bool {
         self.task_ref(idx).state == TaskState::Killed
+    }
+
+    /// `true` si la tarea `idx` está bloqueada en la condvar `cv`.
+    ///
+    /// Solo con la feature `test-util`.
+    #[cfg(feature = "test-util")]
+    pub fn is_blocked_on_cond_for_test(&self, idx: usize, cv: usize) -> bool {
+        idx < self.count && self.task_ref(idx).state == TaskState::BlockedCond(cv as u8)
+    }
+
+    /// Bloquea la tarea actual en la condvar `cv` soltando el mutex `mtx` con
+    /// plazo absoluto `deadline` (solo la contabilidad atómica de `condvar_wait`,
+    /// sin el bucle de conmutación que en el host no progresaría). Permite probar
+    /// señal, broadcast y vencimiento por timeout. La tarea debe poseer `mtx`.
+    ///
+    /// Solo con la feature `test-util`.
+    #[cfg(feature = "test-util")]
+    pub fn block_cond_for_test(&mut self, cv: usize, mtx: usize, deadline: u32) {
+        let me = self.current;
+        self.condvars[cv].waiters |= 1 << me;
+        // SAFETY: me < count; slot inicializado en spawn.
+        unsafe {
+            let slot = self.tasks[me].assume_init_mut();
+            slot.state = TaskState::BlockedCond(cv as u8);
+            slot.block_deadline = Some(deadline);
+        }
+        self.release_mutex_owner(mtx, me);
+    }
+
+    /// Número de tareas bloqueadas en la condvar `cv`.
+    ///
+    /// Solo con la feature `test-util`.
+    #[cfg(feature = "test-util")]
+    pub fn cond_waiters_for_test(&self, cv: usize) -> u32 {
+        self.condvars[cv].waiters.count_ones()
     }
 }
 
