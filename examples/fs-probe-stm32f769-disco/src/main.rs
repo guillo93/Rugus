@@ -4,7 +4,7 @@
 //! Valida el almacén clave-valor *log-structured* [`rugus_fs::Rufs`] contra
 //! hardware real:
 //!
-//! 1. Inicializa relojes + I/D-cache y crea el driver QSPI ([`BlockDevice`]).
+//! 1. Inicializa relojes + I/D-cache y crea el driver QSPI (`BlockDevice`).
 //! 2. **Monta** la FS sobre la flash (escaneo + reconstrucción de índice).
 //! 3. Lee un **contador de arranques** persistente, lo incrementa y lo reescribe
 //!    (demuestra persistencia real entre power-cycles).
