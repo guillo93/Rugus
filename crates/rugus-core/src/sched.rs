@@ -842,11 +842,11 @@ impl<A: Arch> Scheduler<A> {
     /// `while`. La liberación del mutex y el bloqueo ocurren bajo la misma sección
     /// crítica, de modo que ninguna señal entre ambos pasos se pierde.
     ///
-    /// `timeout_ms`: `0` = no bloquear (devuelve [`Errno::Etimedout`] tras
+    /// `timeout_ms`: `0` = no bloquear (devuelve [`Errno::Etimedout`](crate::Errno) tras
     /// re-adquirir), [`TIMEOUT_FOREVER`] = sin plazo, otro = plazo relativo en ms.
-    /// Devuelve `0` si la despertó una señal, [`Errno::Etimedout`] si venció el
-    /// plazo (en ambos casos con `mtx` re-adquirido), [`Errno::Einval`] si los ids
-    /// no existen o [`Errno::Edenied`] si la tarea no es dueña de `mtx`.
+    /// Devuelve `0` si la despertó una señal, [`Errno::Etimedout`](crate::Errno) si venció el
+    /// plazo (en ambos casos con `mtx` re-adquirido), [`Errno::Einval`](crate::Errno) si los ids
+    /// no existen o [`Errno::Edenied`](crate::Errno) si la tarea no es dueña de `mtx`.
     pub fn condvar_wait(&mut self, cv: usize, mtx: usize, timeout_ms: u32) -> i32 {
         if cv >= MAX_CONDVARS || mtx >= MAX_MUTEXES {
             return crate::Errno::Einval as i32;
@@ -901,7 +901,7 @@ impl<A: Arch> Scheduler<A> {
 
     /// Despierta al waiter de mayor prioridad bloqueado en la condvar `cv` (si lo
     /// hay). No transfiere el mutex: el despertado lo re-adquiere en su
-    /// `condvar_wait`. Devuelve 0 o [`Errno::Einval`] si `cv` no existe.
+    /// `condvar_wait`. Devuelve 0 o [`Errno::Einval`](crate::Errno) si `cv` no existe.
     pub fn condvar_signal(&mut self, cv: usize) -> i32 {
         if cv >= MAX_CONDVARS {
             return crate::Errno::Einval as i32;
@@ -928,7 +928,7 @@ impl<A: Arch> Scheduler<A> {
 
     /// Despierta a TODAS las tareas bloqueadas en la condvar `cv`. Cada una
     /// re-adquiere el mutex en su `condvar_wait` (de una en una, por la sección
-    /// crítica del re-lock). Devuelve 0 o [`Errno::Einval`] si `cv` no existe.
+    /// crítica del re-lock). Devuelve 0 o [`Errno::Einval`](crate::Errno) si `cv` no existe.
     pub fn condvar_broadcast(&mut self, cv: usize) -> i32 {
         if cv >= MAX_CONDVARS {
             return crate::Errno::Einval as i32;
