@@ -66,4 +66,6 @@ pub enum Errno {
     Efault = -8,
     /// Operación no implementada / servicio no registrado.
     Enosys = -9,
+    /// La entidad solicitada no existe (p. ej. fichero/clave no encontrada).
+    Enoent = -10,
 }

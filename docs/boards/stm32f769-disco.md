@@ -45,6 +45,7 @@ at `192.168.0.112:8443` — see
 | `net-userland-stm32f769-disco` | F5.B.2 (sockets UDP+TCP cliente userland por syscall+IPC bajo MPU) |
 | `qspi-probe-stm32f769-disco` | F5.C.1 (driver QSPI NOR MX25L51245G como `BlockDevice`) |
 | `fs-probe-stm32f769-disco` | F5.C.2 (almacén log-structured `rugus-fs` sobre QSPI; set/get + remontaje + contador de arranques persistente) |
+| `fs-userland-stm32f769-disco` | F5.C.3 (API de ficheros userland open/read/write/close por syscall+IPC bajo MPU sobre `rugus-fs`; persiste config + log circular de faults) |
 
 ## Multi-board lab
 

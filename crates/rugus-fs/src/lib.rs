@@ -49,6 +49,7 @@
 #![deny(missing_docs)]
 
 pub mod crc;
+pub mod faultlog;
 
 #[cfg(feature = "mock")]
 pub mod mock;

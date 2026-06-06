@@ -32,6 +32,10 @@ pub enum Id {
     NetSend = 0x32,
     NetRecv = 0x33,
     NetClose = 0x34,
+    FsOpen = 0x50,
+    FsRead = 0x51,
+    FsWrite = 0x52,
+    FsClose = 0x53,
     CryptoSign = 0x40,
     RngFill = 0x41,
     PanicApp = 0xFE,
@@ -60,6 +64,10 @@ impl Id {
             0x32 => Some(Self::NetSend),
             0x33 => Some(Self::NetRecv),
             0x34 => Some(Self::NetClose),
+            0x50 => Some(Self::FsOpen),
+            0x51 => Some(Self::FsRead),
+            0x52 => Some(Self::FsWrite),
+            0x53 => Some(Self::FsClose),
             0x40 => Some(Self::CryptoSign),
             0x41 => Some(Self::RngFill),
             0xFE => Some(Self::PanicApp),
@@ -158,6 +166,50 @@ static mut NET_HOOKS: Option<NetHooks> = None;
 pub unsafe fn register_net(hooks: NetHooks) {
     unsafe {
         NET_HOOKS = Some(hooks);
+    }
+}
+
+/// Hooks del plano de control de ficheros (F5.C.3). Se registran por separado de
+/// [`Hooks`] y [`NetHooks`] para no obligar a cada placa/ejemplo a proveer un
+/// almacén persistente: solo el servicio de ficheros (la tarea privilegiada que
+/// posee `Rufs` sobre la QSPI NOR) los instala. Si no hay hooks de FS, las
+/// syscalls `Fs*` devuelven [`Errno::Enosys`] (fail-closed).
+///
+/// Diseño híbrido idéntico al de red (F5.B.2): el *plano de control*
+/// (abrir/cerrar fichero) y la *orden* de leer/escribir pasan por estas syscalls
+/// validadas; el *plano de datos* (el contenido del fichero) viaja por un pool de
+/// buffers compartido App-RW mapeado por la MPU. La app escribe el payload en un
+/// slot del pool y pasa su índice por valor; el servicio (privilegiado) lo lee y
+/// lo persiste. Así ningún puntero cruza la frontera de confianza: todo son
+/// `u32` en registros y el índice de slot se acota estructuralmente en el hook.
+#[derive(Clone, Copy)]
+pub struct FsHooks {
+    /// Abre/crea un fichero lógico identificado por `key_id` (índice en la tabla
+    /// de claves que el servicio conoce). Retorna un handle (índice de slot ≥ 0)
+    /// o un [`Errno`] negativo. La tarea propietaria queda ligada al fichero.
+    pub fs_open: fn(key_id: u32) -> i32,
+    /// Lee el fichero `handle` al slot `slot` del pool compartido. Retorna el
+    /// número de bytes leídos (≥ 0) o un [`Errno`] negativo
+    /// ([`Errno::Enoent`] si el fichero aún no existe).
+    pub fs_read: fn(handle: u32, slot: u32) -> i32,
+    /// Persiste `len` bytes desde el slot `slot` del pool compartido en el fichero
+    /// `handle`. Retorna `0` o un [`Errno`] negativo.
+    pub fs_write: fn(handle: u32, slot: u32, len: u32) -> i32,
+    /// Cierra y libera el fichero `handle` (debe pertenecer al llamante).
+    pub fs_close: fn(handle: u32) -> i32,
+}
+
+static mut FS_HOOKS: Option<FsHooks> = None;
+
+/// Registra los hooks de ficheros. Llamar una vez desde `main`, antes de
+/// `start()`.
+///
+/// # Safety
+///
+/// Solo desde main, antes de arrancar tareas; `FS_HOOKS` se lee sin sincronizar.
+pub unsafe fn register_fs(hooks: FsHooks) {
+    unsafe {
+        FS_HOOKS = Some(hooks);
     }
 }
 
@@ -321,6 +373,12 @@ pub fn dispatch(id: Id, args: [u32; 4]) -> i32 {
         Id::NetSocket => net_call(|h| (h.net_socket)(args[0])),
         Id::NetConnect => net_call(|h| (h.net_connect)(args[0], args[1], args[2])),
         Id::NetClose => net_call(|h| (h.net_close)(args[0])),
+        // Plano de control de ficheros (F5.C.3). Todo por valor en registros: el
+        // contenido viaja por el pool App-RW + índice de slot, sin punteros.
+        Id::FsOpen => fs_call(|h| (h.fs_open)(args[0])),
+        Id::FsRead => fs_call(|h| (h.fs_read)(args[0], args[1])),
+        Id::FsWrite => fs_call(|h| (h.fs_write)(args[0], args[1], args[2])),
+        Id::FsClose => fs_call(|h| (h.fs_close)(args[0])),
         Id::Log
         | Id::IpcRecv
         | Id::NetSend
@@ -344,6 +402,18 @@ fn net_call(f: impl FnOnce(&NetHooks) -> i32) -> i32 {
     // SAFETY: lectura de static; hooks inmutables tras init.
     unsafe {
         match NET_HOOKS {
+            Some(h) => f(&h),
+            None => Errno::Enosys as i32,
+        }
+    }
+}
+
+/// Rutea un syscall de ficheros al hook de FS registrado. Fail-closed:
+/// [`Errno::Enosys`] si no hay servicio de ficheros instalado.
+fn fs_call(f: impl FnOnce(&FsHooks) -> i32) -> i32 {
+    // SAFETY: lectura de static; hooks inmutables tras init.
+    unsafe {
+        match FS_HOOKS {
             Some(h) => f(&h),
             None => Errno::Enosys as i32,
         }
@@ -548,6 +618,79 @@ pub mod user {
         unsafe {
             core::arch::asm!(
                 "svc 0x34",
+                in("r0") handle,
+                lateout("r0") ret,
+                options(nomem, nostack)
+            );
+        }
+        ret
+    }
+
+    /// Abre/crea el fichero lógico `key_id` (`Id::FsOpen`). `key_id` viaja en
+    /// `r0`. Retorna un handle (≥0) o [`crate::Errno`] negativo
+    /// ([`crate::Errno::Enosys`] si no hay servicio de ficheros).
+    #[inline(always)]
+    pub fn fs_open(key_id: u32) -> i32 {
+        let ret: i32;
+        // SAFETY: SVC con r0=key_id; el dispatch lee args[0]. Sin punteros.
+        unsafe {
+            core::arch::asm!(
+                "svc 0x50",
+                in("r0") key_id,
+                lateout("r0") ret,
+                options(nomem, nostack)
+            );
+        }
+        ret
+    }
+
+    /// Lee el fichero `handle` al slot `slot` del pool compartido (`Id::FsRead`).
+    /// `handle`/`slot` viajan en `r0`/`r1`. Retorna los bytes leídos (≥0) o
+    /// [`crate::Errno`] negativo. El contenido aparece en el slot del pool App-RW.
+    #[inline(always)]
+    pub fn fs_read(handle: u32, slot: u32) -> i32 {
+        let ret: i32;
+        // SAFETY: SVC con r0=handle, r1=slot; dispatch lee args[0..2]. Sin punteros.
+        unsafe {
+            core::arch::asm!(
+                "svc 0x51",
+                in("r0") handle,
+                in("r1") slot,
+                lateout("r0") ret,
+                options(nomem, nostack)
+            );
+        }
+        ret
+    }
+
+    /// Persiste `len` bytes del slot `slot` en el fichero `handle` (`Id::FsWrite`).
+    /// `handle`/`slot`/`len` viajan en `r0`/`r1`/`r2`. Retorna `0` o
+    /// [`crate::Errno`] negativo. El payload se toma del slot del pool App-RW.
+    #[inline(always)]
+    pub fn fs_write(handle: u32, slot: u32, len: u32) -> i32 {
+        let ret: i32;
+        // SAFETY: SVC con r0=handle, r1=slot, r2=len; dispatch lee args[0..3].
+        unsafe {
+            core::arch::asm!(
+                "svc 0x52",
+                in("r0") handle,
+                in("r1") slot,
+                in("r2") len,
+                lateout("r0") ret,
+                options(nomem, nostack)
+            );
+        }
+        ret
+    }
+
+    /// Cierra el fichero `handle` (`Id::FsClose`). `handle` viaja en `r0`.
+    #[inline(always)]
+    pub fn fs_close(handle: u32) -> i32 {
+        let ret: i32;
+        // SAFETY: SVC con r0=handle; el dispatch lee args[0]. Sin punteros.
+        unsafe {
+            core::arch::asm!(
+                "svc 0x53",
                 in("r0") handle,
                 lateout("r0") ret,
                 options(nomem, nostack)
