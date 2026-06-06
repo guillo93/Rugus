@@ -29,6 +29,11 @@ convención.
 | 0x31 | `net_connect`      | (sock, ip, port)                  | 0 / -EHOSTUNREACH |
 | 0x32 | `net_send`         | (sock, ptr, len)                  | bytes |
 | 0x33 | `net_recv`         | (sock, ptr, cap, timeout)         | bytes |
+| 0x34 | `net_close`        | (sock)                            | 0 / -EINVAL |
+| 0x50 | `fs_open`          | (key_id)                          | handle / -ENOSYS |
+| 0x51 | `fs_read`          | (handle, pool_slot)               | bytes / -ENOENT |
+| 0x52 | `fs_write`         | (handle, pool_slot, len)          | 0 / -EINVAL |
+| 0x53 | `fs_close`         | (handle)                          | 0 / -EINVAL |
 | 0x40 | `crypto_sign`      | (payload_ptr, len, sig_out_ptr)   | 0 / -EDENIED |
 | 0x41 | `rng_fill`         | (buf_ptr, len)                    | 0 |
 | 0xFE | `panic_app`        | (reason_code)                     | nunca |
