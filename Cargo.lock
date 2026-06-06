@@ -797,6 +797,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "net-userland-stm32f769-disco"
+version = "0.1.0"
+dependencies = [
+ "cortex-m",
+ "defmt 1.1.0",
+ "ieee802_3_miim",
+ "rugus-arch-cortex-m",
+ "rugus-core",
+ "rugus-hal",
+ "rugus-hal-stm32f7",
+ "rugus-kernel",
+ "rugus-net",
+ "rugus-runtime",
+ "smoltcp",
+]
+
+[[package]]
 name = "opaque-debug"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

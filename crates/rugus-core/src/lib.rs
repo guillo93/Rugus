@@ -64,4 +64,6 @@ pub enum Errno {
     Enomem = -7,
     /// Bad user pointer (rejected by MPU/MMU).
     Efault = -8,
+    /// Operación no implementada / servicio no registrado.
+    Enosys = -9,
 }
