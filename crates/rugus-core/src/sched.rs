@@ -190,8 +190,13 @@ struct TaskSlot<A: Arch> {
     state: TaskState,
     mode: TaskMode,
     domain: Domain,
-    /// Base del stack (para remapeo MPU región App).
-    stack_base: u32,
+    /// Base del stack (dirección, para remapeo MPU región App). `usize` para ser
+    /// honesto con el ancho de puntero: en los targets Cortex-M `usize == u32`
+    /// (codegen idéntico a la representación anterior), pero en el host de tests
+    /// (64-bit) preserva el puntero completo sin truncar, lo que permite ejercer
+    /// la reconstrucción de stack de `respawn` en host (antes solo validable en
+    /// placa). Los cruces hacia el arch/MPU castean explícitamente a `u32`.
+    stack_base: usize,
     stack_len: u32,
     /// Punto de entrada original, conservado para poder respawnear la tarea tras
     /// un fault: repintar el stack y reconstruir el frame inicial exige re-llamar
@@ -301,8 +306,8 @@ impl<A: Arch> Scheduler<A> {
         // el remapeo redondearía la región y cubriría RAM del kernel vecina,
         // dando acceso de escritura fuera del sandbox. Se rechaza en origen.
         if mode == TaskMode::User {
-            let base = stack.as_ptr() as u32;
-            let len = stack.len() as u32;
+            let base = stack.as_ptr() as usize;
+            let len = stack.len();
             if len < 32 || !len.is_power_of_two() || base % len != 0 {
                 return Err(SpawnError::UnalignedUserStack);
             }
@@ -315,7 +320,7 @@ impl<A: Arch> Scheduler<A> {
         stack.fill(STACK_FILL);
         let stack_len = stack.len() as u32;
         let ctx = A::init_task_stack(stack, entry, mode == TaskMode::Privileged);
-        let base = stack.as_ptr() as u32;
+        let base = stack.as_ptr() as usize;
         let slot = TaskSlot {
             context: ctx,
             priority,
@@ -1189,7 +1194,7 @@ impl<A: Arch> Scheduler<A> {
     pub fn current_user_region(&self) -> Option<(u32, u32)> {
         let slot = self.task_ref(self.current);
         match slot.mode {
-            TaskMode::User => Some((slot.stack_base, slot.stack_len)),
+            TaskMode::User => Some((slot.stack_base as u32, slot.stack_len)),
             TaskMode::Privileged => None,
         }
     }
@@ -1279,7 +1284,7 @@ impl<A: Arch> Scheduler<A> {
 
     fn prepare_task_hw(&self, idx: usize) {
         let slot = self.task_ref(idx);
-        A::on_task_switch(slot.mode, slot.stack_base, slot.stack_len);
+        A::on_task_switch(slot.mode, slot.stack_base as u32, slot.stack_len);
     }
 
     fn all_killed(&self) -> bool {

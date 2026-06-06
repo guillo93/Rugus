@@ -263,11 +263,7 @@ mod scheduler_tests {
 
     #[test]
     fn respawn_guard_rejects_alive_and_out_of_range() {
-        // El revive completo de `respawn` reconstruye un puntero al stack desde
-        // `stack_base` (u32) y lo repinta; en el host de 64 bits ese puntero está
-        // truncado, así que el repintado real solo se valida en placa (F3.6: 22
-        // ciclos kill→respawn en F769). Aquí cubrimos la lógica de guarda, que
-        // retorna ANTES de tocar memoria.
+        // Lógica de guarda de `respawn`: retorna ANTES de tocar memoria.
         let mut s = Sched::new();
         s.spawn(plain_stack(512), dummy_entry, Priority::Kernel)
             .unwrap();
@@ -276,6 +272,56 @@ mod scheduler_tests {
         assert!(!s.respawn(99));
         // Tarea viva (no Killed) → false (sin tocar memoria).
         assert!(!s.respawn(0));
+    }
+
+    #[test]
+    fn respawn_reconstructs_stack_and_resets_task() {
+        // Ejerce la RECONSTRUCCIÓN COMPLETA de stack de `respawn` en host. Antes
+        // solo era validable en placa (F3.6: 22 ciclos kill→respawn en F769)
+        // porque `stack_base` era `u32` y en el host de 64 bits el puntero quedaba
+        // truncado, así que repintar el stack era UB. Con `stack_base: usize`
+        // (D3) el puntero se preserva completo y, como `plain_stack` filtra un
+        // buffer `'static`, el repintado real es seguro y observable aquí.
+        let mut s = Sched::new();
+        s.spawn(plain_stack(512), dummy_entry, Priority::App)
+            .unwrap(); // idx 0 (a respawnear)
+        s.spawn(plain_stack(512), dummy_entry, Priority::Kernel)
+            .unwrap(); // idx 1 (testigo)
+        s.force_start_for_test();
+
+        // Ensucia idx0: hereda prioridad (Kernel) vía PI y arma un plazo de
+        // liveness, para verificar que respawn lo deja TODO limpio.
+        s.set_current_for_test(0);
+        assert!(s.mutex_acquire_for_test(0));
+        s.set_current_for_test(1);
+        assert!(!s.mutex_acquire_for_test(0)); // idx1 bloquea, eleva a idx0
+        assert_eq!(s.task_priority(0), Priority::Kernel as u8);
+        s.set_liveness_period(0, 1_000);
+        assert!(s.liveness_deadline_for_test(0).is_some());
+
+        // idx0 muere (lo mata un fault). Lo respawnea el supervisor desde idx1.
+        s.set_current_for_test(1);
+        s.mark_killed_for_test(0);
+        assert!(s.is_killed_for_test(0));
+
+        // Revive: reconstruye el stack (repinta el buffer real), rearma el frame
+        // (MockArch lo deja vacío) y resetea estado/prioridad/liveness.
+        assert!(s.respawn(0));
+        assert!(s.task_alive(0)); // Killed → Ready
+        assert_eq!(
+            s.task_priority(0),
+            Priority::App as u8,
+            "respawn arranca sin prioridad heredada de su vida anterior"
+        );
+        assert_eq!(
+            s.liveness_deadline_for_test(0),
+            None,
+            "respawn desarma el plazo de liveness viejo"
+        );
+        // Stack repintado por completo: MockArch::init_task_stack no escribe frame,
+        // así que todo el buffer queda con el patrón → high-water 0 (prueba de que
+        // el `fill` recorrió el buffer real, no un puntero truncado).
+        assert_eq!(s.stack_high_water(0), 0);
     }
 }
 
