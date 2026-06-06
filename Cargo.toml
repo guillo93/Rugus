@@ -10,6 +10,7 @@ members = [
   "crates/rugus-hal-stm32f1",
   "crates/rugus-hal-stm32f4",
   "crates/rugus-hal-stm32f7",
+  "crates/rugus-fs",
   "crates/rugus-net",
   "crates/rugus-crypto",
   "crates/rugus-tls",
@@ -28,6 +29,7 @@ members = [
   "examples/net-service-stm32f769-disco",
   "examples/net-userland-stm32f769-disco",
   "examples/qspi-probe-stm32f769-disco",
+  "examples/fs-probe-stm32f769-disco",
 ]
 
 # Crates host-side (std, triple del PC). Se EXCLUYEN del workspace embebido para
@@ -86,6 +88,7 @@ rugus-hal           = { path = "crates/rugus-hal",           version = "0.1.0" }
 rugus-hal-stm32f1   = { path = "crates/rugus-hal-stm32f1",   version = "0.1.0" }
 rugus-hal-stm32f4   = { path = "crates/rugus-hal-stm32f4",   version = "0.1.0" }
 rugus-hal-stm32f7   = { path = "crates/rugus-hal-stm32f7",   version = "0.1.0" }
+rugus-fs            = { path = "crates/rugus-fs",            version = "0.1.0" }
 rugus-net           = { path = "crates/rugus-net",           version = "0.1.0" }
 rugus-crypto        = { path = "crates/rugus-crypto",        version = "0.1.0" }
 rugus-tls           = { path = "crates/rugus-tls",           version = "0.1.0" }

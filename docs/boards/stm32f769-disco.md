@@ -44,6 +44,7 @@ at `192.168.0.112:8443` — see
 | `net-service-stm32f769-disco` | F5.B.1 (pila IP como servicio) |
 | `net-userland-stm32f769-disco` | F5.B.2 (sockets UDP+TCP cliente userland por syscall+IPC bajo MPU) |
 | `qspi-probe-stm32f769-disco` | F5.C.1 (driver QSPI NOR MX25L51245G como `BlockDevice`) |
+| `fs-probe-stm32f769-disco` | F5.C.2 (almacén log-structured `rugus-fs` sobre QSPI; set/get + remontaje + contador de arranques persistente) |
 
 ## Multi-board lab
 

@@ -1,0 +1,20 @@
+[package]
+name        = "rugus-fs"
+description = "Almacén clave-valor log-structured, resistente a corte de energía, sobre `rugus_hal::BlockDevice` (NOR flash)."
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+authors.workspace      = true
+repository.workspace   = true
+
+[dependencies]
+rugus-hal = { workspace = true }
+heapless  = { workspace = true }
+
+[features]
+default = []
+# Backend RAM que emula la semántica NOR (program 1->0, erase a 0xFF). Útil para
+# validar la lógica sin hardware (los tests internos lo activan vía `cfg(test)`).
+# NO se compila en producción embebida salvo que se pida explícitamente.
+mock = []
