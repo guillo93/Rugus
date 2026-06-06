@@ -503,8 +503,8 @@ pub mod user {
     }
 
     /// Crea un socket de red (`Id::NetSocket`). `kind`: 0=UDP, 1=TCP cliente.
-    /// `kind` viaja en `r0`. Retorna un handle (≥0) o [`Errno`] negativo
-    /// ([`Errno::Enosys`] si no hay servicio de red).
+    /// `kind` viaja en `r0`. Retorna un handle (≥0) o [`crate::Errno`] negativo
+    /// ([`crate::Errno::Enosys`] si no hay servicio de red).
     #[inline(always)]
     pub fn net_socket(kind: u32) -> i32 {
         let ret: i32;

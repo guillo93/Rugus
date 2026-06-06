@@ -1014,8 +1014,8 @@ mod mpu_sandbox_tests {
 mod abi_tests {
     use rugus_core::sched::TaskId;
     use rugus_core::syscall::{dispatch, validate_user_range, Hooks, Id, ABI_VERSION};
-    use rugus_core::Errno;
     use rugus_core::Domain;
+    use rugus_core::Errno;
 
     fn h_yield() {}
     fn h_sleep(_ms: u32) {}
