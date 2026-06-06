@@ -13,11 +13,13 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod block;
 pub mod crypto;
 pub mod digital;
 pub mod eth;
 pub mod serial;
 
+pub use block::BlockDevice;
 pub use crypto::CryptoRng;
 
 pub use digital::GpioPin;

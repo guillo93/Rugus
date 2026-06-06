@@ -27,6 +27,7 @@ members = [
   "examples/eth-link-stm32f769-disco",
   "examples/net-service-stm32f769-disco",
   "examples/net-userland-stm32f769-disco",
+  "examples/qspi-probe-stm32f769-disco",
 ]
 
 # Crates host-side (std, triple del PC). Se EXCLUYEN del workspace embebido para

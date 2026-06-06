@@ -912,6 +912,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "qspi-probe-stm32f769-disco"
+version = "0.1.0"
+dependencies = [
+ "cortex-m",
+ "defmt 1.1.0",
+ "rugus-hal",
+ "rugus-hal-stm32f7",
+ "rugus-runtime",
+]
+
+[[package]]
 name = "quote"
 version = "1.0.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
