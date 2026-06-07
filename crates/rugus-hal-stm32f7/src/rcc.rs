@@ -59,6 +59,21 @@ pub fn init(dp: &pac::Peripherals) -> Clocks {
     }
 }
 
+/// Restaura SYSCLK a 216 MHz tras salir de STOP (F5.A.2).
+///
+/// STOP apaga HSE y PLL y deja el reloj del sistema en HSI 16 MHz; además sale
+/// del modo over-drive. Los registros de configuración del RCC (PLLCFGR,
+/// prescalers de bus) y la latencia de flash se conservan, así que basta con
+/// re-armar over-drive → HSE → PLL y reconmutar SYSCLK a PLL.
+pub fn restore_after_stop(dp: &pac::Peripherals) {
+    let rcc = &dp.RCC;
+    let pwr = &dp.PWR;
+    enable_overdrive(pwr);
+    enable_hse(rcc);
+    enable_pll(rcc);
+    switch_to_pll(rcc);
+}
+
 fn enable_pwr_clock(rcc: &pac::RCC) {
     rcc.apb1enr.modify(|_, w| w.pwren().enabled());
     // Lectura dummy para que el enable se propague (RM0385 §6.3.14).

@@ -32,3 +32,9 @@ systick = []
 # ociosos. Requiere `systick` (la contabilidad vive en su ISR). OFF por defecto:
 # los ejemplos conservan el tick fijo de 1 kHz salvo que lo activen.
 tickless = ["systick"]
+# STOP mode (F5.A.2): en idle profundo (plazo > umbral) entra en STOP en vez de
+# `wfi`, durmiendo con un temporizador de baja potencia (RTC+LSI en el F769) que
+# la placa inyecta vía `time::set_stop_handler`. Requiere `tickless` (la decisión
+# vive en `idle_until`). OFF por defecto. El reloj monotónico avanza con la
+# precisión del reloj de baja potencia SOLO durante el STOP.
+stop = ["tickless"]

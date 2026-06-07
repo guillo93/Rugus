@@ -47,6 +47,7 @@ at `192.168.0.112:8443` — see
 | `fs-probe-stm32f769-disco` | F5.C.2 (almacén log-structured `rugus-fs` sobre QSPI; set/get + remontaje + contador de arranques persistente) |
 | `fs-userland-stm32f769-disco` | F5.C.3 (API de ficheros userland open/read/write/close por syscall+IPC bajo MPU sobre `rugus-fs`; persiste config + log circular de faults) |
 | `tickless-stm32f769-disco` | F5.A.1 (tick dinámico: el scheduler reprograma SysTick al próximo plazo en idle; LED 1 Hz exacto con ~16 IRQs/s vs 1000 fijas, sin deriva del reloj) |
+| `stop-mode-stm32f769-disco` | F5.A.2 (modo STOP con wake por RTC/LSI: en plazos ≥ umbral el idle apaga HSE/PLL y entra en STOP, despertando con el wakeup timer del RTC y restaurando 216 MHz; LED 2 s con +1 entrada a STOP por ciclo y `now_ms` +2001 ms, LSI dentro de ±5 %) |
 
 ## Multi-board lab
 
