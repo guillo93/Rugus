@@ -72,6 +72,13 @@ static STOP_THRESHOLD_MS: AtomicU32 = AtomicU32::new(u32::MAX);
 #[cfg(feature = "stop")]
 static STOP_ENTRIES: AtomicU32 = AtomicU32::new(0);
 
+/// Milisegundos acumulados que el núcleo ha pasado ocioso (dormido en `wfi`
+/// tickless o en STOP) desde [`init`]. Métrica de energía (F5.A.3): comparado
+/// con [`now_ms`] da el porcentaje de tiempo en bajo consumo. Solo se actualiza
+/// en el camino de [`idle_until`] (feature `tickless`); en builds sin tick
+/// dinámico queda en 0.
+static IDLE_MS: AtomicU32 = AtomicU32::new(0);
+
 /// Puntero a la función de preempción que la capa de kernel registra con
 /// [`set_preempt_hook`]; 0 = sin hook (clock monotónico puro, sin preempción).
 /// La ISR de SysTick la invoca en cada tick. Se guarda como `usize` porque no
@@ -220,6 +227,17 @@ pub fn systick_irqs() -> u32 {
     SYSTICK_IRQS.load(Ordering::Relaxed)
 }
 
+/// Milisegundos que el núcleo ha pasado ocioso (dormido) desde [`init`] (F5.A.3).
+///
+/// Suma el tiempo dormido en `wfi` con tick dinámico y en STOP. Dividido por
+/// [`now_ms`] da el porcentaje de tiempo en bajo consumo, métrica clave de
+/// energía para la consola de operador. Sin feature `tickless` queda en 0
+/// (el idle de ese build no se contabiliza aquí).
+#[inline]
+pub fn idle_ms() -> u32 {
+    IDLE_MS.load(Ordering::Relaxed)
+}
+
 /// Espera ociosa con tick dinámico (F5.A.1): duerme el núcleo hasta el próximo
 /// plazo del scheduler (`next_wake_ms`) o hasta una IRQ externa, reprogramando
 /// SysTick para no interrumpir cada milisegundo.
@@ -242,8 +260,13 @@ pub fn idle_until(next_wake_ms: Option<u32>) {
         _ => 0, // Some(1): tick normal de 1 ms basta.
     };
 
+    // Marca de inicio para contabilizar el tiempo ocioso (F5.A.3): cada salida
+    // del camino de sueño suma a `IDLE_MS` los ms realmente dormidos.
+    let idle_start = now_ms();
+
     if extend < 2 {
         cortex_m::asm::wfi();
+        IDLE_MS.fetch_add(now_ms().wrapping_sub(idle_start), Ordering::Relaxed);
         return;
     }
 
@@ -262,6 +285,7 @@ pub fn idle_until(next_wake_ms: Option<u32>) {
                 let f: fn(u32) -> u32 = unsafe { core::mem::transmute(handler) };
                 let slept = f(req);
                 MILLIS.fetch_add(slept, Ordering::Relaxed);
+                IDLE_MS.fetch_add(slept, Ordering::Relaxed);
                 STOP_ENTRIES.fetch_add(1, Ordering::Relaxed);
                 // SysTick siguió en reload de 1 ms (no lo tocamos); realinea el
                 // contador para que el primer tick post-STOP sea completo.
@@ -319,4 +343,8 @@ pub fn idle_until(next_wake_ms: Option<u32>) {
         syst.set_reload(units.saturating_sub(1) & 0x00FF_FFFF);
         syst.clear_current();
     });
+
+    // Contabiliza el tiempo dormido en este intervalo (F5.A.3). `now_ms` ya
+    // refleja lo sumado por la ISR o por la re-sincronización de arriba.
+    IDLE_MS.fetch_add(now_ms().wrapping_sub(idle_start), Ordering::Relaxed);
 }

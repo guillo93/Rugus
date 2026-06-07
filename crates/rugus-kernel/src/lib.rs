@@ -190,6 +190,61 @@ pub fn reset_cause() -> &'static str {
     unsafe { RESET_CAUSE }
 }
 
+/// Métricas de energía/idle que la placa publica para la consola (`power`,
+/// F5.A.3). El kernel no conoce el backend de tiempo: la placa rellena estos
+/// contadores desde su capa arch (p. ej. `time::now_ms`/`idle_ms`/`stop_entries`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PowerStats {
+    /// Uptime monotónico en ms desde el arranque.
+    pub uptime_ms: u32,
+    /// Ms acumulados en bajo consumo (núcleo dormido en idle).
+    pub idle_ms: u32,
+    /// Disparos de la ISR de SysTick (evidencia del ahorro del tick dinámico).
+    pub systick_irqs: u32,
+    /// Nº de entradas en STOP (0 si la placa no usa modo STOP).
+    pub stop_entries: u32,
+}
+
+impl PowerStats {
+    /// Porcentaje (0..=100) del uptime que el núcleo ha pasado ocioso. 0 si aún
+    /// no hay uptime medible. Acota a 100 por si el redondeo del idle lo supera.
+    pub fn idle_percent(&self) -> u32 {
+        if self.uptime_ms == 0 {
+            return 0;
+        }
+        // u64 para no desbordar idle_ms*100 en uptimes largos.
+        let pct = (self.idle_ms as u64 * 100) / self.uptime_ms as u64;
+        if pct > 100 {
+            100
+        } else {
+            pct as u32
+        }
+    }
+}
+
+/// Proveedor de métricas de energía registrado por la placa, o `None` si la
+/// plataforma no expone energía (la consola lo indica).
+static mut POWER_PROVIDER: Option<fn() -> PowerStats> = None;
+
+/// Registra el proveedor de métricas de energía para la consola (F5.A.3).
+///
+/// # Safety
+/// Llamar una sola vez en el arranque single-thread, antes de `start`.
+pub unsafe fn set_power_provider(provider: fn() -> PowerStats) {
+    // SAFETY: escritura única en arranque cooperativo single-thread.
+    unsafe {
+        POWER_PROVIDER = Some(provider);
+    }
+}
+
+/// Lee las métricas de energía del proveedor registrado, o `None` si la placa no
+/// registró ninguno.
+pub fn power_stats() -> Option<PowerStats> {
+    // SAFETY: el proveedor se fija una vez al arranque; lecturas cooperativas.
+    let provider = unsafe { POWER_PROVIDER };
+    provider.map(|f| f())
+}
+
 /// Trampolín de preempción invocado por la ISR de SysTick: rutea al scheduler.
 fn preempt_tick() {
     // SAFETY: corre en la ISR de SysTick; el modo hilo enmascara SysTick

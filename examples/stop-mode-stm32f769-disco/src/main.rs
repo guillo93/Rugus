@@ -18,11 +18,18 @@
 //! que `now_ms` avanza con esa tolerancia SOLO durante el sueño; en RUN se
 //! conserva la exactitud del tick dinámico.
 //!
+//! **Contabilidad de energía (F5.A.3):** la capa de tiempo acumula el tiempo
+//! dormido (`time::idle_ms`); este ejemplo registra un proveedor `PowerStats`
+//! (`rugus_kernel::set_power_provider`) que mapea uptime / idle / systick_irqs /
+//! stop_entries, los mismos que expone la consola de operador con el comando
+//! `power`. Aquí se imprimen por RTT en cada parpadeo.
+//!
 //! Validación visible: el LED rojo (LD1/PJ13) parpadea cada **2 s** (plazo por
 //! encima del umbral → cada ciclo entra en STOP) y por RTT se imprimen, en cada
-//! parpadeo, `now_ms` y el nº de **entradas a STOP** acumuladas (`stop_entries`),
-//! que debe crecer +1 por parpadeo. Para ver RTT durante el STOP se mantiene
-//! vivo el dominio de depuración con `power::keep_debug_in_stop` (solo banco).
+//! parpadeo, `now_ms`, el nº de **entradas a STOP** acumuladas (`stop_entries`,
+//! +1 por parpadeo) y el tiempo ocioso acumulado con su **% de idle** (~99 %).
+//! Para ver RTT durante el STOP se mantiene vivo el dominio de depuración con
+//! `power::keep_debug_in_stop` (solo banco).
 
 #![no_std]
 #![no_main]
@@ -39,6 +46,7 @@ use rugus_hal::GpioPin;
 use rugus_hal_stm32f7::gpio::{DiscoLed, LedPin};
 use rugus_hal_stm32f7::pac;
 use rugus_hal_stm32f7::{cache, power, rcc};
+use rugus_kernel::PowerStats;
 
 /// Umbral de plazo a partir del cual el idle entra en STOP (ms). Plazos más
 /// cortos siguen usando el tick dinámico (SysTick extendido + `wfi`).
@@ -51,6 +59,17 @@ static mut STACK_BLINK: Stack4k = Stack4k([0; 4096]);
 
 /// LED de latido (LD Red), poseído por la tarea de parpadeo.
 static mut HB_LED: Option<LedPin> = None;
+
+/// Proveedor de métricas de energía para la consola/telemetría (F5.A.3): mapea
+/// los contadores de la capa de tiempo del backend arch a `PowerStats`.
+fn power_provider() -> PowerStats {
+    PowerStats {
+        uptime_ms: time::now_ms(),
+        idle_ms: time::idle_ms(),
+        systick_irqs: time::systick_irqs(),
+        stop_entries: time::stop_entries(),
+    }
+}
 
 #[entry]
 fn main() -> ! {
@@ -81,6 +100,12 @@ fn main() -> ! {
     // Inyecta el manejador de STOP en el backend arch: en idle, si el próximo
     // plazo ≥ umbral, `idle_until` llama a `enter_stop_ms` en vez del `wfi`.
     time::set_stop_handler(power::enter_stop_ms, STOP_THRESHOLD_MS);
+
+    // Publica las métricas de energía para la consola de operador (F5.A.3).
+    // SAFETY: arranque single-thread; el proveedor se registra una sola vez.
+    unsafe {
+        rugus_kernel::set_power_provider(power_provider);
+    }
 
     // SAFETY: arranque single-thread; el LED se inicializa una sola vez aquí.
     unsafe {
@@ -116,12 +141,15 @@ fn blink_task() -> ! {
         }
         let now = time::now_ms();
         let stops = time::stop_entries();
+        let p = power_provider();
         defmt::info!(
-            "blink: t={=u32} ms (+{=u32}), stop_entries={=u32} (+{=u32})",
+            "blink: t={=u32} ms (+{=u32}), stop_entries={=u32} (+{=u32}), idle={=u32} ms ({=u32}%)",
             now,
             now.wrapping_sub(last_ms),
             stops,
             stops.wrapping_sub(last_stops),
+            p.idle_ms,
+            p.idle_percent(),
         );
         last_ms = now;
         last_stops = stops;
