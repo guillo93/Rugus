@@ -15,7 +15,7 @@ use rugus_hal_stm32f1::spi_sd::{SdStatus, Spi1Sd};
 use rugus_hal_stm32f1::uart2::Usart2;
 use rugus_hal_stm32f1::wdt::Watchdog;
 use rugus_rfn::{parse_rfn, AfrHeader, ConfigMap, MAX_FIELD};
-use rush::{execute, identify, parse, Write};
+use rush::{execute_authed, identify, parse, AuthHooks, Session, Write};
 
 /// Config RFN embebida por defecto (sin SD).
 const DEFAULT_RFN: &str =
@@ -46,6 +46,11 @@ static mut MODULE_ECO: Option<&'static str> = None;
 static mut MODULE_STATUS: ModuleStatus = ModuleStatus::Idle;
 static mut IDENT_LINE: [u8; 128] = [0; 128];
 static mut IDENT_LEN: usize = 0;
+/// Sesión de autenticación del bus de módulos (USART2/BLE). Independiente de la
+/// consola USART1: cada transporte exige su propio handshake.
+static mut SESSION_USART2: Session = Session::new();
+/// Ganchos de autenticación, fijados por `main` vía [`set_auth_hooks`].
+static mut AUTH_HOOKS: Option<AuthHooks> = None;
 
 /// Capacidad del registro de apps `.afr` conocidas por el dispositivo.
 const APP_SLOTS: usize = 4;
@@ -126,7 +131,10 @@ pub fn poll_identify_usart2() {
                     identify::write_signature(&mut ModuleWriter, identify::TIER, identify::CHIP);
                 } else if let Ok(line) = core::str::from_utf8(&IDENT_LINE[..IDENT_LEN]) {
                     let cmd = parse(line);
-                    execute(cmd, line, &mut ModuleWriter);
+                    // Mismo gate que USART1: sin sesión, solo IDENTIFY+handshake.
+                    if let Some(hooks) = AUTH_HOOKS.as_ref() {
+                        execute_authed(cmd, line, &mut ModuleWriter, &mut SESSION_USART2, hooks);
+                    }
                 }
                 heartbeat::note(heartbeat::CLI_CMD);
                 IDENT_LEN = 0;
@@ -260,6 +268,14 @@ unsafe fn find_app(name: &str) -> Option<usize> {
             .map(|a| a.name.as_str() == name)
             .unwrap_or(false)
     })
+}
+
+/// Registra los ganchos de autenticación para el bus de módulos (USART2). Lo
+/// cablea `main`; sin ellos, `poll_identify_usart2` no procesa comandos.
+pub fn set_auth_hooks(hooks: AuthHooks) {
+    unsafe {
+        AUTH_HOOKS = Some(hooks);
+    }
 }
 
 pub fn set_task_count(n: u32) {

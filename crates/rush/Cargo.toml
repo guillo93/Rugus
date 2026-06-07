@@ -19,6 +19,11 @@ bench = false
 # por defecto, también en el recorte lite.
 default = ["power"]
 power = []
+# `auth`: gate de autenticación de canal (challenge-response HMAC). Con esta
+# feature, la consola exige sesión autenticada antes de cualquier verbo salvo
+# IDENTIFY y el propio handshake (knock/prove/lock/enroll). La PSK y el cómputo
+# HMAC viven en la PERSONALIDAD (hook `verify_proof`); rush nunca ve el secreto.
+auth = []
 
 [dependencies]
 rugus-core = { workspace = true }

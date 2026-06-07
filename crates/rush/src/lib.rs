@@ -12,10 +12,16 @@
 pub mod ansi;
 mod commands;
 pub mod identify;
+#[cfg(feature = "auth")]
+pub mod session;
 
 pub use ansi::Write;
+#[cfg(feature = "auth")]
+pub use commands::execute_authed;
 pub use commands::{execute, parse, Command};
 pub use identify::{write_signature, ENQ, PROTO_VERSION, SHELL_NAME};
+#[cfg(feature = "auth")]
+pub use session::{AuthHooks, Session};
 
 /// Versión del léxico de la shell expuesta en `cosmos` y en `IDENTIFY`.
 pub const CLI_VERSION: &str = "1.0.0";

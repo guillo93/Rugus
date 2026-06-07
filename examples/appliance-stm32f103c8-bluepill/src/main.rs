@@ -4,7 +4,9 @@
 #![no_main]
 #![allow(static_mut_refs)]
 
+mod auth;
 mod heartbeat;
+mod psk;
 mod services;
 
 use core::ptr::{addr_of, addr_of_mut};
@@ -25,7 +27,7 @@ use rugus_hal_stm32f1::wdt::Watchdog;
 use rugus_runtime as _; // panic-probe + defmt-rtt
 use rugus_runtime::entry;
 use rush::Write;
-use rush::{execute, identify, parse};
+use rush::{execute_authed, identify, parse, AuthHooks, Session};
 
 type Sched = Scheduler<CortexM>;
 
@@ -43,6 +45,11 @@ static mut STACK_STING: [u8; 512] = [0; 512];
 static mut CONSOLE: Option<Usart1> = None;
 static mut LINE: [u8; 128] = [0; 128];
 static mut LINE_LEN: usize = 0;
+/// Sesión de autenticación de la consola USART1 (challenge-response HMAC). Cada
+/// transporte tiene la suya: autenticar por serie no abre el canal BLE.
+static mut SESSION: Session = Session::new();
+/// Ganchos de autenticación (PSK en flash + HMAC + nonce); fijados en `main`.
+static mut AUTH_HOOKS: Option<AuthHooks> = None;
 static mut IWDG_PTR: *const pac::IWDG = core::ptr::null();
 
 struct UartWriter;
@@ -104,7 +111,11 @@ fn cli_poll_line(writer: &mut UartWriter) -> bool {
             if LINE_LEN > 0 {
                 let line = core::str::from_utf8(&LINE[..LINE_LEN]).unwrap_or("");
                 let cmd = parse(line);
-                execute(cmd, line, writer);
+                // Todo gateado: sin sesión autenticada solo pasan IDENTIFY y el
+                // propio handshake (knock/prove/lock/enroll). El resto exige PSK.
+                if let Some(hooks) = AUTH_HOOKS.as_ref() {
+                    execute_authed(cmd, line, writer, &mut SESSION, hooks);
+                }
                 heartbeat::note(heartbeat::CLI_CMD);
                 LINE_LEN = 0;
             }
@@ -227,6 +238,9 @@ fn main() -> ! {
             checkin: || {},
         });
         lite::register(services::hooks());
+        // Ganchos de autenticación de canal: PSK en flash + HMAC + nonce CSPRNG.
+        AUTH_HOOKS = Some(auth::hooks());
+        services::set_auth_hooks(auth::hooks());
         CONSOLE = Some(console);
         let iwdg = &*IWDG_PTR;
         let mut wdt = Watchdog::configure(iwdg);
