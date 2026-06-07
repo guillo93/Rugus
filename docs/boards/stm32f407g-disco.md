@@ -83,6 +83,12 @@ cd examples/dual-blink-stm32f407g-disco && cargo run --release
 
 # MPU sandbox: kernel + userland apps, MemManage kill policy
 cd examples/app-sandbox-stm32f407g-disco && cargo run --release
+
+# Consola de energía (F5.A.3): comando `power` sobre UART real con tick dinámico
+# (tickless). Tareas que duermen → idle ~100 %; SysTick reprogramado al próximo
+# plazo (≈6 k IRQ en 175 s vs 175 k fijas). `stop_entries=0` (STOP es del F7).
+# UART USB-TTL: GND↔GND, RX↔PA2 (TX placa), TX↔PA3 (RX placa), 115200 8N1.
+cd examples/console-power-stm32f407g-disco && cargo run
 ```
 
 Verify scripts (default `PROBE_RS_PROBE` for this board’s ST-Link):

@@ -33,6 +33,7 @@ members = [
   "examples/fs-userland-stm32f769-disco",
   "examples/tickless-stm32f769-disco",
   "examples/stop-mode-stm32f769-disco",
+  "examples/console-power-stm32f407g-disco",
 ]
 
 # Crates host-side (std, triple del PC). Se EXCLUYEN del workspace embebido para

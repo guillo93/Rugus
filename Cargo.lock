@@ -210,6 +210,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "console-power-stm32f407g-disco"
+version = "0.1.0"
+dependencies = [
+ "cortex-m",
+ "defmt 1.1.0",
+ "rugus-arch-cortex-m",
+ "rugus-core",
+ "rugus-hal",
+ "rugus-hal-stm32f4",
+ "rugus-kernel",
+ "rugus-runtime",
+]
+
+[[package]]
 name = "const-oid"
 version = "0.9.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
