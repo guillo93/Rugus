@@ -26,5 +26,9 @@ rugus-hal-stm32f1   = { workspace = true, features = ["stm32f103"] }
 rugus-core          = { workspace = true }
 # `tickless`: tick dinámico para contabilizar ocio real (`letargo`/idle %).
 rugus-arch-cortex-m = { workspace = true, features = ["tickless"] }
-rush                = { workspace = true }
+# `auth`: gate de autenticación de canal (challenge-response HMAC). La PSK y el
+# cómputo HMAC viven en esta personalidad (módulos `psk`/`auth`), no en rush.
+rush                = { workspace = true, features = ["auth"] }
 rugus-rfn           = { workspace = true }
+rugus-crypto        = { workspace = true }
+rand_core           = { workspace = true }

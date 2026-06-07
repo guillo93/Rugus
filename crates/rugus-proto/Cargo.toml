@@ -10,3 +10,8 @@ repository  = "https://github.com/guillo93/Rugus"
 
 [lib]
 name = "rugus_proto"
+
+[dependencies]
+# HMAC-SHA256 compartido con el dispositivo: host y firmware usan EXACTAMENTE el
+# mismo código de MAC, así el handshake de autenticación no puede divergir.
+rugus-crypto = { path = "../rugus-crypto" }

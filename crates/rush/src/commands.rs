@@ -113,6 +113,28 @@ pub enum Command {
     /// `letargo` → sys_power (energía/ocio: uptime, idle %, systick).
     #[cfg(feature = "power")]
     Letargo,
+    /// `knock` → pide reto de autenticación (challenge-response).
+    #[cfg(feature = "auth")]
+    Knock,
+    /// `prove <proof-hex>` → responde el reto de autenticación.
+    #[cfg(feature = "auth")]
+    Prove {
+        /// Offset del hex de prueba en la línea original.
+        hex_off: usize,
+        /// Longitud del hex de prueba.
+        hex_len: usize,
+    },
+    /// `lock` → cierra la sesión autenticada.
+    #[cfg(feature = "auth")]
+    Lock,
+    /// `enroll <psk-hex>` → aprovisiona la PSK (una sola vez).
+    #[cfg(feature = "auth")]
+    Enroll {
+        /// Offset del hex de PSK en la línea original.
+        hex_off: usize,
+        /// Longitud del hex de PSK.
+        hex_len: usize,
+    },
     /// `IDENTIFY` → firma del protocolo de descubrimiento (host serie/BLE).
     Identify,
     /// Línea vacía o desconocida.
@@ -135,6 +157,20 @@ pub fn parse(line: &str) -> Command {
         "ecosystem" => Command::Ecosystem,
         #[cfg(feature = "power")]
         "letargo" => Command::Letargo,
+        #[cfg(feature = "auth")]
+        "knock" => Command::Knock,
+        #[cfg(feature = "auth")]
+        "prove" => parse_hex_arg(trimmed).map_or(Command::Unknown, |(off, len)| Command::Prove {
+            hex_off: off,
+            hex_len: len,
+        }),
+        #[cfg(feature = "auth")]
+        "lock" => Command::Lock,
+        #[cfg(feature = "auth")]
+        "enroll" => parse_hex_arg(trimmed).map_or(Command::Unknown, |(off, len)| Command::Enroll {
+            hex_off: off,
+            hex_len: len,
+        }),
         "pulso" => parse_gpio_cmd(parts, GpioKind::Pulso),
         "spark" => parse_gpio_cmd(parts, GpioKind::Spark),
         "mute" => parse_gpio_cmd(parts, GpioKind::Mute),
@@ -232,6 +268,21 @@ fn parse_scribe(line: &str) -> Command {
         val_off: val_start,
         val_len: val.len(),
     }
+}
+
+/// Localiza el primer argumento (segundo token) de `line` y devuelve su
+/// (offset, longitud) en bytes dentro de la línea recortada. `None` si falta.
+/// Usado por los verbos de autenticación que llevan un hex (prove/enroll).
+#[cfg(feature = "auth")]
+fn parse_hex_arg(line: &str) -> Option<(usize, usize)> {
+    let mut parts = line.split_whitespace();
+    let _ = parts.next();
+    let arg = parts.next()?;
+    if arg.is_empty() {
+        return None;
+    }
+    let off = line.find(arg).unwrap_or(0);
+    Some((off, arg.len()))
 }
 
 fn parse_hatch(line: &str) -> Command {
@@ -351,9 +402,56 @@ pub fn execute(cmd: Command, line: &str, out: &mut dyn Write) {
         Command::Sting => exec_sting(out),
         #[cfg(feature = "power")]
         Command::Letargo => exec_letargo(out),
+        // Los verbos de autenticación SOLO se procesan por `execute_authed`, que
+        // tiene acceso a la sesión y a los hooks de la personalidad. Si alguien
+        // los pasa al `execute` plano (sin gate), se rechazan: fail-closed.
+        #[cfg(feature = "auth")]
+        Command::Knock | Command::Lock | Command::Prove { .. } | Command::Enroll { .. } => {
+            let _ = out.write_str("auth: usa la consola autenticada\r\n");
+        }
         Command::Identify => identify::write_signature(out, identify::TIER, identify::CHIP),
         Command::Unknown => {
             let _ = out.write_str("?\r\n");
+        }
+    }
+}
+
+/// Ejecuta un comando bajo el gate de autenticación de canal (feature `auth`).
+///
+/// Política «todo gateado»: sin sesión autenticada solo se permiten `IDENTIFY`,
+/// `orbit` (ayuda) y el propio handshake (`knock`/`prove`/`lock`/`enroll`).
+/// Cualquier otro verbo se rechaza hasta que el operador pruebe la PSK. La placa
+/// usa esta función en vez de [`execute`]; los `exec_*` se reutilizan tal cual.
+#[cfg(feature = "auth")]
+pub fn execute_authed(
+    cmd: Command,
+    line: &str,
+    out: &mut dyn Write,
+    session: &mut crate::session::Session,
+    hooks: &crate::session::AuthHooks,
+) {
+    match cmd {
+        // Handshake: lo maneja la propia sesión (acceso al nonce y a los hooks).
+        Command::Knock => session.knock(out, hooks),
+        Command::Prove { hex_off, hex_len } => {
+            let proof = &line.as_bytes()[hex_off..hex_off + hex_len];
+            session.prove(proof, out, hooks);
+        }
+        Command::Lock => session.lock(out),
+        Command::Enroll { hex_off, hex_len } => {
+            let psk = &line.as_bytes()[hex_off..hex_off + hex_len];
+            session.enroll(psk, out, hooks);
+        }
+        // Permitidos sin autenticar: descubrimiento y ayuda (no filtran estado
+        // sensible). `Unknown` cae aquí para devolver el `?` habitual.
+        Command::Identify | Command::Orbit | Command::Unknown => execute(cmd, line, out),
+        // Resto: privilegiado. Exige sesión autenticada (con timeout).
+        other => {
+            if session.is_authenticated(hooks) {
+                execute(other, line, out);
+            } else {
+                let _ = out.write_str("bloqueado: autentícate con `knock` y `prove`\r\n");
+            }
         }
     }
 }

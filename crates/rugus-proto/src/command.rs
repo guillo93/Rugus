@@ -32,6 +32,10 @@ pub const LEXICON: &[(&str, &str)] = &[
     ("anchor", "modo fail-safe"),
     ("ward", "watchdog — ward [kick]"),
     ("IDENTIFY", "firma de descubrimiento del dispositivo"),
+    ("knock", "pide reto de autenticación (challenge-response)"),
+    ("prove", "responde el reto — prove <proof-hex>"),
+    ("lock", "cierra la sesión autenticada"),
+    ("enroll", "aprovisiona la PSK (una vez) — enroll <psk-hex>"),
 ];
 
 /// Comando del host. Los verbos conocidos se tipan; el resto es passthrough.

@@ -14,8 +14,10 @@
 #![no_std]
 #![warn(missing_docs)]
 
+pub mod mac;
 pub mod software;
 
+pub use mac::{ct_eq, hmac_sha256};
 pub use software::{Sha256, SoftwareRng};
 
 /// SHA-256 digest (32 bytes).
