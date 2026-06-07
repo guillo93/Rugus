@@ -19,7 +19,7 @@ pub use ansi::Write;
 #[cfg(feature = "auth")]
 pub use commands::execute_authed;
 pub use commands::{execute, parse, Command};
-pub use identify::{write_signature, ENQ, PROTO_VERSION, SHELL_NAME};
+pub use identify::{write_signature, write_signature_ext, ENQ, PROTO_VERSION, SHELL_NAME};
 #[cfg(feature = "auth")]
 pub use session::{AuthHooks, Session};
 
