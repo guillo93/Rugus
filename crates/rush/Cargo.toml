@@ -12,6 +12,14 @@ repository.workspace   = true
 test = false
 bench = false
 
+[features]
+# Consola universal de Rugus (multipersonalidad): set base + comandos gateables.
+# La personalidad lite (F103) habilita solo lo que cabe; el resto de placas/PC
+# pueden activar más. `power` (comando `letargo`: energía/ocio) es pequeño y va
+# por defecto, también en el recorte lite.
+default = ["power"]
+power = []
+
 [dependencies]
 rugus-core = { workspace = true }
 heapless   = { workspace = true }

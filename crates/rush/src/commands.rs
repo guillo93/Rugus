@@ -110,6 +110,9 @@ pub enum Command {
     },
     /// `sting` → provoca un fault controlado para validar el failsafe
     Sting,
+    /// `letargo` → sys_power (energía/ocio: uptime, idle %, systick).
+    #[cfg(feature = "power")]
+    Letargo,
     /// `IDENTIFY` → firma del protocolo de descubrimiento (host serie/BLE).
     Identify,
     /// Línea vacía o desconocida.
@@ -130,6 +133,8 @@ pub fn parse(line: &str) -> Command {
         "cosmos" => Command::Cosmos,
         "orbit" => Command::Orbit,
         "ecosystem" => Command::Ecosystem,
+        #[cfg(feature = "power")]
+        "letargo" => Command::Letargo,
         "pulso" => parse_gpio_cmd(parts, GpioKind::Pulso),
         "spark" => parse_gpio_cmd(parts, GpioKind::Spark),
         "mute" => parse_gpio_cmd(parts, GpioKind::Mute),
@@ -344,6 +349,8 @@ pub fn execute(cmd: Command, line: &str, out: &mut dyn Write) {
         Command::Ward { action } => exec_ward(out, action),
         Command::Scar { clear } => exec_scar(out, clear),
         Command::Sting => exec_sting(out),
+        #[cfg(feature = "power")]
+        Command::Letargo => exec_letargo(out),
         Command::Identify => identify::write_signature(out, identify::TIER, identify::CHIP),
         Command::Unknown => {
             let _ = out.write_str("?\r\n");
@@ -374,12 +381,21 @@ fn exec_ecosystem(out: &mut dyn Write) {
     write_syscall_buf(out, user::sys_status);
 }
 
+/// `letargo` → métricas de energía/ocio (uptime, idle %, systick). El syscall
+/// `sys_power` lo rellena la personalidad: idle % real donde haya tick dinámico.
+#[cfg(feature = "power")]
+fn exec_letargo(out: &mut dyn Write) {
+    write_syscall_buf(out, user::sys_power);
+}
+
 fn exec_orbit(out: &mut dyn Write) {
     ansi::orbit_banner(out);
     let _ = out.write_str("cosmos orbit ecosystem moor pulso spark mute ripple\r\n");
     let _ =
         out.write_str("scout sonar schema scribe seal nest nest renew hatch coil anchor ward\r\n");
     let _ = out.write_str("scar [clear] sting\r\n");
+    #[cfg(feature = "power")]
+    let _ = out.write_str("letargo — energía: uptime, idle %, systick\r\n");
     let _ = out.write_str("anchor — fail-safe ON | anchor off|release — fail-safe OFF\r\n");
     let _ = out.write_str("scar — última cicatriz de fault | sting — provoca fault de prueba\r\n");
 }

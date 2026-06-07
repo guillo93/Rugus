@@ -325,6 +325,7 @@ pub fn hooks() -> Hooks {
     Hooks {
         sys_info: hook_sys_info,
         sys_status: hook_sys_status,
+        sys_power: hook_sys_power,
         gpio_read: hook_gpio_read,
         gpio_write: hook_gpio_write,
         gpio_toggle: hook_gpio_toggle,
@@ -468,6 +469,39 @@ fn hook_sys_status(out: &mut [u8]) -> usize {
         }
     }
     let _ = line.push_str("\r\n");
+    write_bytes(out, line.as_bytes())
+}
+
+/// Métricas de energía/ocio (`letargo`): uptime, % de tiempo ocioso e ISRs de
+/// SysTick. Mismo verbo y formato que el resto de personalidades Rugus (rush
+/// universal); en la personalidad lite (F103) STOP no aplica y se omite.
+///
+/// El % de ocio sale de [`idle_ms`](rugus_arch_cortex_m::time::idle_ms) sobre
+/// [`now_ms`](rugus_arch_cortex_m::time::now_ms): solo es significativo con el
+/// tick dinámico (`tickless`) activo y tareas que duermen de verdad. Comparar
+/// `systick` contra `uptime` (en ms) revela cuánto recorta el tick dinámico las
+/// interrupciones de reloj durante el ocio.
+fn hook_sys_power(out: &mut [u8]) -> usize {
+    let ms = rugus_arch_cortex_m::time::now_ms();
+    let idle = rugus_arch_cortex_m::time::idle_ms();
+    let irqs = rugus_arch_cortex_m::time::systick_irqs();
+    // Porcentaje entero de ocio con redondeo, saturado a 100. Evita 64 bits:
+    // idle*100 cabe en u32 mientras uptime < ~49 días, suficiente aquí.
+    let pct = idle
+        .saturating_mul(100)
+        .checked_div(ms)
+        .unwrap_or(0)
+        .min(100);
+    let mut line: String<160> = String::new();
+    let _ = line.push_str("uptime: ");
+    push_uptime(&mut line, ms);
+    let _ = line.push_str("\r\nidle: ");
+    push_u32(&mut line, pct);
+    let _ = line.push_str("% (");
+    push_u32(&mut line, idle);
+    let _ = line.push_str(" ms)\r\nsystick: ");
+    push_u32(&mut line, irqs);
+    let _ = line.push_str(" irqs\r\n");
     write_bytes(out, line.as_bytes())
 }
 

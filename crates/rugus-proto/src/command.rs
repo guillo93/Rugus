@@ -9,6 +9,7 @@ pub const LEXICON: &[(&str, &str)] = &[
     ("cosmos", "info del sistema (sys_info)"),
     ("orbit", "ayuda / lista de comandos"),
     ("ecosystem", "estado del sistema (sys_status)"),
+    ("letargo", "energía/ocio: uptime, idle %, systick (sys_power)"),
     ("moor", "asociar pin a rol — moor P N rol"),
     ("pulso", "leer GPIO — pulso P N"),
     ("spark", "GPIO alto — spark P N"),
