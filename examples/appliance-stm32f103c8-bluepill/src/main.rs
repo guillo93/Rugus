@@ -29,6 +29,11 @@ use rush::{execute, identify, parse};
 
 type Sched = Scheduler<CortexM>;
 
+/// Cadencia de sondeo de la consola (ms). La tarea CLI drena el ring RX y
+/// duerme este plazo; suficientemente corto para latencia interactiva y largo
+/// para que el núcleo pase la mayor parte del tiempo ocioso (idle % alto).
+const CLI_POLL_MS: u32 = 20;
+
 static mut SCHEDULER: Sched = Sched::new();
 static mut STACK_CLI: [u8; 1536] = [0; 1536];
 static mut STACK_HB: [u8; 1024] = [0; 1024];
@@ -61,18 +66,28 @@ fn cli_task() -> ! {
     let _ = writer.write_str(banner);
 
     loop {
-        cli_poll_line(&mut writer);
+        // Drena todo el ring RX antes de dormir: el bucle no busy-waitea, solo
+        // procesa lo ya recibido por IRQ.
+        while cli_poll_line(&mut writer) {}
         services::poll_identify_usart2();
-        yield_cpu();
+        // Duerme de verdad (bloqueante en el scheduler) hasta el próximo plazo.
+        // Mientras ninguna tarea esté lista el scheduler llega a `A::idle` y el
+        // tick dinámico contabiliza el ocio (métrica `letargo`). La RX por IRQ
+        // sigue acumulando bytes; el sondeo cada ~20 ms los recoge sin pérdida.
+        sleep_ms(CLI_POLL_MS);
     }
 }
 
-fn cli_poll_line(writer: &mut UartWriter) {
+/// Procesa un byte del ring RX de la consola. Devuelve `true` si consumió uno
+/// (puede haber más en cola, drenar de nuevo), `false` si el ring está vacío
+/// (la tarea CLI puede dormir hasta el próximo plazo sin perder bytes: la RX es
+/// por IRQ a un buffer SPSC).
+fn cli_poll_line(writer: &mut UartWriter) -> bool {
     // SAFETY: solo tarea CLI lee consola.
     let byte = unsafe { CONSOLE.as_mut().and_then(|u| u.try_read_byte()) };
 
     let Some(b) = byte else {
-        return;
+        return false;
     };
 
     heartbeat::note(heartbeat::UART_RX);
@@ -81,7 +96,7 @@ fn cli_poll_line(writer: &mut UartWriter) {
     if b == identify::ENQ {
         identify::write_signature(writer, identify::TIER, identify::CHIP);
         heartbeat::note(heartbeat::CLI_CMD);
-        return;
+        return true;
     }
 
     unsafe {
@@ -107,6 +122,7 @@ fn cli_poll_line(writer: &mut UartWriter) {
             }
         }
     }
+    true
 }
 
 fn heartbeat_task() -> ! {
@@ -128,16 +144,19 @@ fn heartbeat_task() -> ! {
     }
 }
 
-/// Espera cooperativa de `ms` milisegundos: cede el CPU y alimenta el watchdog
-/// mientras el reloj monotónico de SysTick no alcance el plazo. No hace
-/// busy-wait: el scheduler sigue corriendo la tarea CLI (sondeo UART) entre
-/// cesiones, así no se pierden bytes RX.
+/// Duerme `ms` milisegundos bloqueando la tarea en el scheduler: la saca de la
+/// lista de listas hasta el plazo, de modo que cuando ninguna otra tarea esté
+/// lista el scheduler ejecute `A::idle` (tick dinámico + `wfi`) y el ocio se
+/// contabilice de verdad (métrica `letargo`/idle %). Alimenta el watchdog antes
+/// y después; con plazos de 20–100 ms << timeout IWDG (~2 s) no hay riesgo.
 fn sleep_ms(ms: u32) {
-    let start = rugus_arch_cortex_m::time::now_ms();
-    while rugus_arch_cortex_m::time::elapsed_ms(start) < ms {
-        kick_wdt();
-        yield_cpu();
+    kick_wdt();
+    // SAFETY: scheduler cooperativo, sin reentrada concurrente; bloquea la
+    // tarea actual hasta el plazo y cede el CPU.
+    unsafe {
+        (&mut *addr_of_mut!(SCHEDULER)).sleep_ms(ms);
     }
+    kick_wdt();
 }
 
 #[entry]

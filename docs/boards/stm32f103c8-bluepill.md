@@ -87,6 +87,10 @@ cargo run --release
   (~0.5 s / ~0.33 s); heap 4 KiB; sin MPU.
 - `appliance-stm32f103c8-bluepill` — UART shell `rush` (fases 1–6) + IDENTIFY, I2C,
   SD/RFN, scheduler, USART2 módulos. Ver [`docs/RUGUS-LITE-APPLIANCE.md`](../RUGUS-LITE-APPLIANCE.md).
+  Incluye el verbo `letargo` (energía/ocio: uptime, idle %, SysTick irqs) sobre el
+  syscall lite `sys_power`, con tick dinámico (`tickless`) y tareas que duermen de
+  verdad en el scheduler → idle % significativo (≈99% en reposo). Mismo verbo del
+  léxico universal `rush` reconocido por `rugus-cli`.
 - Verify:
   - `./tools/verify-blink-stm32f103c8-bluepill.sh`
   - `./tools/verify-dual-blink-stm32f103c8-bluepill.sh`

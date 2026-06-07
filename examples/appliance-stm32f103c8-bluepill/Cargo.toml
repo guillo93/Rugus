@@ -24,6 +24,7 @@ rugus-runtime       = { workspace = true }
 rugus-hal           = { workspace = true }
 rugus-hal-stm32f1   = { workspace = true, features = ["stm32f103"] }
 rugus-core          = { workspace = true }
-rugus-arch-cortex-m = { workspace = true }
+# `tickless`: tick dinámico para contabilizar ocio real (`letargo`/idle %).
+rugus-arch-cortex-m = { workspace = true, features = ["tickless"] }
 rush                = { workspace = true }
 rugus-rfn           = { workspace = true }

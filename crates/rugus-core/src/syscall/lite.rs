@@ -31,6 +31,8 @@ pub enum Id {
     Scar = 0x61,
     /// Provoca un fault controlado para validar el failsafe (`sting`).
     Sting = 0x62,
+    /// Métricas de energía/ocio (`letargo`): uptime, idle %, systick.
+    SysPower = 0x63,
 }
 
 impl Id {
@@ -56,6 +58,7 @@ impl Id {
             0x60 => Some(Self::ModuleRenew),
             0x61 => Some(Self::Scar),
             0x62 => Some(Self::Sting),
+            0x63 => Some(Self::SysPower),
             _ => None,
         }
     }
@@ -78,6 +81,10 @@ pub struct Hooks {
     pub sys_info: fn(&mut [u8]) -> usize,
     /// Escribe estado global en `buf`; retorna bytes escritos.
     pub sys_status: fn(&mut [u8]) -> usize,
+    /// Escribe métricas de energía/ocio en `buf` (`letargo`); retorna bytes
+    /// escritos. La personalidad rellena lo que tenga: uptime + systick siempre;
+    /// idle % solo donde haya contabilidad de ocio (tick dinámico).
+    pub sys_power: fn(&mut [u8]) -> usize,
     /// Lee GPIO. Retorna 0/1 o errno negativo.
     pub gpio_read: fn(port: u8, pin: u8) -> i32,
     /// Escribe GPIO.
@@ -159,13 +166,14 @@ pub fn dispatch(id: Id, args: [u32; 4]) -> i32 {
     };
 
     match id {
-        Id::SysInfo | Id::SysStatus => {
+        Id::SysInfo | Id::SysStatus | Id::SysPower => {
             let Some(buf) = mut_slice_from_args(args[0], args[1]) else {
                 return Errno::Einval as i32;
             };
             let n = match id {
                 Id::SysInfo => (h.sys_info)(buf),
                 Id::SysStatus => (h.sys_status)(buf),
+                Id::SysPower => (h.sys_power)(buf),
                 _ => 0,
             };
             n as i32
@@ -269,6 +277,14 @@ pub mod user {
     pub fn sys_status(buf: &mut [u8]) -> i32 {
         dispatch(
             Id::SysStatus,
+            [buf.as_mut_ptr() as u32, buf.len() as u32, 0, 0],
+        )
+    }
+
+    /// Métricas de energía/ocio (`letargo`).
+    pub fn sys_power(buf: &mut [u8]) -> i32 {
+        dispatch(
+            Id::SysPower,
             [buf.as_mut_ptr() as u32, buf.len() as u32, 0, 0],
         )
     }
