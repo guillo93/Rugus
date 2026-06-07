@@ -1,7 +1,7 @@
 //! Auto-detección: combina sondeo serie y BLE, devuelve solo dispositivos Rugus.
 
 use crate::device::Candidate;
-use crate::{ble, serial};
+use crate::{ble, net, serial};
 
 /// Opciones de descubrimiento.
 #[derive(Clone, Copy, Debug)]
@@ -10,6 +10,8 @@ pub struct Options {
     pub serial: bool,
     /// Escanear BLE.
     pub ble: bool,
+    /// Descubrir por red (broadcast UDP IDENTIFY).
+    pub net: bool,
 }
 
 impl Default for Options {
@@ -17,6 +19,7 @@ impl Default for Options {
         Self {
             serial: true,
             ble: true,
+            net: true,
         }
     }
 }
@@ -32,6 +35,9 @@ pub fn discover(opts: Options) -> Vec<Candidate> {
     }
     if opts.ble {
         candidates.extend(ble::detect());
+    }
+    if opts.net {
+        candidates.extend(net::detect());
     }
     candidates
 }

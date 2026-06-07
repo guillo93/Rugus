@@ -19,6 +19,12 @@ pub const IDENTIFY_REQUEST: &str = "IDENTIFY\r\n";
 /// Byte de control ENQ (Enquiry) — alternativa de un solo byte a la línea.
 pub const ENQ: u8 = 0x05;
 
+/// Puerto UDP de descubrimiento en red (LAN/WiFi). El host envía
+/// [`IDENTIFY_REQUEST`] por broadcast a este puerto; los dispositivos Rugus
+/// con transporte de red responden su firma al emisor. La firma de red incluye
+/// el campo extra `tcp=<puerto>` indicando dónde abrir la sesión de consola.
+pub const DISCOVERY_PORT: u16 = 9001;
+
 /// Prefijo obligatorio de toda firma Rugus.
 pub const SIGNATURE_PREFIX: &str = "RUGUS;";
 

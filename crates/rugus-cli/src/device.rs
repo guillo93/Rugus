@@ -21,6 +21,8 @@ pub enum TransportKind {
     /// BLE (nombre anunciado o id del periférico).
     #[cfg_attr(not(feature = "ble"), allow(dead_code))]
     Ble(String),
+    /// Red TCP/IP (LAN/WiFi); dirección `ip:puerto` de la consola.
+    Net(String),
 }
 
 impl TransportKind {
@@ -29,6 +31,7 @@ impl TransportKind {
         match self {
             TransportKind::Serial(p) => format!("serie  {p}"),
             TransportKind::Ble(n) => format!("BLE    {n}"),
+            TransportKind::Net(a) => format!("red    {a}"),
         }
     }
 }
