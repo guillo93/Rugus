@@ -3,6 +3,7 @@
 //! Auto-detecta dispositivos por serie y BLE usando el protocolo `IDENTIFY`
 //! (crate `rugus-proto`), conecta y los maneja desde una TUI (ratatui).
 
+mod auth;
 #[cfg(feature = "ble")]
 mod ble;
 #[cfg(not(feature = "ble"))]
@@ -28,6 +29,10 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
+    // PSK para el auto-handshake: --psk <hex> o variable RUGUS_PSK. Decodificada
+    // a bytes aquí; si el hex es inválido, abortamos antes de conectar.
+    let psk = resolve_psk(&args)?;
+
     // Conexión directa a un puerto serie concreto.
     if let Some(port) = &args.serial_port {
         let cands = serial::detect_one(port);
@@ -35,7 +40,7 @@ fn main() -> Result<()> {
             .into_iter()
             .next()
             .ok_or_else(|| anyhow!("no se detectó un dispositivo Rugus en {port}"))?;
-        return launch(candidate, args.list);
+        return launch(candidate, args.list, psk);
     }
 
     let opts = Options {
@@ -68,17 +73,29 @@ fn main() -> Result<()> {
         choose(candidates)?
     };
 
-    launch(candidate, false)
+    launch(candidate, false, psk)
+}
+
+/// Resuelve la PSK del auto-handshake: prioriza `--psk`, cae a `RUGUS_PSK`.
+/// Devuelve los bytes decodificados, o `None` si no se aportó ninguna.
+fn resolve_psk(args: &Args) -> Result<Option<Vec<u8>>> {
+    let hex = args.psk.clone().or_else(|| std::env::var("RUGUS_PSK").ok());
+    match hex {
+        Some(h) if !h.trim().is_empty() => rugus_proto::decode_hex(h.trim())
+            .map(Some)
+            .ok_or_else(|| anyhow!("PSK inválida: debe ser hex de longitud par")),
+        _ => Ok(None),
+    }
 }
 
 /// Conecta a un candidato y arranca la TUI (o solo lista si `list_only`).
-fn launch(candidate: Candidate, list_only: bool) -> Result<()> {
+fn launch(candidate: Candidate, list_only: bool, psk: Option<Vec<u8>>) -> Result<()> {
     if list_only {
         print_devices(std::slice::from_ref(&candidate));
         return Ok(());
     }
     let device = connect(candidate)?;
-    tui::run(device)
+    tui::run(device, psk)
 }
 
 /// Abre la sesión viva según el transporte del candidato.
@@ -132,11 +149,14 @@ OPCIONES:\n  \
 --serial <PUERTO>   Conecta directo a un puerto serie (p. ej. /dev/ttyUSB0)\n  \
 --no-ble            No escanear BLE\n  \
 --no-serial         No sondear puertos serie\n  \
+--psk <HEX>         PSK para auto-autenticar la sesión (o variable RUGUS_PSK)\n  \
 --list              Detecta y lista dispositivos, luego sale\n  \
 -h, --help          Muestra esta ayuda\n\n\
 Auto-detección: enumera puertos serie (y BLE si está compilado), envía IDENTIFY\n\
 y lista solo los dispositivos que responden una firma RUGUS válida. Si hay uno,\n\
 conecta; si hay varios, ofrece un menú.\n\n\
+Auto-handshake: con --psk/RUGUS_PSK el cliente ejecuta knock/prove al conectar y\n\
+abre la sesión autenticada automáticamente (la PSK nunca viaja por el cable).\n\n\
 Soporte BLE: {ble_state}."
     );
 }
@@ -148,6 +168,7 @@ struct Args {
     no_ble: bool,
     no_serial: bool,
     serial_port: Option<String>,
+    psk: Option<String>,
 }
 
 impl Args {
@@ -158,6 +179,7 @@ impl Args {
             no_ble: false,
             no_serial: false,
             serial_port: None,
+            psk: None,
         };
         while let Some(a) = it.next() {
             match a.as_str() {
@@ -166,6 +188,7 @@ impl Args {
                 "--no-ble" => args.no_ble = true,
                 "--no-serial" => args.no_serial = true,
                 "--serial" => args.serial_port = it.next(),
+                "--psk" => args.psk = it.next(),
                 _ => {}
             }
         }
