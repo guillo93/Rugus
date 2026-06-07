@@ -38,6 +38,16 @@ pub const CHIP: &str = "f103";
 /// `tier` y `chip` son específicos de la placa (p. ej. `"lite"` / `"f103"`).
 /// `proto`, `shell` y `cli` los aporta `rush`.
 pub fn write_signature(out: &mut dyn Write, tier: &str, chip: &str) {
+    write_signature_ext(out, tier, chip, "");
+}
+
+/// Igual que [`write_signature`] pero añade `extra` antes del salto de línea.
+///
+/// `extra` debe venir ya formateado como campos `;clave=valor` (sin CRLF), p.
+/// ej. `";tcp=7777"` para anunciar el puerto de consola del transporte de red.
+/// Vacío equivale a [`write_signature`]. Centraliza el formato de la firma para
+/// que todos los transportes (serie/BLE/red) emitan exactamente la misma base.
+pub fn write_signature_ext(out: &mut dyn Write, tier: &str, chip: &str, extra: &str) {
     let _ = out.write_str(SIGNATURE_PREFIX);
     let _ = out.write_str("tier=");
     let _ = out.write_str(tier);
@@ -47,5 +57,6 @@ pub fn write_signature(out: &mut dyn Write, tier: &str, chip: &str) {
     let _ = out.write_str(SHELL_NAME);
     let _ = out.write_str(";cli=");
     let _ = out.write_str(crate::CLI_VERSION);
+    let _ = out.write_str(extra);
     let _ = out.write_str("\r\n");
 }
