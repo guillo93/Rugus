@@ -17,5 +17,7 @@ pub mod render;
 pub use auth::{compute_proof, compute_proof_hex, decode_hex, encode_hex, PROOF_LEN};
 pub use command::Command;
 pub use frame::LineAssembler;
-pub use identify::{parse_signature, Signature, SignatureError, ENQ, IDENTIFY_REQUEST};
+pub use identify::{
+    parse_signature, Signature, SignatureError, DISCOVERY_PORT, ENQ, IDENTIFY_REQUEST,
+};
 pub use render::{Span, Style, StyledLine};

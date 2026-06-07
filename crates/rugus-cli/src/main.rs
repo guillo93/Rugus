@@ -11,6 +11,7 @@ mod ble;
 mod ble;
 mod detect;
 mod device;
+mod net;
 mod serial;
 mod tui;
 
@@ -43,15 +44,27 @@ fn main() -> Result<()> {
         return launch(candidate, args.list, psk);
     }
 
+    // Conexión directa a una dirección de red concreta (ip o ip:puerto).
+    if let Some(target) = &args.net_addr {
+        let cands = net::detect_one(target);
+        let candidate = cands
+            .into_iter()
+            .next()
+            .ok_or_else(|| anyhow!("no se detectó un dispositivo Rugus en {target}"))?;
+        return launch(candidate, args.list, psk);
+    }
+
     let opts = Options {
         serial: !args.no_serial,
         // BLE solo si el binario se compiló con `--features ble`.
         ble: cfg!(feature = "ble") && !args.no_ble,
+        net: !args.no_net,
     };
 
     eprintln!(
-        "Buscando dispositivos Rugus (serie{})…",
-        if opts.ble { " + BLE" } else { "" }
+        "Buscando dispositivos Rugus (serie{}{})…",
+        if opts.ble { " + BLE" } else { "" },
+        if opts.net { " + red" } else { "" }
     );
     let candidates = detect::discover(opts);
 
@@ -105,6 +118,7 @@ fn connect(candidate: Candidate) -> Result<Device> {
         TransportKind::Ble(name) => {
             ble::connect(&candidate.addr, name.clone(), candidate.signature.clone())
         }
+        TransportKind::Net(addr) => net::connect(addr, candidate.signature.clone()),
     }
 }
 
@@ -147,13 +161,16 @@ fn print_help() {
 USO:\n  rugus [OPCIONES]\n\n\
 OPCIONES:\n  \
 --serial <PUERTO>   Conecta directo a un puerto serie (p. ej. /dev/ttyUSB0)\n  \
+--net <IP[:PUERTO]> Conecta directo a un dispositivo por red (TCP)\n  \
 --no-ble            No escanear BLE\n  \
 --no-serial         No sondear puertos serie\n  \
+--no-net            No descubrir por red (broadcast UDP)\n  \
 --psk <HEX>         PSK para auto-autenticar la sesión (o variable RUGUS_PSK)\n  \
 --list              Detecta y lista dispositivos, luego sale\n  \
 -h, --help          Muestra esta ayuda\n\n\
-Auto-detección: enumera puertos serie (y BLE si está compilado), envía IDENTIFY\n\
-y lista solo los dispositivos que responden una firma RUGUS válida. Si hay uno,\n\
+Auto-detección: enumera puertos serie (y BLE si está compilado), emite IDENTIFY\n\
+por broadcast UDP en la LAN/WiFi y lista solo los dispositivos que responden una\n\
+firma RUGUS válida. Si hay uno,\n\
 conecta; si hay varios, ofrece un menú.\n\n\
 Auto-handshake: con --psk/RUGUS_PSK el cliente ejecuta knock/prove al conectar y\n\
 abre la sesión autenticada automáticamente (la PSK nunca viaja por el cable).\n\n\
@@ -167,7 +184,9 @@ struct Args {
     list: bool,
     no_ble: bool,
     no_serial: bool,
+    no_net: bool,
     serial_port: Option<String>,
+    net_addr: Option<String>,
     psk: Option<String>,
 }
 
@@ -178,7 +197,9 @@ impl Args {
             list: false,
             no_ble: false,
             no_serial: false,
+            no_net: false,
             serial_port: None,
+            net_addr: None,
             psk: None,
         };
         while let Some(a) = it.next() {
@@ -187,7 +208,9 @@ impl Args {
                 "--list" => args.list = true,
                 "--no-ble" => args.no_ble = true,
                 "--no-serial" => args.no_serial = true,
+                "--no-net" => args.no_net = true,
                 "--serial" => args.serial_port = it.next(),
+                "--net" => args.net_addr = it.next(),
                 "--psk" => args.psk = it.next(),
                 _ => {}
             }
