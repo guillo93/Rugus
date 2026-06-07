@@ -23,6 +23,7 @@ use rugus_proto::command::LEXICON;
 use rugus_proto::render::{BaseColor, Color};
 use rugus_proto::{Command, LineAssembler, StyledLine};
 
+use crate::auth::{AuthAction, AutoAuth};
 use crate::device::Device;
 
 type Backend = CrosstermBackend<Stdout>;
@@ -34,16 +35,18 @@ struct App {
     scrollback: Vec<Line<'static>>,
     input: String,
     should_quit: bool,
+    auth: AutoAuth,
 }
 
 impl App {
-    fn new(device: Device) -> Self {
+    fn new(device: Device, psk: Option<Vec<u8>>) -> Self {
         let mut app = App {
             device,
             assembler: LineAssembler::new(),
             scrollback: Vec::new(),
             input: String::new(),
             should_quit: false,
+            auth: AutoAuth::new(psk),
         };
         app.push_system(format!(
             "Conectado: {} · {}",
@@ -51,7 +54,26 @@ impl App {
             app.device.signature.label()
         ));
         app.push_system("Escribe un comando y pulsa Enter. Esc o Ctrl-C para salir.".into());
+        // Arranca el auto-handshake si se aportó PSK.
+        if app.auth.is_active() {
+            app.push_system("auth: PSK presente — iniciando handshake (knock/prove)…".into());
+            let action = app.auth.start();
+            app.dispatch_auth(action);
+        }
         app
+    }
+
+    /// Ejecuta una acción del FSM de auth: enviar un comando o anotar el estado.
+    fn dispatch_auth(&mut self, action: AuthAction) {
+        match action {
+            AuthAction::None => {}
+            AuthAction::Send(line) => {
+                if !self.device.send(Command::parse(&line).to_wire()) {
+                    self.push_system("(transporte cerrado: handshake abortado)".into());
+                }
+            }
+            AuthAction::Note(text) => self.push_system(text),
+        }
     }
 
     fn push_system(&mut self, text: String) {
@@ -69,11 +91,18 @@ impl App {
         while let Ok(chunk) = self.device.bytes_rx.try_recv() {
             chunks.push(chunk);
         }
+        let mut lines: Vec<String> = Vec::new();
         for chunk in chunks {
             for line in self.assembler.push(&chunk) {
                 let styled = StyledLine::parse(&line);
                 self.scrollback.push(styled_to_line(&styled));
+                lines.push(line);
             }
+        }
+        // Alimenta el FSM de auth con cada línea (busca el reto / confirmación).
+        for line in lines {
+            let action = self.auth.on_line(&line);
+            self.dispatch_auth(action);
         }
     }
 
@@ -114,9 +143,9 @@ impl App {
 }
 
 /// Ejecuta la TUI de sesión hasta que el usuario sale.
-pub fn run(device: Device) -> Result<()> {
+pub fn run(device: Device, psk: Option<Vec<u8>>) -> Result<()> {
     let mut terminal = setup()?;
-    let mut app = App::new(device);
+    let mut app = App::new(device, psk);
 
     let res = (|| -> Result<()> {
         while !app.should_quit {
@@ -214,9 +243,23 @@ fn draw_header(f: &mut Frame, area: Rect, app: &App) {
             app.device.kind.label(),
             RStyle::default().fg(RColor::Yellow),
         ),
+        RSpan::raw("  ·  "),
+        RSpan::styled(app.auth.label(), auth_style(&app.auth)),
     ]);
     let block = Block::default().borders(Borders::ALL).title(" rugus-cli ");
     f.render_widget(Paragraph::new(header).block(block), area);
+}
+
+/// Color del indicador de auth en la cabecera según el estado.
+fn auth_style(auth: &AutoAuth) -> RStyle {
+    use crate::auth::AuthState::*;
+    let color = match auth.state() {
+        Authenticated => RColor::LightGreen,
+        Failed => RColor::LightRed,
+        Disabled => RColor::DarkGray,
+        _ => RColor::Yellow,
+    };
+    RStyle::default().fg(color).add_modifier(Modifier::BOLD)
 }
 
 fn draw_console(f: &mut Frame, area: Rect, app: &App) {
