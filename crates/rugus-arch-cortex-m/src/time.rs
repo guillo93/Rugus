@@ -54,6 +54,24 @@ static TICK_MS: AtomicU32 = AtomicU32::new(1);
 /// deriva acumulada del redondeo a la baja.
 static REMAINDER: AtomicU32 = AtomicU32::new(0);
 
+/// Manejador de STOP (F5.A.2) que la capa de placa registra con
+/// [`set_stop_handler`]; 0 = sin manejador (nunca se entra en STOP). Recibe los
+/// ms a dormir y devuelve los ms realmente transcurridos (medidos por el reloj
+/// de baja potencia, p. ej. RTC+LSI). Se guarda como `usize` por la misma razón
+/// que `PREEMPT_HOOK`.
+#[cfg(feature = "stop")]
+static STOP_HANDLER: AtomicUsize = AtomicUsize::new(0);
+
+/// Umbral (ms) a partir del cual un idle entra en STOP en vez de `wfi` con tick
+/// dinámico. STOP tiene latencia de entrada/salida (relock de PLL), así que solo
+/// compensa para plazos largos. Fijado por [`set_stop_handler`].
+#[cfg(feature = "stop")]
+static STOP_THRESHOLD_MS: AtomicU32 = AtomicU32::new(u32::MAX);
+
+/// Nº de entradas en STOP desde [`init`]. Métrica de energía (F5.A.3 lo expone).
+#[cfg(feature = "stop")]
+static STOP_ENTRIES: AtomicU32 = AtomicU32::new(0);
+
 /// Puntero a la función de preempción que la capa de kernel registra con
 /// [`set_preempt_hook`]; 0 = sin hook (clock monotónico puro, sin preempción).
 /// La ISR de SysTick la invoca en cada tick. Se guarda como `usize` porque no
@@ -75,6 +93,27 @@ const ICSR_PENDSTCLR: u32 = 1 << 25;
 /// (`preempt_tick`). Sin hook registrado, SysTick solo lleva el reloj.
 pub fn set_preempt_hook(hook: fn()) {
     PREEMPT_HOOK.store(hook as usize, Ordering::Relaxed);
+}
+
+/// Registra el manejador de STOP (F5.A.2) y el umbral de ms a partir del cual
+/// un idle profundo entra en STOP en vez de dormir con tick dinámico.
+///
+/// `handler(ms) -> ms_real`: la placa lo implementa programando un temporizador
+/// de baja potencia (RTC+LSI en el F769), entrando en STOP, restaurando los
+/// relojes al despertar y devolviendo los ms realmente dormidos. El reloj
+/// monotónico avanza con la precisión de ESA base (LSI ~±5 %) SOLO durante el
+/// STOP; en RUN se mantiene la exactitud de HSE/PLL del tick dinámico.
+#[cfg(feature = "stop")]
+pub fn set_stop_handler(handler: fn(u32) -> u32, threshold_ms: u32) {
+    STOP_HANDLER.store(handler as usize, Ordering::Relaxed);
+    STOP_THRESHOLD_MS.store(threshold_ms.max(2), Ordering::Relaxed);
+}
+
+/// Nº de veces que el núcleo ha entrado en STOP desde [`init`].
+#[cfg(feature = "stop")]
+#[inline]
+pub fn stop_entries() -> u32 {
+    STOP_ENTRIES.load(Ordering::Relaxed)
 }
 
 /// Dispara el hook de preempción si hay alguno registrado.
@@ -206,6 +245,32 @@ pub fn idle_until(next_wake_ms: Option<u32>) {
     if extend < 2 {
         cortex_m::asm::wfi();
         return;
+    }
+
+    // STOP profundo (F5.A.2): si hay manejador y el plazo supera el umbral,
+    // duerme en STOP en vez de con tick dinámico. A diferencia de SysTick (cap
+    // de ~77 ms por su reload de 24 bits), STOP puede dormir el plazo COMPLETO
+    // (el temporizador de baja potencia lo acota). El manejador restaura los
+    // relojes y devuelve los ms reales, que sumamos al reloj monotónico.
+    #[cfg(feature = "stop")]
+    {
+        if let Some(req) = next_wake_ms {
+            let handler = STOP_HANDLER.load(Ordering::Relaxed);
+            if handler != 0 && req >= STOP_THRESHOLD_MS.load(Ordering::Relaxed) {
+                // SAFETY: solo se escribe en `set_stop_handler` con un
+                // `fn(u32)->u32` válido; el cast revierte exactamente el store.
+                let f: fn(u32) -> u32 = unsafe { core::mem::transmute(handler) };
+                let slept = f(req);
+                MILLIS.fetch_add(slept, Ordering::Relaxed);
+                STOP_ENTRIES.fetch_add(1, Ordering::Relaxed);
+                // SysTick siguió en reload de 1 ms (no lo tocamos); realinea el
+                // contador para que el primer tick post-STOP sea completo.
+                // SAFETY: SysTick exclusivo del módulo de tiempo.
+                let mut syst = unsafe { cortex_m::Peripherals::steal().SYST };
+                syst.clear_current();
+                return;
+            }
+        }
     }
 
     // Programa el intervalo extendido bajo IRQs enmascaradas (la ISR no entra).
