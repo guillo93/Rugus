@@ -186,6 +186,7 @@ impl Console {
             "ps" => cmd_ps(out),
             "mem" => cmd_mem(out),
             "faults" => cmd_faults(out),
+            "power" => cmd_power(out),
             "respawn" => cmd_respawn(out, arg),
             "reboot" => cmd_reboot(out),
             _ => {
@@ -204,6 +205,7 @@ fn cmd_help(out: &mut impl ConsoleOut) {
          \x20 ps            tareas (idx pri modo estado stack)\r\n\
          \x20 mem           uso de heap\r\n\
          \x20 faults        telemetria de faults + safe-mode\r\n\
+         \x20 power         energia: uptime, idle %, systick, stop\r\n\
          \x20 respawn <n>   revive la tarea n si esta KILL\r\n\
          \x20 reboot        reset del sistema\r\n",
     );
@@ -290,6 +292,26 @@ fn cmd_faults(out: &mut impl ConsoleOut) {
     } else {
         out.write_str("sin faults registrados\r\n");
     }
+}
+
+fn cmd_power(out: &mut impl ConsoleOut) {
+    let Some(p) = crate::power_stats() else {
+        out.write_str("energia no disponible (sin proveedor)\r\n");
+        return;
+    };
+    let mut buf = NumBuf::new();
+    out.write_str("uptime=");
+    out.write_str(buf.fmt(p.uptime_ms));
+    out.write_str(" ms  idle=");
+    out.write_str(buf.fmt(p.idle_ms));
+    out.write_str(" ms (");
+    out.write_str(buf.fmt(p.idle_percent()));
+    out.write_str("%)\r\n");
+    out.write_str("systick_irqs=");
+    out.write_str(buf.fmt(p.systick_irqs));
+    out.write_str("  stop_entries=");
+    out.write_str(buf.fmt(p.stop_entries));
+    out.write_str("\r\n");
 }
 
 fn cmd_respawn(out: &mut impl ConsoleOut, arg: Option<&str>) {
