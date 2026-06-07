@@ -97,6 +97,10 @@ static mut AUTH_HOOKS: Option<AuthHooks> = None;
 static mut LINE: [u8; LINE_CAP] = [0; LINE_CAP];
 static mut LINE_LEN: usize = 0;
 static mut CLIENT_CONNECTED: bool = false;
+/// Banner de bienvenida pendiente de envío: se reintenta cada poll hasta que el
+/// socket recién establecido abra ventana de TX (`can_send`), evitando perderlo
+/// en el primer poll tras el handshake cuando aún no hay ventana.
+static mut BANNER_PENDING: bool = false;
 
 /// LED de latido del kernel (LD Red), manejado por la tarea kernel.
 static mut HB_LED: Option<LedPin> = None;
@@ -325,15 +329,24 @@ unsafe fn service_console(net: &mut NetStack<'static, EthernetDMA<'static, 'stat
     };
 
     let sock = net.sockets_mut().get_mut::<tcp::Socket>(h);
-    let active = sock.is_active();
 
-    // Transición de conexión: re-bloquea la sesión y saluda con el banner.
-    if active && !(unsafe { CLIENT_CONNECTED }) {
+    // (1) Conexión nueva: se usa `may_send()` (no `is_open()`/`is_active()`) para
+    // detectar una conexión *establecida*. `is_open()`/`is_active()` son `true`
+    // ya en `Listen`/`SynReceived` (handshake a medias), lo que marcaría un falso
+    // "cliente conectado" y, con el cierre de abajo, abortaría la conexión antes
+    // de completarse. `may_send()` solo es `true` en `Established`/`CloseWait`.
+    // Re-bloquea la sesión y deja el banner pendiente (se envía al abrir TX).
+    if sock.may_send() && !(unsafe { CLIENT_CONNECTED }) {
         unsafe {
             CLIENT_CONNECTED = true;
+            BANNER_PENDING = true;
             SESSION = Session::new();
             LINE_LEN = 0;
         }
+    }
+
+    // (2) Banner pendiente: reintenta hasta que el socket abra ventana de envío.
+    if (unsafe { BANNER_PENDING }) && sock.can_send() {
         let mut buf = [0u8; OUT_CAP];
         let mut out = BufOut {
             buf: &mut buf,
@@ -343,41 +356,46 @@ unsafe fn service_console(net: &mut NetStack<'static, EthernetDMA<'static, 'stat
             "\r\nRugus F769 net-console.\r\nCanal gateado: autentícate con `knock` y `prove`.\r\n\r\n",
         );
         let len = out.len;
-        if sock.can_send() {
-            let _ = sock.send_slice(&buf[..len]);
+        if sock.send_slice(&buf[..len]).is_ok() {
+            unsafe { BANNER_PENDING = false };
         }
     }
 
-    // Desconexión: el cliente cerró; reanuda la escucha pasiva.
-    if !active && (unsafe { CLIENT_CONNECTED }) {
-        unsafe { CLIENT_CONNECTED = false };
+    // (3) Drena y procesa lo recibido a través de `rush`.
+    if sock.can_recv() {
+        let mut rx = [0u8; 256];
+        if let Ok(n) = sock.recv_slice(&mut rx) {
+            if n > 0 {
+                let mut buf = [0u8; OUT_CAP];
+                let mut out = BufOut {
+                    buf: &mut buf,
+                    len: 0,
+                };
+                process_console(&rx[..n], &mut out, hooks);
+                let len = out.len;
+                if len > 0 && sock.can_send() {
+                    let _ = sock.send_slice(&buf[..len]);
+                }
+            }
+        }
+    }
+
+    // (4) El par cerró su escritura (FIN → CloseWait) y no quedan datos por leer:
+    // cerramos nuestro lado (`may_send` sigue abierto) para avanzar al cierre.
+    if (unsafe { CLIENT_CONNECTED }) && sock.may_send() && !sock.may_recv() && !sock.can_recv() {
+        sock.close();
+    }
+
+    // (5) Socket fuera de servicio (Closed/TimeWait tras el cierre): se fuerza a
+    // `Closed` con `abort()` y se rearma la escucha pasiva para el próximo
+    // cliente. Sin esto quedaría en CLOSE_WAIT/TimeWait y rechazaría conexiones.
+    if !sock.is_open() && sock.state() != tcp::State::Listen {
+        unsafe {
+            CLIENT_CONNECTED = false;
+            BANNER_PENDING = false;
+        }
         sock.abort();
         let _ = sock.listen(CONSOLE_PORT);
-        return;
-    }
-
-    if !sock.can_recv() {
-        return;
-    }
-    let mut rx = [0u8; 256];
-    let n = match sock.recv_slice(&mut rx) {
-        Ok(n) => n,
-        Err(_) => return,
-    };
-    if n == 0 {
-        return;
-    }
-
-    // Procesa los bytes recibidos a través de `rush`, acumulando la salida.
-    let mut buf = [0u8; OUT_CAP];
-    let mut out = BufOut {
-        buf: &mut buf,
-        len: 0,
-    };
-    process_console(&rx[..n], &mut out, hooks);
-    let len = out.len;
-    if len > 0 && sock.can_send() {
-        let _ = sock.send_slice(&buf[..len]);
     }
 }
 
