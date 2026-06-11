@@ -156,7 +156,26 @@ fn main() -> ! {
     // SAFETY: arranque single-thread; el handle solo lo usa la tarea `net`.
     unsafe {
         psk::install(qspi);
+        // Telemetría de faults persistente (F4.4): vive en `.uninit` y la sella
+        // `telemetry_init` validando el magic (distingue arranque en frío de
+        // reset en caliente). DEBE correr antes de registrar la personalidad
+        // full: sus hooks `cosmos`/`ecosystem`/`scar` leen `boot_count`/
+        // `total_faults`/`safe_mode`, que hacen `assume_init` sobre esta región.
+        // Sin sellarla, esas lecturas operan sobre memoria sin inicializar y la
+        // consola se cae al primer verbo informativo (UsageFault en `execute`).
+        let warm = rugus_kernel::telemetry_init();
+        defmt::info!(
+            "fault telemetry: {=str} boot (boot_count={=u32}, total_faults={=u32})",
+            if warm { "warm" } else { "cold" },
+            rugus_kernel::boot_count(),
+            rugus_kernel::total_faults(),
+        );
         AUTH_HOOKS = Some(auth::hooks());
+        // Personalidad full: registra la tabla `lite::Hooks` compartida para que
+        // los verbos `rush` (cosmos/ecosystem/letargo/coil/scar + GPIO de placa)
+        // operen sobre datos reales del kernel y el silicio F7, igual léxico que
+        // la lite del F103.
+        rugus_core::syscall::lite::register(rugus_personality_full::hooks(board::ops()));
     }
     defmt::info!("QSPI PSK store listo (provisioned={})", psk::provisioned());
 
@@ -455,4 +474,5 @@ fn ETH() {
 }
 
 mod auth;
+mod board;
 mod psk;

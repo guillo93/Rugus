@@ -1759,13 +1759,26 @@ impl<A: Arch> Scheduler<A> {
             return 0;
         }
         let slot = self.task_ref(idx);
-        let base = slot.stack_base as *const u8;
-        let len = slot.stack_len as usize;
+        // La guarda de pila (cuando hay MPU) ocupa los `guard` bytes más bajos
+        // del stack, sin acceso para nadie y ACTIVA para la tarea en ejecución.
+        // No es pila utilizable y leerla desde la tarea actual dispara un
+        // MemManage, así que el barrido arranca por encima de ella y la longitud
+        // efectiva la excluye. Saturación defensiva por si `len <= guard`.
+        let guard = (A::STACK_GUARD_BYTES as usize).min(slot.stack_len as usize);
+        let base = (slot.stack_base + guard) as *const u8;
+        let len = slot.stack_len as usize - guard;
         let mut free = 0usize;
-        // SAFETY: [base, base+len) es el stack estático de la tarea, vivo
-        // mientras el scheduler existe; solo lectura byte a byte.
+        // SAFETY: [base, base+len) es la pila útil estática de la tarea (tras la
+        // guarda), viva mientras el scheduler existe; solo lectura byte a byte.
+        //
+        // La lectura es `read_volatile` a propósito: LLVM, al desenrollar el
+        // bucle, especula lecturas adelantadas ANTES de comprobar la cota
+        // `free < len`; con la pila íntegramente rellena con `STACK_FILL` el
+        // barrido llegaría al tope y se saldría sobre la región MPU contigua.
+        // `read_volatile` prohíbe esa especulación: ninguna lectura ocurre sin
+        // que el cortocircuito `free < len` la haya autorizado.
         unsafe {
-            while free < len && *base.add(free) == STACK_FILL {
+            while free < len && core::ptr::read_volatile(base.add(free)) == STACK_FILL {
                 free += 1;
             }
         }
