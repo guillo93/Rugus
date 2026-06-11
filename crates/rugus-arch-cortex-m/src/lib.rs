@@ -64,6 +64,10 @@ impl Arch for CortexM {
 
     const HAS_MEMORY_PROTECTION: bool = true;
 
+    // La guarda de pila (región MPU 7, `GUARD_SIZE_FIELD`=4) cubre 32 B sin
+    // acceso en la base de cada stack. Coincide con `mpu::guard_region_for`.
+    const STACK_GUARD_BYTES: u32 = 32;
+
     unsafe fn switch_context(prev: *mut Self::Context, next: *const Self::Context) {
         unsafe {
             switch::request_switch(prev, next);

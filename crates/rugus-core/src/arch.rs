@@ -36,6 +36,14 @@ pub trait Arch: 'static {
     /// son honor-system.
     const HAS_MEMORY_PROTECTION: bool;
 
+    /// Bytes reservados como guarda de pila en la BASE (extremo bajo) de cada
+    /// stack. Cuando hay MPU, esta región se programa sin acceso (ni privilegiado
+    /// ni userland) para atrapar desbordamientos, y queda activa para la tarea
+    /// en ejecución. No es pila utilizable: introspección como el high-water
+    /// (`coil`) DEBE saltarla, pues leerla desde la tarea actual dispara un
+    /// MemManage. Por defecto `0` (arch sin guarda).
+    const STACK_GUARD_BYTES: u32 = 0;
+
     /// Cambia al contexto destino. Implementación típicamente en ASM
     /// `#[naked]` ubicada en memoria rápida (ITCM en Cortex-M7).
     ///

@@ -59,6 +59,18 @@ pub fn handle_task_fault(kind: FaultKind) -> ! {
         addr,
     };
 
+    // Diagnóstico de fault: traza kind/domain/pc/addr(MMFAR|BFAR)/task antes de
+    // delegar al hook o entrar en panic. Permitido en la capa arch (no es
+    // rugus-core, que debe permanecer libre de logs).
+    #[cfg(feature = "defmt")]
+    defmt::error!(
+        "FAULT {} domain={} pc={=u32:#010x} addr={=u32:#010x}",
+        kind.name(),
+        domain.name(),
+        pc,
+        addr.unwrap_or(0xFFFF_FFFF),
+    );
+
     // SAFETY: hook registrado en main; no reentrante desde otra tarea.
     unsafe {
         match FAULT_HOOK {

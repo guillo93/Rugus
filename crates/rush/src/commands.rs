@@ -539,7 +539,7 @@ fn exec_scout(out: &mut dyn Write, bus: u8) {
     let mut buf = [0u8; 128];
     let n = user::bus_scan(bus, &mut buf);
     if n > 0 {
-        let text = core::str::from_utf8(&buf[..n as usize]).unwrap_or("(invalid)");
+        let text = core::str::from_utf8(&buf[..(n as usize).min(buf.len())]).unwrap_or("(invalid)");
         let _ = out.write_str("scout: ");
         let _ = out.write_str(text);
         if !text.ends_with("\r\n") {
@@ -554,7 +554,7 @@ fn exec_sonar(out: &mut dyn Write, slot: u8) {
     let mut buf = [0u8; 128];
     let n = user::module_read(slot, &mut buf);
     if n > 0 {
-        let text = core::str::from_utf8(&buf[..n as usize]).unwrap_or("(invalid)");
+        let text = core::str::from_utf8(&buf[..(n as usize).min(buf.len())]).unwrap_or("(invalid)");
         let _ = out.write_str(text);
         if !text.ends_with("\r\n") {
             let _ = out.write_str("\r\n");
@@ -568,7 +568,7 @@ fn exec_schema(out: &mut dyn Write, key: &[u8]) {
     let mut buf = [0u8; 128];
     let n = user::config_get(key, &mut buf);
     if n > 0 {
-        let text = core::str::from_utf8(&buf[..n as usize]).unwrap_or("(invalid)");
+        let text = core::str::from_utf8(&buf[..(n as usize).min(buf.len())]).unwrap_or("(invalid)");
         let _ = out.write_str(text);
         if !text.ends_with("\r\n") {
             let _ = out.write_str("\r\n");
@@ -616,7 +616,7 @@ fn exec_nest(out: &mut dyn Write) {
     let mut buf = [0u8; 128];
     let n = user::module_list(&mut buf);
     if n > 0 {
-        let text = core::str::from_utf8(&buf[..n as usize]).unwrap_or("(invalid)");
+        let text = core::str::from_utf8(&buf[..(n as usize).min(buf.len())]).unwrap_or("(invalid)");
         let _ = out.write_str(text);
         if !text.ends_with("\r\n") {
             let _ = out.write_str("\r\n");
@@ -638,7 +638,7 @@ fn exec_coil(out: &mut dyn Write) {
     let mut buf = [0u8; 256];
     let n = user::task_list(&mut buf);
     if n > 0 {
-        let text = core::str::from_utf8(&buf[..n as usize]).unwrap_or("(invalid)");
+        let text = core::str::from_utf8(&buf[..(n as usize).min(buf.len())]).unwrap_or("(invalid)");
         let _ = out.write_str(text);
         if !text.ends_with("\r\n") {
             let _ = out.write_str("\r\n");
@@ -672,7 +672,7 @@ fn exec_scar(out: &mut dyn Write, clear: bool) {
     let mut buf = [0u8; 256];
     let n = user::scar(&mut buf);
     if n > 0 {
-        let text = core::str::from_utf8(&buf[..n as usize]).unwrap_or("(invalid)");
+        let text = core::str::from_utf8(&buf[..(n as usize).min(buf.len())]).unwrap_or("(invalid)");
         let _ = out.write_str(text);
         if !text.ends_with("\r\n") {
             let _ = out.write_str("\r\n");
@@ -715,7 +715,7 @@ fn write_syscall_buf(out: &mut dyn Write, f: fn(&mut [u8]) -> i32) {
     let mut buf = [0u8; 256];
     let n = f(&mut buf);
     if n > 0 {
-        let text = core::str::from_utf8(&buf[..n as usize]).unwrap_or("(invalid utf8)");
+        let text = core::str::from_utf8(&buf[..(n as usize).min(buf.len())]).unwrap_or("(invalid utf8)");
         let _ = out.write_str(text);
         if !text.ends_with("\r\n") {
             let _ = out.write_str("\r\n");
