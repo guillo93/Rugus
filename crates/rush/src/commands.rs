@@ -715,7 +715,8 @@ fn write_syscall_buf(out: &mut dyn Write, f: fn(&mut [u8]) -> i32) {
     let mut buf = [0u8; 256];
     let n = f(&mut buf);
     if n > 0 {
-        let text = core::str::from_utf8(&buf[..(n as usize).min(buf.len())]).unwrap_or("(invalid utf8)");
+        let text =
+            core::str::from_utf8(&buf[..(n as usize).min(buf.len())]).unwrap_or("(invalid utf8)");
         let _ = out.write_str(text);
         if !text.ends_with("\r\n") {
             let _ = out.write_str("\r\n");
