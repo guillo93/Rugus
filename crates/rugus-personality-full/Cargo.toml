@@ -1,0 +1,22 @@
+[package]
+name        = "rugus-personality-full"
+description = "Rugus full-tier personality — tabla lite::Hooks compartida (F407/F769) respaldada por el kernel."
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+authors.workspace      = true
+repository.workspace   = true
+
+[lib]
+test  = false
+bench = false
+
+[dependencies]
+rugus-core   = { workspace = true }
+rugus-kernel = { workspace = true }
+defmt        = { workspace = true, optional = true }
+
+[features]
+default = []
+defmt   = ["dep:defmt"]

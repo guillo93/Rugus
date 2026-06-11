@@ -1103,6 +1103,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rugus-personality-full"
+version = "0.1.0"
+dependencies = [
+ "defmt 1.1.0",
+ "rugus-core",
+ "rugus-kernel",
+]
+
+[[package]]
 name = "rugus-rfn"
 version = "0.1.0"
 dependencies = [

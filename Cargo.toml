@@ -15,6 +15,7 @@ members = [
   "crates/rugus-crypto",
   "crates/rugus-tls",
   "crates/rugus-runtime",
+  "crates/rugus-personality-full",
   "examples/https-get-stm32f769-disco",
   "examples/blink-stm32f103c8-bluepill",
   "examples/dual-blink-stm32f103c8-bluepill",
@@ -100,6 +101,7 @@ rugus-tls           = { path = "crates/rugus-tls",           version = "0.1.0" }
 rugus-runtime       = { path = "crates/rugus-runtime",       version = "0.1.0" }
 rush                = { path = "crates/rush",                version = "0.1.0" }
 rugus-rfn           = { path = "crates/rugus-rfn",           version = "0.1.0" }
+rugus-personality-full = { path = "crates/rugus-personality-full", version = "0.1.0" }
 
 [profile.dev]
 opt-level        = 1
