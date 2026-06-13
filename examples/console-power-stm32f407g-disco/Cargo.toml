@@ -24,3 +24,7 @@ rugus-hal           = { workspace = true }
 rugus-hal-stm32f4   = { workspace = true, features = ["stm32f407"] }
 rugus-core          = { workspace = true }
 rugus-arch-cortex-m = { workspace = true, features = ["tickless", "defmt"] }
+rugus-crypto        = { workspace = true }
+rugus-personality-full = { workspace = true }
+rand_core           = { workspace = true }
+rush                = { workspace = true, features = ["auth"] }

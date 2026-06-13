@@ -217,12 +217,16 @@ version = "0.1.0"
 dependencies = [
  "cortex-m",
  "defmt 1.1.0",
+ "rand_core",
  "rugus-arch-cortex-m",
  "rugus-core",
+ "rugus-crypto",
  "rugus-hal",
  "rugus-hal-stm32f4",
  "rugus-kernel",
+ "rugus-personality-full",
  "rugus-runtime",
+ "rush",
 ]
 
 [[package]]

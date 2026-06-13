@@ -1,25 +1,29 @@
-//! Rugus F5.A.3 — **consola de energía** sobre tick dinámico en la STM32F407G-DISC1.
+//! Rugus F6.4c — **consola `rush` autenticada** sobre USART2 en la STM32F407G-DISC1.
 //!
-//! Ejemplo dedicado para validar el comando `power` de la consola de operador
-//! por un terminal UART real. A diferencia de `app-sandbox`, aquí NO hay tareas
-//! CPU-bound: todas las tareas duermen con `cpu_sleep_ms`, de modo que el
-//! scheduler entra en idle a menudo y, con la feature `tickless`, el SysTick se
-//! reprograma al próximo plazo y el núcleo hace `wfi` entre medias. El resultado
-//! es un **idle % alto y real** que el comando `power` reporta.
+//! Convergencia de la consola del tier full F4 al léxico universal `rush`
+//! (kernel multipersonalidad): los mismos verbos que la personalidad lite del
+//! F103 y la consola de red del F769 (`cosmos`/`ecosystem`/`letargo`/`coil`/
+//! `scar` + GPIO de placa), con **canal gateado**: sin autenticación
+//! challenge-response HMAC (`knock`/`prove`) solo pasan IDENTIFY y el propio
+//! handshake. La PSK vive en el sector 11 de la flash interna (ver
+//! [`psk`]/[`rugus_hal_stm32f4::flash`]), se aprovisiona una única vez con
+//! `enroll` y sobrevive a los reflasheos (el linker excluye el sector).
 //!
-//! La contabilidad de energía (F5.A.3) la lleva la capa de tiempo del backend
-//! arch (`time::idle_ms`/`systick_irqs`/`stop_entries`); este `main` registra un
-//! proveedor `PowerStats` (`rugus_kernel::set_power_provider`) que la consola
-//! consulta. Como el modo STOP es exclusivo del F7, aquí `stop_entries` es
-//! siempre 0 (correcto: el F407 no implementa esa ruta).
+//! Conserva el carácter original del ejemplo (F5.A.3): tareas durmientes sobre
+//! tick dinámico (`tickless`) → idle real alto, que ahora reporta el verbo
+//! `letargo` vía el proveedor `PowerStats`.
 //!
 //! Cableado del USB-TTL (3V3): GND↔GND, RX_del_TTL↔PA2 (TX de la placa),
 //! TX_del_TTL↔PA3 (RX de la placa), 115200 8N1. Cruza RX/TX; no conectes Vcc.
-//! Abre un terminal serie y escribe `help`, `ps`, `mem` o `power`.
+//! Sesión: `knock` → `prove <hmac>` → verbos (`cosmos`, `coil`, `letargo`, …).
 
 #![no_std]
 #![no_main]
 #![allow(static_mut_refs)]
+
+mod auth;
+mod board;
+mod psk;
 
 use core::ptr::addr_of_mut;
 
@@ -27,14 +31,21 @@ use cortex_m::peripheral::NVIC;
 use rugus_arch_cortex_m::{platform_init, time, MpuLayout};
 use rugus_core::sched::Priority;
 use rugus_hal::GpioPin;
+use rugus_hal_stm32f4::flash::FlashWindow;
 use rugus_hal_stm32f4::gpio::{DiscoLed, LedPin};
 use rugus_hal_stm32f4::pac;
 use rugus_hal_stm32f4::pac::{interrupt, Interrupt};
 use rugus_hal_stm32f4::rcc;
 use rugus_hal_stm32f4::usart::{self, Usart2, CONSOLE_BAUD};
-use rugus_kernel::console::{Console, ConsoleOut, RxRing};
+use rugus_kernel::console::RxRing;
 use rugus_kernel::PowerStats;
 use rugus_runtime::entry;
+use rush::{execute_authed, identify, parse, AuthHooks, Session, Write};
+
+/// Identidad para IDENTIFY/ENQ: tier full sobre silicio F407.
+const TIER: &str = "full";
+/// Chip reportado en la firma IDENTIFY.
+const CHIP: &str = "f407";
 
 #[repr(C, align(4096))]
 struct Stack4k([u8; 4096]);
@@ -45,23 +56,34 @@ static mut STACK_BLINK: Stack4k = Stack4k([0; 4096]);
 /// LED de latido (LD4 verde), poseído por la tarea de parpadeo.
 static mut HB_LED: Option<LedPin> = None;
 
-/// Anillo de recepción de la consola: el handler `USART2` (productor) encola cada
-/// byte; el supervisor (consumidor) lo drena hacia [`CONSOLE`]. SPSC sin bloqueo.
+/// Anillo de recepción de la consola: el handler `USART2` (productor) encola
+/// cada byte; el supervisor (consumidor) lo drena línea a línea. SPSC sin bloqueo.
 static RX_RING: RxRing = RxRing::new();
-/// Consola de operador interactiva: parsea ps/mem/faults/power/...
-static mut CONSOLE: Console = Console::new();
 /// Puerto UART de la consola (PA2 TX / PA3 RX). Lo conduce el supervisor para el
 /// eco y las respuestas; el RX llega por IRQ vía [`RX_RING`].
 static mut CONSOLE_UART: Option<Usart2> = None;
+/// Línea de comando en construcción (editada con eco + backspace).
+static mut LINE: [u8; 128] = [0; 128];
+static mut LINE_LEN: usize = 0;
+/// Sesión de autenticación de la consola USART2 (challenge-response HMAC).
+static mut SESSION: Session = Session::new();
+/// Ganchos de autenticación (PSK en flash interna + HMAC + nonce); en `main`.
+static mut AUTH_HOOKS: Option<AuthHooks> = None;
 
-/// Sumidero de salida de la consola sobre el UART: escribe byte a byte.
-struct UartSink<'a>(&'a mut Usart2);
+/// Sumidero de salida `rush` sobre el UART: escribe byte a byte.
+struct UartSink;
 
-impl ConsoleOut for UartSink<'_> {
-    fn write_str(&mut self, s: &str) {
-        for &b in s.as_bytes() {
-            self.0.write_byte(b);
+impl Write for UartSink {
+    fn write_str(&mut self, s: &str) -> Result<(), ()> {
+        // SAFETY: consola única, conducida solo por la tarea supervisora.
+        unsafe {
+            if let Some(u) = CONSOLE_UART.as_mut() {
+                for &b in s.as_bytes() {
+                    u.write_byte(b);
+                }
+            }
         }
+        Ok(())
     }
 }
 
@@ -74,7 +96,7 @@ fn USART2() {
     }
 }
 
-/// Proveedor de métricas de energía para la consola (F5.A.3): mapea los
+/// Proveedor de métricas de energía para el verbo `letargo`: mapea los
 /// contadores de la capa de tiempo del backend arch a `PowerStats`. En el F407
 /// `stop_entries` es 0 (STOP es exclusivo del F7).
 fn power_provider() -> PowerStats {
@@ -97,7 +119,7 @@ fn main() -> ! {
     rugus_runtime::enable_cycle_counter(&mut cp);
 
     defmt::info!(
-        "rugus console-power @ STM32F407G-DISC1, SYSCLK {} MHz (tickless)",
+        "rugus console-power @ STM32F407G-DISC1, SYSCLK {} MHz (tickless, rush)",
         clocks.sysclk_mhz()
     );
 
@@ -108,10 +130,41 @@ fn main() -> ! {
     // reprograma al próximo plazo en idle y el núcleo hace `wfi` entre medias.
     time::init(&mut cp.SYST, clocks.hclk);
 
-    // Publica las métricas de energía para el comando `power` de la consola.
-    // SAFETY: arranque single-thread; el proveedor se registra una sola vez.
+    // SAFETY: arranque single-thread; instalaciones únicas antes de `start()`.
     unsafe {
+        // Publica las métricas de energía para el verbo `letargo`.
         rugus_kernel::set_power_provider(power_provider);
+
+        // Almacén de PSK: ventana de flash interna (sector 11, excluido del
+        // linker en memory.x). Instancia única, propiedad del módulo `psk`.
+        psk::install(FlashWindow::new());
+
+        // Telemetría de faults persistente (F4.4): vive en `.uninit` y la sella
+        // `telemetry_init` validando el magic. DEBE correr antes de registrar la
+        // personalidad full: sus hooks `cosmos`/`ecosystem`/`scar` leen
+        // `boot_count`/`total_faults`/`safe_mode`, que hacen `assume_init` sobre
+        // esta región; sin sellarla, la consola se cae al primer verbo
+        // informativo (lección del F769, F6.4b).
+        let warm = rugus_kernel::telemetry_init();
+        defmt::info!(
+            "fault telemetry: {=str} boot (boot_count={=u32}, total_faults={=u32})",
+            if warm { "warm" } else { "cold" },
+            rugus_kernel::boot_count(),
+            rugus_kernel::total_faults(),
+        );
+
+        // Ganchos de autenticación de canal (PSK + HMAC + nonce).
+        AUTH_HOOKS = Some(auth::hooks());
+        defmt::info!(
+            "PSK store (flash sector 11): provisioned={=bool}",
+            psk::provisioned()
+        );
+
+        // Personalidad full: registra la tabla `lite::Hooks` compartida para que
+        // los verbos `rush` (cosmos/ecosystem/letargo/coil/scar + GPIO de placa)
+        // operen sobre datos reales del kernel y el silicio F4, igual léxico que
+        // el F103 lite y el F769.
+        rugus_core::syscall::lite::register(rugus_personality_full::hooks(board::ops()));
     }
 
     // SAFETY: arranque single-thread; el LED se inicializa una sola vez aquí.
@@ -127,7 +180,7 @@ fn main() -> ! {
         NVIC::unmask(Interrupt::USART2);
         CONSOLE_UART = Some(uart);
     }
-    defmt::info!("UART console ready (PA2/PA3 @ 115200, RX IRQ) — escribe `power`");
+    defmt::info!("rush console ready (PA2/PA3 @ 115200, RX IRQ) — knock/prove");
 
     // SAFETY: arranque single-thread; pilas estáticas vivas para todo el kernel.
     unsafe {
@@ -144,28 +197,69 @@ fn main() -> ! {
             Priority::Kernel,
         )
         .expect("spawn blink");
-        defmt::info!("scheduler: 2 tareas (consola + blink durmiente), starting");
+        defmt::info!("scheduler: 2 tareas (consola rush + blink durmiente), starting");
         rugus_kernel::start();
     }
 }
 
-/// Supervisor: emite el banner una vez y drena la consola periódicamente. Duerme
-/// entre sondeos (~30 ms) cediendo el CPU; con tickless el scheduler entra en
-/// `wfi`, acumulando idle real que reporta el comando `power`.
+/// Supervisor: emite el banner una vez y drena la consola `rush` periódicamente.
+/// Duerme entre sondeos (~30 ms) cediendo el CPU; con tickless el scheduler entra
+/// en `wfi`, acumulando idle real que reporta el verbo `letargo`.
 fn supervisor_task() -> ! {
+    let mut sink = UartSink;
+    let _ = sink.write_str(
+        "\r\nRugus F407 console (rush).\r\nCanal gateado: aut\u{e9}nticate con `knock` y `prove`.\r\n\r\n",
+    );
     loop {
-        // SAFETY: solo esta tarea toca la consola y su UART.
-        unsafe {
-            if let Some(u) = CONSOLE_UART.as_mut() {
-                let mut sink = UartSink(u);
-                CONSOLE.greet(&mut sink);
-                while let Some(b) = RX_RING.pop() {
-                    CONSOLE.feed(b, &mut sink);
-                }
-            }
-        }
+        while cli_poll_byte(&mut sink) {}
         rugus_kernel::cpu_sleep_ms(30);
     }
+}
+
+/// Procesa un byte del ring RX de la consola. Devuelve `true` si consumió uno
+/// (puede haber más en cola, drenar de nuevo), `false` si el ring está vacío
+/// (la tarea puede dormir hasta el próximo plazo sin perder bytes: la RX es por
+/// IRQ a un buffer SPSC).
+fn cli_poll_byte(sink: &mut UartSink) -> bool {
+    let Some(b) = RX_RING.pop() else {
+        return false;
+    };
+
+    // Fast-path: byte de control ENQ (0x05) → respuesta IDENTIFY inmediata.
+    if b == identify::ENQ {
+        identify::write_signature(sink, TIER, CHIP);
+        return true;
+    }
+
+    // SAFETY: solo la tarea supervisora edita la línea y la sesión.
+    unsafe {
+        if b == b'\r' || b == b'\n' {
+            if LINE_LEN > 0 {
+                let _ = sink.write_str("\r\n");
+                let line = core::str::from_utf8(&LINE[..LINE_LEN]).unwrap_or("");
+                let cmd = parse(line);
+                // Todo gateado: sin sesión autenticada solo pasan IDENTIFY y el
+                // propio handshake (knock/prove/lock/enroll). El resto exige PSK.
+                if let Some(hooks) = AUTH_HOOKS.as_ref() {
+                    execute_authed(cmd, line, sink, &mut SESSION, hooks);
+                }
+                LINE_LEN = 0;
+            }
+        } else if b == 0x7F || b == 0x08 {
+            if LINE_LEN > 0 {
+                LINE_LEN -= 1;
+                let _ = sink.write_str("\x08 \x08");
+            }
+        } else if LINE_LEN < LINE.len() {
+            LINE[LINE_LEN] = b;
+            LINE_LEN += 1;
+            let ch = [b];
+            if let Ok(s) = core::str::from_utf8(&ch) {
+                let _ = sink.write_str(s);
+            }
+        }
+    }
+    true
 }
 
 /// Tarea de latido: parpadea LD4 (verde) cada 500 ms durmiendo entre toggles.
