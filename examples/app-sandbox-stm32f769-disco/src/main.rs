@@ -47,7 +47,7 @@ use rugus_hal_stm32f7::pac::{interrupt, Interrupt};
 use rugus_hal_stm32f7::qspi::Qspi;
 use rugus_hal_stm32f7::rcc;
 use rugus_hal_stm32f7::timer::{PwmCheck, Timebase};
-use rugus_hal_stm32f7::usart::{self, Usart2, CONSOLE_BAUD};
+use rugus_hal_stm32f7::usart::{self, Usart1, Usart2, CONSOLE_BAUD};
 use rugus_kernel::console::RxRing;
 use rugus_kernel::status::{self, StatusLeds};
 use rugus_runtime::entry;
@@ -130,16 +130,16 @@ static mut WATCHDOG: Option<Iwdg> = None;
 /// de eventos lo lee el supervisor por [`exti::events`].
 static mut BUTTON: Option<Button> = None;
 
-/// Anillo de recepción de la consola: el handler `USART2` (productor) encola cada
+/// Anillo de recepción de la consola: el handler `USART1` (productor) encola cada
 /// byte; el supervisor (consumidor) lo drena línea a línea. SPSC sin bloqueo.
 static RX_RING: RxRing = RxRing::new();
 /// Puerto UART de la consola (PA2 TX / PA3 RX). Lo conduce el supervisor para el
 /// eco y las respuestas; el RX llega por IRQ vía [`RX_RING`].
-static mut CONSOLE_UART: Option<Usart2> = None;
+static mut CONSOLE_UART: Option<Usart1> = None;
 /// Línea de comando en construcción (editada con eco + backspace).
 static mut LINE: [u8; 128] = [0; 128];
 static mut LINE_LEN: usize = 0;
-/// Sesión de autenticación de la consola USART2 (challenge-response HMAC). Cada
+/// Sesión de autenticación de la consola USART1 (challenge-response HMAC). Cada
 /// transporte tiene la suya: autenticar por serie no abre el canal de red.
 static mut SESSION: Session = Session::new();
 /// Ganchos de autenticación (PSK en QSPI + HMAC + nonce); fijados en `main`.
@@ -147,7 +147,7 @@ static mut AUTH_HOOKS: Option<AuthHooks> = None;
 
 /// Sumidero de salida `rush` sobre el UART: escribe byte a byte (bloqueante a
 /// nivel de byte; las respuestas de consola son cortas).
-struct UartSink<'a>(&'a mut Usart2);
+struct UartSink<'a>(&'a mut Usart1);
 
 impl Write for UartSink<'_> {
     fn write_str(&mut self, s: &str) -> Result<(), ()> {
@@ -200,11 +200,11 @@ fn cli_poll_byte(sink: &mut UartSink) -> bool {
     true
 }
 
-/// Handler de USART2: drena el byte recibido al anillo de la consola. Leer `RDR`
+/// Handler de USART1 (VCP del ST-Link): drena el byte recibido al anillo. Leer `RDR`
 /// limpia `RXNE` y desactiva la pendiente de la IRQ.
 #[interrupt]
-fn USART2() {
-    if let Some(b) = usart::isr_read_byte() {
+fn USART1() {
+    if let Some(b) = usart::isr_read_byte_usart1() {
         let _ = RX_RING.push(b);
     }
 }
@@ -505,13 +505,13 @@ fn main() -> ! {
     }
     defmt::info!("IWDG armed (windowed, ventana kick ~0.5-4 s nominal)");
 
-    // Consola de operador `rush` (F6.4d): PA2 TX / PA3 RX @ 115200 8N1, RX por
+    // Consola de operador `rush` (F6.4e): PA9 TX / PA10 RX @ 115200 8N1 — UART
     // IRQ. Mismo léxico universal que la consola de red y el resto de la flota,
     // gateado por knock/prove. Se crea tras el autotest de loopback.
     unsafe {
-        let mut uart = Usart2::new(clocks.pclk1, CONSOLE_BAUD);
+        let mut uart = Usart1::new(clocks.pclk2, CONSOLE_BAUD);
         uart.enable_rx_irq();
-        NVIC::unmask(Interrupt::USART2);
+        NVIC::unmask(Interrupt::USART1);
         CONSOLE_UART = Some(uart);
         // Almacén de PSK en QSPI (compartido con la consola de red): el canal
         // serie también exige autenticación; cada transporte tiene su Session.
@@ -526,7 +526,7 @@ fn main() -> ! {
             "\r\nRugus F769 console (rush).\r\nCanal gateado: aut\u{e9}nticate con `knock` y `prove`.\r\n\r\n",
         );
     }
-    defmt::info!("rush console ready (PA2/PA3 @ 115200, RX IRQ) — knock/prove");
+    defmt::info!("rush console ready (PA9/PA10 VCP @ 115200, RX IRQ) — knock/prove");
 
     unsafe {
         // El LED de fault lo conduce ahora el servicio `status` desde el latch

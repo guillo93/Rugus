@@ -30,7 +30,7 @@ enumerar.
 |-------|------|-------------|----------------|
 | F103 Blue Pill (appliance) | lite | USART1 + BLE HM-10 | última página de flash (1 K en `0x0800FC00`, FPEC F1) |
 | F407G-DISC1 | full | USART2 (PA2/PA3 @115200) | sector 11 de flash interna (128 K en `0x080E0000`, `rugus-hal-stm32f4::flash`) |
-| F769I-DISCO | full | TCP:7777 (192.168.0.50) + USART2 (PA2/PA3 @115200) | primer subsector de la NOR QSPI (MX25L512) |
+| F769I-DISCO | full | TCP:7777 (192.168.0.50) + USART1 (PA9/PA10, VCP del ST-Link @115200) | primer subsector de la NOR QSPI (MX25L512) |
 
 Los almacenes sobreviven al reflasheo del firmware: en F407 el `memory.x`
 limita FLASH a 896 K (el linker jamás pisa el sector 11; ver también la región
@@ -66,6 +66,10 @@ Equivalencias: `ps`→`coil`, `mem`→`cosmos`, `faults`→`scar`,
 
 - F407: USB-TTL externo en PA2/PA3 (el VCP del ST-Link de la DISC1 **no** está
   cableado al target). 115200 8N1.
+- F769 serie: la consola sale por el **VCP del ST-Link** (USART1 PA9/PA10,
+  cableado a CN1) → `/dev/ttyACM*` sin TTL externo. El VCP solo transmite con el
+  firmware corriendo (reset limpio / `probe-rs run`). No se usa USART2/PA2 en la
+  F769: PA2 es la MDIO del Ethernet.
 - F769 red: descubrimiento UDP:9001 (`IDENTIFY`), consola TCP:7777. La placa no
   responde ping (smoltcp sin ICMP): comprobar reachability con `arping`.
 - Secuencia de humo: ENQ → `RUGUS;tier=...;chip=...` → `knock`/`prove` →
