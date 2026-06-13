@@ -27,6 +27,10 @@
 #![no_main]
 #![allow(static_mut_refs)]
 
+mod auth;
+mod board;
+mod psk;
+
 use cortex_m::peripheral::NVIC;
 use rugus_arch_cortex_m::{platform_init, time, MpuLayout};
 use rugus_core::sched::Priority;
@@ -34,6 +38,7 @@ use rugus_core::syscall::user as svc_user;
 use rugus_hal::GpioPin;
 use rugus_hal_stm32f4::adc::Adc;
 use rugus_hal_stm32f4::exti::{self, Button};
+use rugus_hal_stm32f4::flash::FlashWindow;
 use rugus_hal_stm32f4::gpio::{DiscoLed, LedPin};
 use rugus_hal_stm32f4::iwdg::Iwdg;
 use rugus_hal_stm32f4::pac;
@@ -41,9 +46,15 @@ use rugus_hal_stm32f4::pac::{interrupt, Interrupt};
 use rugus_hal_stm32f4::rcc;
 use rugus_hal_stm32f4::timer::{PwmCheck, Timebase};
 use rugus_hal_stm32f4::usart::{self, Usart2, CONSOLE_BAUD};
-use rugus_kernel::console::{Console, ConsoleOut, RxRing};
+use rugus_kernel::console::RxRing;
 use rugus_kernel::status::{self, StatusLeds};
 use rugus_runtime::entry;
+use rush::{execute_authed, identify, parse, AuthHooks, Session, Write};
+
+/// Identidad para IDENTIFY/ENQ: tier full sobre silicio F407.
+const TIER: &str = "full";
+/// Chip reportado en la firma IDENTIFY.
+const CHIP: &str = "f407";
 
 #[repr(C, align(4096))]
 struct Stack4k([u8; 4096]);
@@ -122,24 +133,72 @@ static mut WATCHDOG: Option<Iwdg> = None;
 static mut BUTTON: Option<Button> = None;
 
 /// Anillo de recepción de la consola: el handler `USART2` (productor) encola cada
-/// byte; el supervisor (consumidor) lo drena hacia [`CONSOLE`]. SPSC sin bloqueo.
+/// byte; el supervisor (consumidor) lo drena línea a línea. SPSC sin bloqueo.
 static RX_RING: RxRing = RxRing::new();
-/// Consola de operador interactiva (F4.5): parsea ps/mem/faults/respawn/reboot.
-static mut CONSOLE: Console = Console::new();
 /// Puerto UART de la consola (PA2 TX / PA3 RX). Lo conduce el supervisor para el
 /// eco y las respuestas; el RX llega por IRQ vía [`RX_RING`].
 static mut CONSOLE_UART: Option<Usart2> = None;
+/// Línea de comando en construcción (editada con eco + backspace).
+static mut LINE: [u8; 128] = [0; 128];
+static mut LINE_LEN: usize = 0;
+/// Sesión de autenticación de la consola USART2 (challenge-response HMAC).
+static mut SESSION: Session = Session::new();
+/// Ganchos de autenticación (PSK en flash interna + HMAC + nonce); en `main`.
+static mut AUTH_HOOKS: Option<AuthHooks> = None;
 
-/// Sumidero de salida de la consola sobre el UART: escribe byte a byte (bloqueante
-/// a nivel de byte; las cadenas de consola son cortas).
+/// Sumidero de salida `rush` sobre el UART: escribe byte a byte (bloqueante a
+/// nivel de byte; las respuestas de consola son cortas).
 struct UartSink<'a>(&'a mut Usart2);
 
-impl ConsoleOut for UartSink<'_> {
-    fn write_str(&mut self, s: &str) {
+impl Write for UartSink<'_> {
+    fn write_str(&mut self, s: &str) -> Result<(), ()> {
         for &b in s.as_bytes() {
             self.0.write_byte(b);
         }
+        Ok(())
     }
+}
+
+/// Procesa un byte del ring RX de la consola `rush`. Devuelve `true` si consumió
+/// uno (drenar de nuevo), `false` si el ring está vacío.
+fn cli_poll_byte(sink: &mut UartSink) -> bool {
+    let Some(b) = RX_RING.pop() else {
+        return false;
+    };
+    // Fast-path: byte de control ENQ (0x05) → respuesta IDENTIFY inmediata.
+    if b == identify::ENQ {
+        identify::write_signature(sink, TIER, CHIP);
+        return true;
+    }
+    // SAFETY: solo el supervisor edita la línea y la sesión.
+    unsafe {
+        if b == b'\r' || b == b'\n' {
+            if LINE_LEN > 0 {
+                let _ = sink.write_str("\r\n");
+                let line = core::str::from_utf8(&LINE[..LINE_LEN]).unwrap_or("");
+                let cmd = parse(line);
+                // Todo gateado: sin sesión autenticada solo pasan IDENTIFY y el
+                // propio handshake (knock/prove/lock/enroll). El resto exige PSK.
+                if let Some(hooks) = AUTH_HOOKS.as_ref() {
+                    execute_authed(cmd, line, sink, &mut SESSION, hooks);
+                }
+                LINE_LEN = 0;
+            }
+        } else if b == 0x7F || b == 0x08 {
+            if LINE_LEN > 0 {
+                LINE_LEN -= 1;
+                let _ = sink.write_str("\x08 \x08");
+            }
+        } else if LINE_LEN < LINE.len() {
+            LINE[LINE_LEN] = b;
+            LINE_LEN += 1;
+            let ch = [b];
+            if let Ok(s) = core::str::from_utf8(&ch) {
+                let _ = sink.write_str(s);
+            }
+        }
+    }
+    true
 }
 
 /// Handler de USART2: drena el byte recibido al anillo de la consola. Leer `DR`
@@ -274,14 +333,11 @@ fn kernel_task() -> ! {
                     let _ = led.set_low();
                 }
             }
-            // Consola UART (F4.5): emite el banner una vez y drena los bytes que
-            // llegaron por IRQ de RX, procesándolos (eco + parser de comandos).
+            // Consola `rush` (F6.4d): drena los bytes que llegaron por IRQ de
+            // RX, procesándolos (eco + léxico universal gateado por knock/prove).
             if let Some(u) = CONSOLE_UART.as_mut() {
                 let mut sink = UartSink(u);
-                CONSOLE.greet(&mut sink);
-                while let Some(b) = RX_RING.pop() {
-                    CONSOLE.feed(b, &mut sink);
-                }
+                while cli_poll_byte(&mut sink) {}
             }
         }
         // Log throttled a ~1/s (el muestreo de LEDs corre mucho más rápido).
@@ -470,16 +526,31 @@ fn main() -> ! {
     }
     defmt::info!("IWDG armed (windowed, ventana kick ~0.5-4 s nominal)");
 
-    // Consola de operador interactiva (F4.5): PA2 TX / PA3 RX @ 115200 8N1, RX por
-    // IRQ. El supervisor drena el anillo y procesa los comandos (ps/mem/faults/
-    // respawn/reboot). Se crea tras el autotest de loopback, que ya validó la IP.
+    // Consola de operador `rush` (F6.4d): PA2 TX / PA3 RX @ 115200 8N1, RX por
+    // IRQ. Mismo léxico universal que el resto de la flota, gateado por
+    // knock/prove. Se crea tras el autotest de loopback, que ya validó la IP.
     unsafe {
         let mut uart = Usart2::new(clocks.pclk1, CONSOLE_BAUD);
         uart.enable_rx_irq();
         NVIC::unmask(Interrupt::USART2);
         CONSOLE_UART = Some(uart);
+        // Almacén de PSK: ventana de flash interna (sector 11, excluido del
+        // linker en memory.x). El canal serie exige autenticación.
+        psk::install(FlashWindow::new());
+        AUTH_HOOKS = Some(auth::hooks());
+        defmt::info!(
+            "PSK store (flash sector 11): provisioned={=bool}",
+            psk::provisioned()
+        );
+        // Personalidad full: tabla `lite::Hooks` compartida (cosmos/ecosystem/
+        // letargo/coil/scar + GPIO de placa) sobre datos reales del kernel.
+        rugus_core::syscall::lite::register(rugus_personality_full::hooks(board::ops()));
+        let mut sink = UartSink(CONSOLE_UART.as_mut().unwrap_unchecked());
+        let _ = sink.write_str(
+            "\r\nRugus F407 console (rush).\r\nCanal gateado: aut\u{e9}nticate con `knock` y `prove`.\r\n\r\n",
+        );
     }
-    defmt::info!("UART console ready (PA2/PA3 @ 115200, RX IRQ)");
+    defmt::info!("rush console ready (PA2/PA3 @ 115200, RX IRQ) — knock/prove");
 
     unsafe {
         // El LED de fault lo conduce ahora el servicio `status` desde el latch
