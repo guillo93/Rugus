@@ -30,6 +30,7 @@ pub mod region {
 
 /// Tamaños de región (campo SIZE del RASR): región cubre `2^(SIZE+1)` bytes.
 mod size {
+    pub const B_128K: u8 = 16;
     pub const B_256K: u8 = 17;
     pub const B_512K: u8 = 18;
     pub const B_1M: u8 = 19;
@@ -110,10 +111,20 @@ pub struct MpuLayout {
     pub flash_base: u32,
     /// Tamaño de la región de flash (campo SIZE).
     pub flash_size: u8,
+    /// Base de la ventana de secretos en flash interna (ignorado si
+    /// `secrets_size == 0`). Sector reservado fuera del linker donde la
+    /// personalidad guarda la PSK (F6.x): la programación FPEC escribe por el
+    /// espacio mapeado, así que necesita una región PRIV_RW + XN que prevalezca
+    /// sobre la flash write-never (en ARMv7-M gana la región de número mayor).
+    pub secrets_base: u32,
+    /// Tamaño de la región de secretos; `0` = sin ventana (deshabilitada).
+    pub secrets_size: u8,
 }
 
 impl MpuLayout {
     /// STM32F769 (Cortex-M7): 512 K SRAM + SDRAM externa 16 M, flash 2 M.
+    /// Sin ventana de secretos en flash interna: la PSK vive en la NOR QSPI
+    /// externa, programada por registros MMIO (no por el espacio mapeado).
     pub const STM32F769: Self = Self {
         periph_base: 0x4000_0000,
         periph_size: size::B_512M,
@@ -123,10 +134,14 @@ impl MpuLayout {
         ram_size: size::B_512K,
         flash_base: 0x0800_0000,
         flash_size: size::B_2M,
+        secrets_base: 0,
+        secrets_size: 0,
     };
 
     /// STM32F407 (Cortex-M4): 128 K SRAM (+CCM), sin SDRAM externa, flash 1 M.
     /// La región de RAM se redondea a 256 K (priv-only, cubrir de más es seguro).
+    /// Ventana de secretos: sector 11 (128 K en `0x080E_0000`), excluido del
+    /// linker (memory.x 896K) y escrito solo por el driver FPEC privilegiado.
     pub const STM32F407: Self = Self {
         periph_base: 0x4000_0000,
         periph_size: size::B_512M,
@@ -136,6 +151,8 @@ impl MpuLayout {
         ram_size: size::B_256K,
         flash_base: 0x0800_0000,
         flash_size: size::B_1M,
+        secrets_base: 0x080E_0000,
+        secrets_size: size::B_128K,
     };
 }
 
@@ -195,9 +212,29 @@ pub fn init(mpu: &mut MPU, layout: &MpuLayout) {
     // Región 4: app stack — deshabilitada hasta el primer switch a app userland.
     disable_region(mpu, region::APP_STACK);
 
-    // Regiones 5–6 sin usar; 7 es la guarda de pila (se programa en cada switch).
+    // Región 6: ventana de secretos en flash (si la placa la define) — solo
+    // privilegiado, lectura/escritura, exec-never. La escritura real solo
+    // ocurre con el FPEC desbloqueado (PG/SER), pero la MPU debe PERMITIR el
+    // store mapeado de la programación; sin esta región, la flash write-never
+    // (región 3) lo convierte en MemManage. Número mayor que FLASH ⇒ prevalece
+    // en el solapamiento. Userland sigue sin acceso: la PSK no es legible desde
+    // apps ni desde los verbos del ABI.
+    if layout.secrets_size == 0 {
+        disable_region(mpu, region::SECRETS);
+    } else {
+        configure_region(
+            mpu,
+            region::SECRETS,
+            layout.secrets_base,
+            layout.secrets_size,
+            ap::PRIV_RW,
+            true,
+            ATTR_NORMAL_WB,
+        );
+    }
+
+    // Región 5 sin usar; 7 es la guarda de pila (se programa en cada switch).
     disable_region(mpu, region::SERVICES);
-    disable_region(mpu, region::SECRETS);
     disable_region(mpu, region::STACK_GUARD);
 
     // PRIVDEFENA: kernel privilegiado usa mapa por defecto además de MPU.
