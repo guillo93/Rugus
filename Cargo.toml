@@ -21,6 +21,7 @@ members = [
   "examples/dual-blink-stm32f103c8-bluepill",
   "examples/appliance-stm32f103c8-bluepill",
   "examples/blink-stm32f407g-disco",
+  "examples/blink-stm32f407vet6-blackpill",
   "examples/blink-stm32f769-disco",
   "examples/dual-blink-stm32f407g-disco",
   "examples/dual-blink-stm32f769-disco",
