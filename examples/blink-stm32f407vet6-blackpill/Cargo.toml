@@ -1,0 +1,23 @@
+[package]
+name        = "blink-stm32f407vet6-blackpill"
+description = "Rugus blink para la placa clon \"Black\" STM32F407VET6 (FK407M3 y compatibles)."
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+authors.workspace      = true
+repository.workspace   = true
+publish     = false
+
+[[bin]]
+name = "blink-stm32f407vet6-blackpill"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+cortex-m            = { workspace = true }
+defmt               = { workspace = true }
+rugus-runtime       = { workspace = true }
+rugus-hal           = { workspace = true }
+rugus-hal-stm32f4   = { workspace = true, features = ["stm32f407"] }
