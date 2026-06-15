@@ -1,0 +1,24 @@
+[workspace]
+# Crate independiente del workspace embebido (target AArch64, no thumbv7).
+
+[package]
+name = "hello-rpi3"
+description = "Rugus G5 paso 0: bring-up bare-metal AArch64 en Raspberry Pi 3B+ (mini-UART)."
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "hello-rpi3"
+path = "src/main.rs"
+test = false
+bench = false
+
+[profile.release]
+opt-level = 2
+lto = true
+debug = true
+panic = "abort"
+
+[profile.dev]
+panic = "abort"
