@@ -1,0 +1,30 @@
+[package]
+name        = "console-stm32f407vet6-blackpill"
+description = "Rugus tier full sobre rush en el clon STM32F407VET6 (FK407M3): consola autenticada por USART1 + PSK en flash interna."
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+authors.workspace      = true
+repository.workspace   = true
+publish     = false
+
+[[bin]]
+name = "console-stm32f407vet6-blackpill"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+cortex-m            = { workspace = true }
+defmt               = { workspace = true }
+rugus-runtime       = { workspace = true }
+rugus-kernel        = { workspace = true, features = ["defmt"] }
+rugus-hal           = { workspace = true }
+rugus-hal-stm32f4   = { workspace = true, features = ["stm32f407"] }
+rugus-core          = { workspace = true }
+rugus-arch-cortex-m = { workspace = true, features = ["tickless", "defmt"] }
+rugus-crypto        = { workspace = true }
+rugus-personality-full = { workspace = true }
+rand_core           = { workspace = true }
+rush                = { workspace = true, features = ["auth"] }

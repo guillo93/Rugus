@@ -36,6 +36,7 @@ members = [
   "examples/tickless-stm32f769-disco",
   "examples/stop-mode-stm32f769-disco",
   "examples/console-power-stm32f407g-disco",
+  "examples/console-stm32f407vet6-blackpill",
   "examples/net-console-stm32f769-disco",
 ]
 

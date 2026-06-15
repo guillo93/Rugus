@@ -1,24 +1,32 @@
-//! USART2 para STM32F4 — PA2 TX / PA3 RX, polled, 8N1.
+//! USART para STM32F4 — consolas polled 8N1 sobre acceso MMIO directo.
 //!
-//! Driver de consola bloqueante por acceso MMIO directo, en la misma línea que
-//! [`crate::gpio`]: el bloque USART de la familia F4 expone SR/DR/BRR/CR1-3 en
-//! offsets fijos. USART2 cuelga de APB1; en la STM32F407G-DISC1 PA2/PA3 están
-//! libres en los headers (la placa no tiene VCP USB-serie en placa).
+//! El bloque USART de la familia F4 expone SR/DR/BRR/CR1-3 en offsets fijos. Dos
+//! instancias:
 //!
-//! Incluye un autotest de lazo cerrado por **half-duplex single-wire**
-//! (`CR3.HDSEL`): el receptor queda atado internamente a la línea TX, así que
-//! transmitir y volver a leer valida el periférico sin cablear pines —
-//! suficiente para la regla de validación por RTT en ambas placas.
+//! - [`Usart2`] — **PA2 TX / PA3 RX**, APB1. En la STM32F407G-DISC1 PA2/PA3 están
+//!   libres en los headers.
+//! - [`Usart1`] — **PA9 TX / PA10 RX**, APB2. Es el UART del bootloader serie de
+//!   ST (AN2606) y el que las placas clon (FK407M3) rutean al header `RX/TX`.
+//!
+//! Las rutinas de bajo nivel toman la base del periférico como parámetro, de
+//! modo que ambas comparten el cuerpo. [`Usart2`] incluye un autotest de lazo
+//! cerrado por **half-duplex single-wire** (`CR3.HDSEL`).
 
 use crate::gpio::{Mode, OutputType, Pin, PinConfig, Port, Pull, Speed};
 use core::ptr::{read_volatile, write_volatile};
 use rugus_hal::SerialPort;
 
+/// Base de USART1 (APB2) en la familia STM32F4.
+const USART1_BASE: u32 = 0x4001_1000;
 /// Base de USART2 (APB1) en la familia STM32F4.
 const USART2_BASE: u32 = 0x4000_4400;
+
 /// `RCC->APB1ENR`: bit 17 habilita el reloj de USART2.
 const RCC_APB1ENR: u32 = 0x4002_3840;
 const USART2EN: u32 = 1 << 17;
+/// `RCC->APB2ENR`: bit 4 habilita el reloj de USART1.
+const RCC_APB2ENR: u32 = 0x4002_3844;
+const USART1EN: u32 = 1 << 4;
 
 // Offsets de registro dentro del bloque USART (F4).
 const SR: u32 = 0x00;
@@ -48,9 +56,60 @@ pub const CONSOLE_BAUD: u32 = 115_200;
 /// Error de USART (infallible en las operaciones bloqueantes actuales).
 pub type UartError = core::convert::Infallible;
 
+// --- Cuerpo de bajo nivel parametrizado por base del periférico. ---
+
+#[inline]
+unsafe fn read_reg(base: u32, off: u32) -> u32 {
+    unsafe { read_volatile((base + off) as *const u32) }
+}
+
+#[inline]
+unsafe fn write_reg(base: u32, off: u32, val: u32) {
+    unsafe { write_volatile((base + off) as *mut u32, val) }
+}
+
+/// Escribe un byte por `base` (polling TXE).
+fn write_byte_at(base: u32, b: u8) {
+    // SAFETY: registros MMIO del USART; espera a DR vacío antes de escribir.
+    unsafe {
+        while read_reg(base, SR) & SR_TXE == 0 {}
+        write_reg(base, DR, b as u32);
+    }
+}
+
+/// Saca un byte recibido por `base` si hay (RXNE), sin bloquear.
+fn try_read_at(base: u32) -> Option<u8> {
+    // SAFETY: leer DR limpia RXNE.
+    unsafe {
+        if read_reg(base, SR) & SR_RXNE != 0 {
+            Some((read_reg(base, DR) & 0xFF) as u8)
+        } else {
+            None
+        }
+    }
+}
+
+/// Habilita reloj y programa el USART en `base`. `rcc_enr`/`en_bit` seleccionan
+/// el bit de reloj del bus (APB1 para USART2, APB2 para USART1).
+fn configure_at(base: u32, rcc_enr: u32, en_bit: u32, pclk: u32, baud: u32, loopback: bool) {
+    // SAFETY: arranque single-thread; habilita reloj y programa el USART.
+    unsafe {
+        let v = read_volatile(rcc_enr as *const u32);
+        write_volatile(rcc_enr as *mut u32, v | en_bit);
+        let _ = read_volatile(rcc_enr as *const u32);
+
+        write_reg(base, CR1, 0); // UE=0 mientras configuramos.
+        let div = (pclk + baud / 2) / baud;
+        write_reg(base, BRR, ((div / 16) << 4) | (div % 16));
+        write_reg(base, CR3, if loopback { CR3_HDSEL } else { 0 });
+        write_reg(base, CR1, CR1_UE | CR1_TE | CR1_RE);
+    }
+}
+
+// ===================== USART2 (PA2/PA3, APB1) =====================
+
 /// Handle polled de USART2 (PA2 TX, PA3 RX).
 pub struct Usart2 {
-    // Los pines quedan configurados de por vida; el handle solo necesita la base.
     _tx: Pin,
     _rx: Option<Pin>,
 }
@@ -78,7 +137,7 @@ impl Usart2 {
                 otype: OutputType::PushPull,
             },
         );
-        configure(pclk1, baud, false);
+        configure_at(USART2_BASE, RCC_APB1ENR, USART2EN, pclk1, baud, false);
         Self {
             _tx: tx,
             _rx: Some(rx),
@@ -98,29 +157,18 @@ impl Usart2 {
                 otype: OutputType::OpenDrain,
             },
         );
-        configure(pclk1, baud, true);
+        configure_at(USART2_BASE, RCC_APB1ENR, USART2EN, pclk1, baud, true);
         Self { _tx: tx, _rx: None }
     }
 
     /// Escribe un byte (polling TXE).
     pub fn write_byte(&mut self, b: u8) {
-        // SAFETY: registros MMIO de USART2; espera a DR vacío antes de escribir.
-        unsafe {
-            while read_reg(SR) & SR_TXE == 0 {}
-            write_reg(DR, b as u32);
-        }
+        write_byte_at(USART2_BASE, b);
     }
 
     /// Saca un byte recibido si hay (RXNE), sin bloquear.
     pub fn try_read_byte(&mut self) -> Option<u8> {
-        // SAFETY: leer DR limpia RXNE.
-        unsafe {
-            if read_reg(SR) & SR_RXNE != 0 {
-                Some((read_reg(DR) & 0xFF) as u8)
-            } else {
-                None
-            }
-        }
+        try_read_at(USART2_BASE)
     }
 
     /// Lee un byte esperando hasta `spins` iteraciones; `None` si no llega.
@@ -133,32 +181,20 @@ impl Usart2 {
         None
     }
 
-    /// Habilita la interrupción de recepción (RXNEIE): cada byte recibido pende
-    /// la IRQ de USART2. El firmware debe desenmascarar la línea en el NVIC y
-    /// drenar los bytes en el handler con [`isr_read_byte`].
+    /// Habilita la interrupción de recepción (RXNEIE). El firmware desenmascara
+    /// la línea en el NVIC y drena en el handler con [`isr_read_byte`].
     pub fn enable_rx_irq(&mut self) {
         // SAFETY: registro CR1 de USART2; OR no destructivo del bit RXNEIE.
         unsafe {
-            write_reg(CR1, read_reg(CR1) | CR1_RXNEIE);
+            write_reg(USART2_BASE, CR1, read_reg(USART2_BASE, CR1) | CR1_RXNEIE);
         }
     }
 }
 
-/// Lee un byte recibido desde el handler de IRQ, sin handle (`&mut Usart2`).
-///
-/// Pensada para el `#[interrupt] fn USART2`: lee `DR` si `RXNE` está alto (lo que
-/// también limpia el flag y desactiva la pendiente de la IRQ). Devuelve `None` si
-/// la IRQ se disparó por otra causa. La base de USART2 es fija, así que no
-/// necesita el handle propietario.
+/// Lee un byte recibido desde el handler de IRQ de USART2 (`#[interrupt] fn
+/// USART2`). `None` si la IRQ se disparó por otra causa.
 pub fn isr_read_byte() -> Option<u8> {
-    // SAFETY: registros MMIO de USART2; leer DR limpia RXNE atómicamente.
-    unsafe {
-        if read_reg(SR) & SR_RXNE != 0 {
-            Some((read_reg(DR) & 0xFF) as u8)
-        } else {
-            None
-        }
-    }
+    try_read_at(USART2_BASE)
 }
 
 impl SerialPort for Usart2 {
@@ -185,32 +221,98 @@ impl SerialPort for Usart2 {
 
     fn flush(&mut self) -> Result<(), Self::Error> {
         // SAFETY: espera a transmisión completa (TC).
-        unsafe { while read_reg(SR) & SR_TC == 0 {} }
+        unsafe { while read_reg(USART2_BASE, SR) & SR_TC == 0 {} }
         Ok(())
     }
 }
 
-#[inline]
-unsafe fn read_reg(off: u32) -> u32 {
-    unsafe { read_volatile((USART2_BASE + off) as *const u32) }
+// ===================== USART1 (PA9/PA10, APB2) =====================
+
+/// Handle polled de USART1 (PA9 TX, PA10 RX). En las placas clon (FK407M3) es el
+/// UART del header `RX/TX`; también el del bootloader serie de ST.
+pub struct Usart1 {
+    _tx: Pin,
+    _rx: Pin,
 }
 
-#[inline]
-unsafe fn write_reg(off: u32, val: u32) {
-    unsafe { write_volatile((USART2_BASE + off) as *mut u32, val) }
+impl Usart1 {
+    /// Consola: PA9 TX push-pull + PA10 RX, 8N1 @ `baud` con `pclk2` Hz.
+    pub fn new(pclk2: u32, baud: u32) -> Self {
+        let tx = Pin::new(
+            Port::A,
+            9,
+            PinConfig {
+                mode: Mode::Alternate(AF_USART),
+                pull: Pull::None,
+                speed: Speed::High,
+                otype: OutputType::PushPull,
+            },
+        );
+        let rx = Pin::new(
+            Port::A,
+            10,
+            PinConfig {
+                mode: Mode::Alternate(AF_USART),
+                pull: Pull::Up,
+                speed: Speed::High,
+                otype: OutputType::PushPull,
+            },
+        );
+        configure_at(USART1_BASE, RCC_APB2ENR, USART1EN, pclk2, baud, false);
+        Self { _tx: tx, _rx: rx }
+    }
+
+    /// Escribe un byte (polling TXE).
+    pub fn write_byte(&mut self, b: u8) {
+        write_byte_at(USART1_BASE, b);
+    }
+
+    /// Saca un byte recibido si hay (RXNE), sin bloquear.
+    pub fn try_read_byte(&mut self) -> Option<u8> {
+        try_read_at(USART1_BASE)
+    }
+
+    /// Habilita la interrupción de recepción (RXNEIE). El firmware desenmascara
+    /// la línea en el NVIC y drena en el handler con [`isr_read_byte_usart1`].
+    pub fn enable_rx_irq(&mut self) {
+        // SAFETY: registro CR1 de USART1; OR no destructivo del bit RXNEIE.
+        unsafe {
+            write_reg(USART1_BASE, CR1, read_reg(USART1_BASE, CR1) | CR1_RXNEIE);
+        }
+    }
 }
 
-fn configure(pclk1: u32, baud: u32, loopback: bool) {
-    // SAFETY: arranque single-thread; habilita reloj y programa USART2.
-    unsafe {
-        let v = read_volatile(RCC_APB1ENR as *const u32);
-        write_volatile(RCC_APB1ENR as *mut u32, v | USART2EN);
-        let _ = read_volatile(RCC_APB1ENR as *const u32);
+/// Lee un byte recibido desde el handler de IRQ de USART1 (`#[interrupt] fn
+/// USART1`). `None` si la IRQ se disparó por otra causa.
+pub fn isr_read_byte_usart1() -> Option<u8> {
+    try_read_at(USART1_BASE)
+}
 
-        write_reg(CR1, 0); // UE=0 mientras configuramos.
-        let div = (pclk1 + baud / 2) / baud;
-        write_reg(BRR, ((div / 16) << 4) | (div % 16));
-        write_reg(CR3, if loopback { CR3_HDSEL } else { 0 });
-        write_reg(CR1, CR1_UE | CR1_TE | CR1_RE);
+impl SerialPort for Usart1 {
+    type Error = UartError;
+
+    fn write(&mut self, buf: &[u8]) -> Result<usize, Self::Error> {
+        for &b in buf {
+            self.write_byte(b);
+        }
+        Ok(buf.len())
+    }
+
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize, Self::Error> {
+        if buf.is_empty() {
+            return Ok(0);
+        }
+        loop {
+            if let Some(b) = self.try_read_byte() {
+                buf[0] = b;
+                return Ok(1);
+            }
+        }
+    }
+
+    fn flush(&mut self) -> Result<(), Self::Error> {
+        // SAFETY: espera a transmisión completa (TC).
+        unsafe { while read_reg(USART1_BASE, SR) & SR_TC == 0 {} }
+        Ok(())
     }
 }
