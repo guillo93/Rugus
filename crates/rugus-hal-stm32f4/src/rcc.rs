@@ -54,7 +54,15 @@ pub fn init(dp: &pac::Peripherals) -> Clocks {
 fn configure_flash(flash: &pac::FLASH) {
     flash.acr.modify(|_, w| {
         w.latency().ws5();
-        w.prften().enabled()
+        w.prften().enabled();
+        // I/D-cache del ART (RM0090 §3.4): además de acelerar el fetch desde
+        // flash, son OBLIGATORIAS para el driver FPEC. Mientras la flash está en
+        // erase/program TODO acceso al bus se stalla (incluido el fetch de
+        // instrucciones); el bucle de espera del FPEC debe correr desde la
+        // I-cache, o re-fetchearlo desde la flash stalled cuelga el núcleo. El
+        // prefetch lineal por sí solo NO basta: no retiene un salto hacia atrás.
+        w.icen().enabled();
+        w.dcen().enabled()
     });
 }
 

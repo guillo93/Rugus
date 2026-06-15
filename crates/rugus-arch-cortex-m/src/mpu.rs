@@ -154,6 +154,15 @@ impl MpuLayout {
         secrets_base: 0x080E_0000,
         secrets_size: size::B_128K,
     };
+
+    /// STM32F407**VE** (512 KiB flash) — clones tipo FK407M3-VET6. Idéntico al
+    /// `STM32F407` salvo la ventana de secretos: en 512 K el último sector es el
+    /// **7** (128 K en `0x0806_0000`), no el 11 (que no existe). La región FLASH
+    /// del MPU sigue cubriendo 1 M (de más, inocuo: solo da permisos RO).
+    pub const STM32F407VE: Self = Self {
+        secrets_base: 0x0806_0000,
+        ..Self::STM32F407
+    };
 }
 
 /// Programa las regiones estáticas y habilita la MPU para la placa dada.
