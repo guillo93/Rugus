@@ -1,0 +1,15 @@
+[workspace]
+# Backend AArch64 (ARMv8-A). Crate independiente del workspace embebido
+# thumbv7: compila para aarch64-unknown-none con su propio target.
+
+[package]
+name = "rugus-arch-cortex-a"
+description = "Backend Arch de Rugus para Cortex-A / ARMv8-A (AArch64). Implementa el trait rugus_core::arch::Arch: context switch, secciones críticas (DAIF), reloj (Generic Timer) y reset."
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+authors = ["Luis Guillermo Hernandez <luiguihez93@gmail.com>"]
+publish = false
+
+[dependencies]
+rugus-core = { path = "../rugus-core" }
