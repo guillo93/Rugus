@@ -1,0 +1,24 @@
+[workspace]
+# Crate independiente del workspace embebido (target AArch64, no thumbv7).
+
+[package]
+name = "rpi3-sched"
+description = "Rugus G5: scheduler preemptivo (context switch + 2 tareas + preempción por timer) en Raspberry Pi 3B+ (AArch64)."
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "rpi3-sched"
+path = "src/main.rs"
+test = false
+bench = false
+
+[profile.release]
+opt-level = 2
+lto = true
+debug = true
+panic = "abort"
+
+[profile.dev]
+panic = "abort"
