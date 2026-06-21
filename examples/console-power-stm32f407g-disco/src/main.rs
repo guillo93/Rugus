@@ -207,9 +207,8 @@ fn main() -> ! {
 /// en `wfi`, acumulando idle real que reporta el verbo `letargo`.
 fn supervisor_task() -> ! {
     let mut sink = UartSink;
-    let _ = sink.write_str(
-        "\r\nRugus F407 console (rush).\r\nCanal gateado: aut\u{e9}nticate con `knock` y `prove`.\r\n\r\n",
-    );
+    rush::banner::write_banner(&mut sink, true);
+        let _ = sink.write_str("Canal gateado: aut\u{e9}nticate con `knock` y `prove`.\r\n\r\n");
     loop {
         while cli_poll_byte(&mut sink) {}
         rugus_kernel::cpu_sleep_ms(30);

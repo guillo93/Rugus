@@ -10,6 +10,7 @@
 #![warn(missing_docs)]
 
 pub mod ansi;
+pub mod banner;
 mod commands;
 pub mod identify;
 #[cfg(feature = "auth")]

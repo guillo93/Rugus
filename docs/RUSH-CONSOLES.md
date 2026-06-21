@@ -6,6 +6,37 @@ Rugus es un **kernel de multipersonalidad**: cada placa compone su personalidad
 miembro de la flota. El cliente host universal es `rugus-cli` (ver
 [`RUGUS-CLI-HOST.md`](RUGUS-CLI-HOST.md)).
 
+## Logo / banner
+
+La identidad de Rugus es una **espada de doble filo** (la hoja `║` = los dos
+filos; guarda en oro; **pomo engastado con el núcleo verde** = el kernel) junto
+al wordmark. Vive en `crates/rush/src/banner.rs` y lo emite cada consola al
+arrancar vía `rush::banner::write_banner(out, color)`.
+
+```
+      ▲
+      ║
+      ║      █▀█ █ █ █▀▀ █ █ █▀
+      ║      █▀▄ █▄█ █▄█ █▄█ ▄█
+      ║      kernel · multipersonalidad
+      ║      multi-arquitectura · RTOS
+   ═══╬═══
+      ║
+      ◆
+```
+
+Dos versiones, misma silueta, elegidas por capacidad del terminal:
+
+- **Rico** (`color = true`, por defecto): Unicode + color ANSI 256 (acero
+  degradado · guarda oro · pomo verde). Lo que ve cualquier terminal moderno
+  (minicom/screen/`rugus-cli`/TTY gráfico). ~0,5 KiB, ligero para UART.
+- **ASCII-safe** (`color = false`): 7-bit sin color (espada con `|`, wordmark
+  FIGlet), byte a byte idéntico en cualquier transporte — captura de logs,
+  7-bit, teletipo. Fallback cuando se negocia/fuerza modo plano (`NO_COLOR`).
+
+La misma marca, en alta fidelidad vectorial, sirve para el OS gráfico (pantalla
+táctil F769 / HDMI RPi), el README e iconos.
+
 ## Canal gateado
 
 Todo transporte exige **autenticación de canal** challenge-response HMAC-SHA256

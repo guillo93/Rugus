@@ -371,9 +371,8 @@ unsafe fn service_console(net: &mut NetStack<'static, EthernetDMA<'static, 'stat
             buf: &mut buf,
             len: 0,
         };
-        let _ = out.write_str(
-            "\r\nRugus F769 net-console.\r\nCanal gateado: autentícate con `knock` y `prove`.\r\n\r\n",
-        );
+        rush::banner::write_banner(&mut out, true);
+        let _ = out.write_str("Canal gateado: autentícate con `knock` y `prove`.\r\n\r\n");
         let len = out.len;
         if sock.send_slice(&buf[..len]).is_ok() {
             unsafe { BANNER_PENDING = false };
