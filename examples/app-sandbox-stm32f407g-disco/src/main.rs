@@ -546,9 +546,8 @@ fn main() -> ! {
         // letargo/coil/scar + GPIO de placa) sobre datos reales del kernel.
         rugus_core::syscall::lite::register(rugus_personality_full::hooks(board::ops()));
         let mut sink = UartSink(CONSOLE_UART.as_mut().unwrap_unchecked());
-        let _ = sink.write_str(
-            "\r\nRugus F407 console (rush).\r\nCanal gateado: aut\u{e9}nticate con `knock` y `prove`.\r\n\r\n",
-        );
+        rush::banner::write_banner(&mut sink, true);
+        let _ = sink.write_str("Canal gateado: aut\u{e9}nticate con `knock` y `prove`.\r\n\r\n");
     }
     defmt::info!("rush console ready (PA2/PA3 @ 115200, RX IRQ) — knock/prove");
 

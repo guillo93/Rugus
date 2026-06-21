@@ -69,8 +69,8 @@ impl Write for UartWriter {
 fn cli_task() -> ! {
     defmt::info!("cli task started");
     let mut writer = UartWriter;
-    let banner = "\r\nRugus lite appliance ready.\r\nType `orbit` for help.\r\n\r\n";
-    let _ = writer.write_str(banner);
+    rush::banner::write_banner(&mut writer, true);
+    let _ = writer.write_str("Type `orbit` for help.\r\n\r\n");
 
     loop {
         // Drena todo el ring RX antes de dormir: el bucle no busy-waitea, solo
