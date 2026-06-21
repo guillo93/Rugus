@@ -373,6 +373,7 @@ unsafe fn service_console(net: &mut NetStack<'static, EthernetDMA<'static, 'stat
         };
         rush::banner::write_banner(&mut out, true);
         let _ = out.write_str("Canal gateado: autentícate con `knock` y `prove`.\r\n\r\n");
+        rush::paint::prompt(&mut out, CHIP);
         let len = out.len;
         if sock.send_slice(&buf[..len]).is_ok() {
             unsafe { BANNER_PENDING = false };
@@ -440,6 +441,7 @@ unsafe fn process_console(rx: &[u8], out: &mut BufOut<'_>, hooks: &AuthHooks) {
                     let cmd = parse(line);
                     execute_authed(cmd, line, out, unsafe { &mut SESSION }, hooks);
                 }
+                rush::paint::prompt(out, CHIP);
                 unsafe { LINE_LEN = 0 };
             }
         } else if b == 0x7F || b == 0x08 {

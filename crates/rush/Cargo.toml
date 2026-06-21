@@ -27,4 +27,5 @@ auth = []
 
 [dependencies]
 rugus-core = { workspace = true }
+rugus-ui   = { workspace = true }
 heapless   = { workspace = true }

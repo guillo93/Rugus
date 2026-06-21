@@ -15,6 +15,7 @@ bench = false
 [dependencies]
 rugus-core   = { workspace = true }
 rugus-kernel = { workspace = true }
+rugus-ui     = { workspace = true }
 defmt        = { workspace = true, optional = true }
 
 [features]

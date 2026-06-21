@@ -1,0 +1,26 @@
+[package]
+name        = "rugus-ui"
+description = "Sistema visual de la consola rush: paleta semántica ANSI, Painter sobre buffer y componentes (badge, tabla, medidor). no_std, sin alloc."
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+authors.workspace      = true
+repository.workspace   = true
+
+[lib]
+test = false
+bench = false
+
+# Vista previa host del sistema visual (usa `std`); excluida del build embebido
+# vía `required-features` para que `cargo build --target thumbv7…` no la compile.
+[[example]]
+name = "preview"
+required-features = ["host-preview"]
+
+[features]
+default = []
+# Habilita los ejemplos host (preview de la consola). Solo para target nativo.
+host-preview = []
+
+[dependencies]

@@ -13,6 +13,7 @@ pub mod ansi;
 pub mod banner;
 mod commands;
 pub mod identify;
+pub mod paint;
 #[cfg(feature = "auth")]
 pub mod session;
 

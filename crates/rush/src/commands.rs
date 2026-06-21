@@ -635,7 +635,9 @@ fn exec_hatch(out: &mut dyn Write, name: &[u8]) {
 }
 
 fn exec_coil(out: &mut dyn Write) {
-    let mut buf = [0u8; 256];
+    // 640 B: la tabla rica (medidor de pila + estado coloreado por fila) usa
+    // muchas secuencias ANSI; con ~5 tareas el tier full ronda los 500 B.
+    let mut buf = [0u8; 640];
     let n = user::task_list(&mut buf);
     if n > 0 {
         let text = core::str::from_utf8(&buf[..(n as usize).min(buf.len())]).unwrap_or("(invalid)");
@@ -669,7 +671,7 @@ fn exec_scar(out: &mut dyn Write, clear: bool) {
         }
         return;
     }
-    let mut buf = [0u8; 256];
+    let mut buf = [0u8; 448];
     let n = user::scar(&mut buf);
     if n > 0 {
         let text = core::str::from_utf8(&buf[..(n as usize).min(buf.len())]).unwrap_or("(invalid)");
@@ -712,7 +714,10 @@ fn exec_ward(out: &mut dyn Write, action: u8) {
 }
 
 fn write_syscall_buf(out: &mut dyn Write, f: fn(&mut [u8]) -> i32) {
-    let mut buf = [0u8; 256];
+    // 384 B: holgura para la salida rica del tier full (cabecera + badges +
+    // medidores, cada secuencia ANSI ~11 B). El tier lite escribe mucho menos;
+    // el coste es solo pila reservada.
+    let mut buf = [0u8; 384];
     let n = f(&mut buf);
     if n > 0 {
         let text =

@@ -33,6 +33,7 @@
 
 use rugus_core::syscall::lite::{GpioLevel, Hooks};
 use rugus_core::Errno;
+use rugus_ui::{Painter, Role};
 
 /// Operaciones específicas de placa que la personalidad full inyecta. Sus firmas
 /// son idénticas a los campos homónimos de [`Hooks`]: se trasladan tal cual a la
@@ -127,83 +128,134 @@ pub unsafe fn hooks(ops: BoardOps) -> Hooks {
 
 /// `cosmos` → identidad de la placa + datos vivos del kernel.
 fn hook_sys_info(buf: &mut [u8]) -> usize {
-    let mut w = SliceWriter::new(buf);
+    let mut p = Painter::new(buf);
+    p.header("cosmos");
+    // Identidad de la placa (oro = foco) + insignias de personalidad/tier.
     // SAFETY: BOARD_NAME se fija una vez en `hooks` durante el arranque.
-    w.str(unsafe { BOARD_NAME });
-    w.str(" · personality=full · tier=full\r\n");
-    w.str("arranques=");
-    w.u32(rugus_kernel::boot_count());
-    w.str(" tareas=");
-    w.u32(rugus_kernel::task_count() as u32);
+    p.text(Role::Focus, unsafe { BOARD_NAME }).raw("  ");
+    p.badge(Role::Core, " full ").raw(" ");
+    p.badge(Role::Data, " tier:full ").raw("\r\n");
+    // Datos vivos del kernel, alineados clave/valor.
+    p.kvn("arranques", Role::Data, rugus_kernel::boot_count())
+        .raw("   ");
+    p.kvn("tareas", Role::Data, rugus_kernel::task_count() as u32);
     if rugus_kernel::safe_mode() {
-        w.str(" [SAFE-MODE]");
+        p.raw("   ").badge(Role::Warn, " SAFE-MODE ");
     }
-    w.str("\r\n");
-    w.len()
+    p.raw("\r\n");
+    p.len()
 }
 
 /// `ecosystem` → estado global: tareas, faults, causa del último reset.
 fn hook_sys_status(buf: &mut [u8]) -> usize {
-    let mut w = SliceWriter::new(buf);
-    w.str("tareas=");
-    w.u32(rugus_kernel::task_count() as u32);
-    w.str(" faults_total=");
-    w.u32(rugus_kernel::total_faults());
-    if rugus_kernel::safe_mode() {
-        w.str(" [SAFE-MODE]");
+    let mut p = Painter::new(buf);
+    p.header("ecosystem");
+    let faults = rugus_kernel::total_faults();
+    let safe = rugus_kernel::safe_mode();
+    // Veredicto de salud de un vistazo: verde si todo limpio, si no ámbar/rojo.
+    if safe {
+        p.badge(Role::Fault, " SAFE-MODE ").raw("  ");
+    } else if faults == 0 {
+        p.badge(Role::Core, " sano ").raw("  ");
+    } else {
+        p.badge(Role::Warn, " degradado ").raw("  ");
     }
-    w.str("\r\nultimo reset: ");
-    w.str(rugus_kernel::reset_cause());
-    w.str("\r\n");
-    w.len()
+    p.raw("\r\n");
+    p.kvn("tareas", Role::Data, rugus_kernel::task_count() as u32)
+        .raw("   ");
+    p.kvn(
+        "faults",
+        if faults == 0 { Role::Core } else { Role::Fault },
+        faults,
+    );
+    p.raw("\r\n");
+    p.kv("reset", Role::Data, rugus_kernel::reset_cause())
+        .raw("\r\n");
+    p.len()
 }
 
 /// `letargo` → métricas de energía/ocio del proveedor del kernel.
 fn hook_sys_power(buf: &mut [u8]) -> usize {
-    let mut w = SliceWriter::new(buf);
+    let mut p = Painter::new(buf);
+    p.header("letargo");
     match rugus_kernel::power_stats() {
-        Some(p) => {
-            w.str("uptime=");
-            w.u32(p.uptime_ms);
-            w.str(" ms  idle=");
-            w.u32(p.idle_ms);
-            w.str(" ms (");
-            w.u32(p.idle_percent());
-            w.str("%)\r\nsystick_irqs=");
-            w.u32(p.systick_irqs);
-            w.str("  stop_entries=");
-            w.u32(p.stop_entries);
-            w.str("\r\n");
+        Some(s) => {
+            // El idle es lo importante: barra de ocio (más = mejor en RTOS
+            // durmiente). El medidor colorea por umbral; aquí alto idle es sano,
+            // así que invertimos la lectura usando 100-idle para el color.
+            let idle = s.idle_percent().min(100);
+            p.kvn("uptime", Role::Data, s.uptime_ms)
+                .text(Role::Chrome, " ms\r\n");
+            p.on(Role::Chrome).raw("idle   ").off();
+            p.meter(100 - idle, 16).raw(" ");
+            p.num(Role::Core, idle).text(Role::Chrome, "% ocio\r\n");
+            p.kvn("systick", Role::Data, s.systick_irqs).raw("   ");
+            p.kvn("stop", Role::Data, s.stop_entries).raw("\r\n");
         }
         None => {
-            w.str("energia no disponible (sin proveedor)\r\n");
+            p.text(Role::Warn, "energia no disponible (sin proveedor)\r\n");
         }
     }
-    w.len()
+    p.len()
 }
 
 /// `coil` → tabla de tareas (idx, prioridad, modo, estado, stack usado/total).
 fn hook_task_list(out: &mut [u8]) -> i32 {
-    let mut w = SliceWriter::new(out);
-    w.str("idx pri modo estado stack\r\n");
+    let mut p = Painter::new(out);
+    p.header("coil");
+    // Cabecera de columnas en gris (cromo): no es dato, es estructura.
+    p.text(Role::Chrome, "  # pri  modo  estado    pila\r\n");
     for idx in 0..rugus_kernel::task_count() {
-        w.u32(idx as u32);
-        w.str("   ");
-        w.u32(rugus_kernel::task_priority(idx) as u32);
-        w.str("  ");
-        w.str(if rugus_kernel::is_user_task(idx) {
-            "user "
+        let used = rugus_kernel::stack_high_water(idx);
+        let total = rugus_kernel::stack_len(idx).max(1);
+        let pct = (used * 100 / total).min(100);
+        // # y prioridad.
+        p.raw("  ").num(Role::Data, idx as u32).raw("  ");
+        p.num(Role::Data, rugus_kernel::task_priority(idx) as u32)
+            .raw("  ");
+        // Modo: kernel en oro (privilegio), user en plata.
+        if rugus_kernel::is_user_task(idx) {
+            p.text(Role::Text, "user");
         } else {
-            "kern "
-        });
-        w.str(rugus_kernel::task_state_name(idx));
-        w.str(" ");
-        w.u32(rugus_kernel::stack_high_water(idx));
-        w.str("/");
-        w.u32(rugus_kernel::stack_len(idx));
-        w.str("\r\n");
+            p.text(Role::Focus, "kern");
+        }
+        p.raw("  ");
+        // Estado: verde si corre/listo, ámbar si bloqueado/durmiente, rojo si
+        // muerto. Heurística por nombre para no acoplar al enum del kernel.
+        let st = rugus_kernel::task_state_name(idx);
+        let st_role = state_role(st);
+        p.on(st_role).raw(st).off();
+        // Relleno a 9 columnas para alinear el medidor.
+        for _ in st.len()..9 {
+            p.raw(" ");
+        }
+        // Mini-medidor de pila + porcentaje.
+        p.meter(pct, 8)
+            .raw(" ")
+            .num(stack_role(pct), pct)
+            .text(Role::Chrome, "%\r\n");
     }
-    w.len() as i32
+    p.len() as i32
+}
+
+/// Color del estado de una tarea (verde sano / ámbar en espera / rojo caído).
+fn state_role(name: &str) -> Role {
+    match name {
+        "run" | "ready" | "Run" | "Ready" => Role::Core,
+        "dead" | "killed" | "Dead" | "Killed" => Role::Fault,
+        _ => Role::Warn, // blocked/sleeping/waiting
+    }
+}
+
+/// Color del uso de pila por umbral (verde <70 % / ámbar / rojo ≥90 %).
+fn stack_role(pct: u32) -> Role {
+    if pct >= 90 {
+        Role::Fault
+    } else if pct >= 70 {
+        Role::Warn
+    } else {
+        Role::Core
+    }
 }
 
 /// `scar` → post-mortem del último fault contenido. action 0=leer, 1=borrar.
@@ -213,40 +265,44 @@ fn hook_scar(action: u8, out: &mut [u8]) -> i32 {
     if action == 1 {
         return 0; // nada que borrar: la copia persistente ya se consumió al boot.
     }
-    let mut w = SliceWriter::new(out);
-    w.str("arranques=");
-    w.u32(rugus_kernel::boot_count());
-    w.str(" faults_total=");
-    w.u32(rugus_kernel::total_faults());
+    let mut p = Painter::new(out);
+    p.header("scar");
+    let total = rugus_kernel::total_faults();
+    p.kvn("arranques", Role::Data, rugus_kernel::boot_count())
+        .raw("   ");
+    p.kvn(
+        "faults",
+        if total == 0 { Role::Core } else { Role::Fault },
+        total,
+    );
     if rugus_kernel::safe_mode() {
-        w.str(" [SAFE-MODE]");
+        p.raw("   ").badge(Role::Fault, " SAFE-MODE ");
     }
-    w.str("\r\n");
+    p.raw("\r\n");
     for idx in 0..rugus_kernel::task_count() {
         let c = rugus_kernel::faults_for(idx);
         if c > 0 {
-            w.str("  task ");
-            w.u32(idx as u32);
-            w.str(": ");
-            w.u32(c);
-            w.str(" faults\r\n");
+            p.on(Role::Chrome).raw("  task ").off();
+            p.num(Role::Data, idx as u32).raw(": ");
+            p.num(Role::Fault, c).text(Role::Chrome, " faults\r\n");
         }
     }
     match rugus_kernel::last_fault() {
         Some((kind, task, pc, addr)) => {
-            w.str("ultimo: kind=");
-            w.u32(kind as u32);
-            w.str(" task=");
-            w.u32(task as u32);
-            w.str(" pc=0x");
-            w.hex(pc);
-            w.str(" addr=0x");
-            w.hex(addr);
-            w.str("\r\n");
+            // Cicatriz del último fault contenido, en rojo (es la herida).
+            p.on(Role::Fault).raw("\u{2717} ultimo  ").off();
+            p.kvn("kind", Role::Fault, kind as u32).raw("  ");
+            p.kvn("task", Role::Data, task as u32).raw("  ");
+            p.on(Role::Chrome).raw("pc=").off().text(Role::Data, "0x");
+            p.on(Role::Data).hex(pc).off().raw("  ");
+            p.on(Role::Chrome).raw("addr=").off().text(Role::Data, "0x");
+            p.on(Role::Data).hex(addr).off().raw("\r\n");
         }
-        None => w.str("sin faults registrados\r\n"),
+        None => {
+            p.ok("sin faults registrados\r\n");
+        }
     }
-    w.len() as i32
+    p.len() as i32
 }
 
 // ---------------------------------------------------------------------------
@@ -285,71 +341,4 @@ fn stub_slot_out(_slot: u8, _out: &mut [u8]) -> i32 {
 }
 fn stub_name(_name: &[u8]) -> i32 {
     Errno::Enosys as i32
-}
-
-// ---------------------------------------------------------------------------
-// Escritor sobre un slice de bytes, sin `alloc` ni `defmt`. Satura en capacidad
-// (las salidas de consola son cortas; nunca corrompe memoria).
-// ---------------------------------------------------------------------------
-
-struct SliceWriter<'a> {
-    buf: &'a mut [u8],
-    pos: usize,
-}
-
-impl<'a> SliceWriter<'a> {
-    fn new(buf: &'a mut [u8]) -> Self {
-        Self { buf, pos: 0 }
-    }
-
-    fn len(&self) -> usize {
-        self.pos
-    }
-
-    /// Copia `s` truncando si no cabe (sin desbordar).
-    fn str(&mut self, s: &str) {
-        let bytes = s.as_bytes();
-        let n = bytes.len().min(self.buf.len() - self.pos);
-        self.buf[self.pos..self.pos + n].copy_from_slice(&bytes[..n]);
-        self.pos += n;
-    }
-
-    /// Formatea `v` en decimal.
-    fn u32(&mut self, v: u32) {
-        let mut tmp = [0u8; 10];
-        let mut i = tmp.len();
-        let mut n = v;
-        if n == 0 {
-            i -= 1;
-            tmp[i] = b'0';
-        } else {
-            while n > 0 && i > 0 {
-                i -= 1;
-                tmp[i] = b'0' + (n % 10) as u8;
-                n /= 10;
-            }
-        }
-        // SAFETY: solo dígitos ASCII en [i, len).
-        self.str(unsafe { core::str::from_utf8_unchecked(&tmp[i..]) });
-    }
-
-    /// Formatea `v` en hexadecimal (sin prefijo).
-    fn hex(&mut self, v: u32) {
-        const HEX: &[u8; 16] = b"0123456789abcdef";
-        let mut tmp = [0u8; 8];
-        let mut i = tmp.len();
-        let mut n = v;
-        if n == 0 {
-            i -= 1;
-            tmp[i] = b'0';
-        } else {
-            while n > 0 && i > 0 {
-                i -= 1;
-                tmp[i] = HEX[(n & 0xF) as usize];
-                n >>= 4;
-            }
-        }
-        // SAFETY: solo dígitos hex ASCII en [i, len).
-        self.str(unsafe { core::str::from_utf8_unchecked(&tmp[i..]) });
-    }
 }

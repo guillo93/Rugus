@@ -181,6 +181,7 @@ fn cli_poll_byte(sink: &mut UartSink) -> bool {
                 if let Some(hooks) = AUTH_HOOKS.as_ref() {
                     execute_authed(cmd, line, sink, &mut SESSION, hooks);
                 }
+                rush::paint::prompt(sink, CHIP);
                 LINE_LEN = 0;
             }
         } else if b == 0x7F || b == 0x08 {
@@ -524,6 +525,7 @@ fn main() -> ! {
         let mut sink = UartSink(CONSOLE_UART.as_mut().unwrap_unchecked());
         rush::banner::write_banner(&mut sink, true);
         let _ = sink.write_str("Canal gateado: aut\u{e9}nticate con `knock` y `prove`.\r\n\r\n");
+        rush::paint::prompt(&mut sink, CHIP);
     }
     defmt::info!("rush console ready (PA9/PA10 VCP @ 115200, RX IRQ) — knock/prove");
 

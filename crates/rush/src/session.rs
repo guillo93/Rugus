@@ -100,65 +100,72 @@ impl Session {
     /// Procesa `knock`: genera nonce y responde el reto.
     pub fn knock(&mut self, out: &mut dyn Write, hooks: &AuthHooks) {
         if !(hooks.provisioned)() {
-            let _ = out.write_str("auth: sin PSK — usa enroll <psk-hex> (una vez)\r\n");
+            crate::paint::warn(out, "sin PSK — usa enroll <psk-hex> (una vez)");
             return;
         }
         let mut nonce = [0u8; NONCE_LEN];
         (hooks.random_nonce)(&mut nonce);
         self.state = State::AwaitingProof { nonce };
-        let _ = out.write_str("challenge ");
+        // Etiqueta en oro (autoridad) y el reto en cian (dato).
+        crate::paint::tint(out, rugus_ui::Role::Focus, "challenge ");
+        if rugus_ui::color() {
+            let _ = out.write_str(rugus_ui::CIAN);
+        }
         write_hex(out, &nonce);
+        if rugus_ui::color() {
+            let _ = out.write_str(rugus_ui::RESET);
+        }
         let _ = out.write_str("\r\n");
     }
 
     /// Procesa `prove <proof-hex>`: verifica y abre sesión si coincide.
     pub fn prove(&mut self, proof_hex: &[u8], out: &mut dyn Write, hooks: &AuthHooks) {
         let State::AwaitingProof { nonce } = self.state else {
-            let _ = out.write_str("auth: sin reto activo — usa knock primero\r\n");
+            crate::paint::warn(out, "sin reto activo — usa knock primero");
             return;
         };
         // Consume el nonce pase lo que pase (un solo uso, anti-replay).
         self.state = State::Locked;
         let mut proof = [0u8; PROOF_LEN];
         if decode_hex(proof_hex, &mut proof) != Some(PROOF_LEN) {
-            let _ = out.write_str("auth: prueba mal formada\r\n");
+            crate::paint::err(out, "prueba mal formada");
             return;
         }
         if (hooks.verify_proof)(&nonce, &proof) {
             self.state = State::Authenticated {
                 last_ms: (hooks.now_ms)(),
             };
-            let _ = out.write_str("auth: ok — sesión abierta\r\n");
+            crate::paint::ok(out, "auth ok — sesión abierta");
         } else {
-            let _ = out.write_str("auth: fail — prueba inválida\r\n");
+            crate::paint::err(out, "auth fail — prueba inválida");
         }
     }
 
     /// Procesa `lock`: cierra la sesión.
     pub fn lock(&mut self, out: &mut dyn Write) {
         self.state = State::Locked;
-        let _ = out.write_str("auth: sesión cerrada\r\n");
+        crate::paint::ok(out, "sesión cerrada");
     }
 
     /// Procesa `enroll <psk-hex>`: aprovisiona la PSK una sola vez.
     pub fn enroll(&mut self, psk_hex: &[u8], out: &mut dyn Write, hooks: &AuthHooks) {
         if (hooks.provisioned)() {
-            let _ = out.write_str("enroll: ya aprovisionada (factory reset para cambiar)\r\n");
+            crate::paint::warn(out, "enroll: ya aprovisionada (factory reset para cambiar)");
             return;
         }
         let mut psk = [0u8; PSK_MAX];
         let Some(len) = decode_hex(psk_hex, &mut psk) else {
-            let _ = out.write_str("enroll: psk-hex mal formada\r\n");
+            crate::paint::err(out, "enroll: psk-hex mal formada");
             return;
         };
         if len == 0 {
-            let _ = out.write_str("enroll: psk vacía\r\n");
+            crate::paint::err(out, "enroll: psk vacía");
             return;
         }
         if (hooks.enroll)(&psk[..len]) {
-            let _ = out.write_str("enroll: ok — PSK aprovisionada\r\n");
+            crate::paint::ok(out, "enroll ok — PSK aprovisionada");
         } else {
-            let _ = out.write_str("enroll: error al persistir\r\n");
+            crate::paint::err(out, "enroll: error al persistir");
         }
     }
 }
