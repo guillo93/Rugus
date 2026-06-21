@@ -52,7 +52,7 @@ version = "0.1.0"
 dependencies = [
  "cortex-m",
  "defmt 1.1.0",
- "rand_core",
+ "rand_core 0.10.1",
  "rugus-arch-cortex-m",
  "rugus-core",
  "rugus-crypto",
@@ -70,7 +70,7 @@ version = "0.1.0"
 dependencies = [
  "cortex-m",
  "defmt 1.1.0",
- "rand_core",
+ "rand_core 0.10.1",
  "rugus-arch-cortex-m",
  "rugus-core",
  "rugus-crypto",
@@ -90,7 +90,7 @@ dependencies = [
  "critical-section",
  "defmt 1.1.0",
  "heapless 0.9.3",
- "rand_core",
+ "rand_core 0.10.1",
  "rugus-arch-cortex-m",
  "rugus-core",
  "rugus-crypto",
@@ -236,7 +236,7 @@ version = "0.1.0"
 dependencies = [
  "cortex-m",
  "defmt 1.1.0",
- "rand_core",
+ "rand_core 0.10.1",
  "rugus-arch-cortex-m",
  "rugus-core",
  "rugus-crypto",
@@ -254,7 +254,7 @@ version = "0.1.0"
 dependencies = [
  "cortex-m",
  "defmt 1.1.0",
- "rand_core",
+ "rand_core 0.10.1",
  "rugus-arch-cortex-m",
  "rugus-core",
  "rugus-crypto",
@@ -327,7 +327,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0dc92fb57ca44df6db8059111ab3af99a63d5d0f8375d9972e319a379c6bab76"
 dependencies = [
  "generic-array 0.14.7",
- "rand_core",
+ "rand_core 0.6.4",
  "subtle",
  "zeroize",
 ]
@@ -536,7 +536,7 @@ dependencies = [
  "generic-array 0.14.7",
  "group",
  "hkdf",
- "rand_core",
+ "rand_core 0.6.4",
  "sec1",
  "subtle",
  "zeroize",
@@ -591,7 +591,7 @@ dependencies = [
  "p256",
  "p384",
  "portable-atomic",
- "rand_core",
+ "rand_core 0.6.4",
  "sha2",
  "signature",
  "typenum",
@@ -621,7 +621,7 @@ version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c0b50bfb653653f9ca9095b427bed08ab8d75a137839d9ad64eb11810d5b6393"
 dependencies = [
- "rand_core",
+ "rand_core 0.6.4",
  "subtle",
 ]
 
@@ -704,7 +704,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f0f9ef7462f7c099f518d754361858f86d8a07af53ba9af0fe635bbccb151a63"
 dependencies = [
  "ff",
- "rand_core",
+ "rand_core 0.6.4",
  "subtle",
 ]
 
@@ -870,7 +870,7 @@ dependencies = [
  "cortex-m",
  "defmt 1.1.0",
  "ieee802_3_miim",
- "rand_core",
+ "rand_core 0.10.1",
  "rugus-arch-cortex-m",
  "rugus-core",
  "rugus-crypto",
@@ -1043,6 +1043,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
 
 [[package]]
+name = "rand_core"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "63b8176103e19a2643978565ca18b50549f6101881c443590420e4dc998a3c69"
+
+[[package]]
 name = "rfc6979"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1075,7 +1081,7 @@ name = "rugus-crypto"
 version = "0.1.0"
 dependencies = [
  "defmt 1.1.0",
- "rand_core",
+ "rand_core 0.10.1",
  "rugus-hal",
  "sha2",
 ]
@@ -1179,7 +1185,7 @@ dependencies = [
  "defmt 1.1.0",
  "embedded-io",
  "embedded-tls",
- "rand_core",
+ "rand_core 0.10.1",
  "rugus-crypto",
 ]
 
@@ -1272,7 +1278,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77549399552de45a898a580c1b41d445bf730df867cc44e6c0233bbc4b8329de"
 dependencies = [
  "digest",
- "rand_core",
+ "rand_core 0.6.4",
 ]
 
 [[package]]

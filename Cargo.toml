@@ -83,7 +83,7 @@ linked_list_allocator = { version = "0.10", default-features = false, features =
 smoltcp           = { version = "0.12", default-features = false, features = ["medium-ethernet", "proto-ipv4", "proto-dhcpv4", "socket-dhcpv4", "socket-tcp", "socket-udp", "defmt"] }
 embedded-tls      = { version = "0.18", default-features = false }
 embedded-io       = { version = "0.7", default-features = false }
-rand_core         = { version = "0.6", default-features = false }
+rand_core         = { version = "0.10", default-features = false }
 sha2              = { version = "0.10", default-features = false }
 ieee802_3_miim    = "0.8"
 volatile-register = "0.2"
