@@ -209,7 +209,7 @@ fn main() -> ! {
 fn supervisor_task() -> ! {
     let mut sink = UartSink;
     rush::banner::write_banner(&mut sink, true);
-        let _ = sink.write_str("Canal gateado: aut\u{e9}nticate con `knock` y `prove`.\r\n\r\n");
+    let _ = sink.write_str("Canal gateado: aut\u{e9}nticate con `knock` y `prove`.\r\n\r\n");
     loop {
         while cli_poll_byte(&mut sink) {}
         rugus_kernel::cpu_sleep_ms(30);
