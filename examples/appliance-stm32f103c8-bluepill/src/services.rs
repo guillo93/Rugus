@@ -136,6 +136,7 @@ pub fn poll_identify_usart2() {
                         execute_authed(cmd, line, &mut ModuleWriter, &mut SESSION_USART2, hooks);
                     }
                 }
+                rush::paint::prompt(&mut ModuleWriter, identify::CHIP);
                 heartbeat::note(heartbeat::CLI_CMD);
                 IDENT_LEN = 0;
             }

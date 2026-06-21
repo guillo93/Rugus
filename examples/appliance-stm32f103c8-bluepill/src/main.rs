@@ -37,7 +37,10 @@ type Sched = Scheduler<CortexM>;
 const CLI_POLL_MS: u32 = 20;
 
 static mut SCHEDULER: Sched = Sched::new();
-static mut STACK_CLI: [u8; 1536] = [0; 1536];
+// 2 KiB: la consola `rush` compone la salida de los verbos en buffers de pila
+// (hasta 640 B en `coil`). El tier lite del F103 escribe texto plano corto, pero
+// el buffer se reserva igual; con 20 KiB de SRAM sobra holgura para el margen.
+static mut STACK_CLI: [u8; 2048] = [0; 2048];
 static mut STACK_HB: [u8; 1024] = [0; 1024];
 /// Pila de la tarea víctima de `sting`. Solo corre brevemente antes de faultar;
 /// el failsafe la mata. Se reutiliza entre stings sucesivos (solo una viva).
@@ -71,6 +74,7 @@ fn cli_task() -> ! {
     let mut writer = UartWriter;
     rush::banner::write_banner(&mut writer, true);
     let _ = writer.write_str("Type `orbit` for help.\r\n\r\n");
+    rush::paint::prompt(&mut writer, identify::CHIP);
 
     loop {
         // Drena todo el ring RX antes de dormir: el bucle no busy-waitea, solo
@@ -116,6 +120,7 @@ fn cli_poll_line(writer: &mut UartWriter) -> bool {
                 if let Some(hooks) = AUTH_HOOKS.as_ref() {
                     execute_authed(cmd, line, writer, &mut SESSION, hooks);
                 }
+                rush::paint::prompt(writer, identify::CHIP);
                 heartbeat::note(heartbeat::CLI_CMD);
                 LINE_LEN = 0;
             }

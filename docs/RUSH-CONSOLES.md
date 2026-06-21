@@ -37,6 +37,36 @@ Dos versiones, misma silueta, elegidas por capacidad del terminal:
 La misma marca, en alta fidelidad vectorial, sirve para el OS gráfico (pantalla
 táctil F769 / HDMI RPi), el README e iconos.
 
+## Sistema visual (`rugus-ui`)
+
+La consola `rush` no se parece a la de otros OS por diseño. El crate
+[`rugus-ui`](../crates/rugus-ui) aporta una **paleta semántica** (cada color
+*significa* algo, no decora) y componentes compactos que cualquier terminal
+moderno pinta:
+
+- **verde** = núcleo / OK / vivo · **oro** = autoridad / foco / sesión ·
+  **cian** = datos · **plata** = texto · **ámbar** = aviso / letargo ·
+  **rojo** = fault · **gris** = cromo.
+- Componentes: cabecera `◆ verbo ───`, badges `▐ full ▌`, pares clave/valor,
+  medidores `████░░░░` (verde/ámbar/rojo por umbral) y feedback `✓`/`✗`.
+- El prompt `rugus:<placa> ▸` da identidad de shell propia.
+
+Las salidas de los verbos (`cosmos`/`ecosystem`/`coil`/`scar`/`letargo`) las
+compone la personalidad **full** con `rugus_ui::Painter` sobre un buffer fijo
+(`no_std`, sin `alloc`). El **tier lite** (F103, ~1,5 KiB de pila de consola)
+mantiene su formato compacto por presupuesto de RAM: el sistema rico es para el
+tier full (F407/F769/RPi), donde el silicio lo permite.
+
+Dos fidelidades por capacidad del terminal, gobernadas por un flag global
+(`rugus_ui::set_color`): **rica** (ANSI 256, por defecto) y **plana** (`NO_COLOR`
+/ negociación), que no emite ni un byte de escape. Render de referencia sin
+placa ni serie:
+
+```sh
+cargo run -p rugus-ui --example preview --features host-preview
+NO_COLOR=1 cargo run -p rugus-ui --example preview --features host-preview
+```
+
 ## Canal gateado
 
 Todo transporte exige **autenticación de canal** challenge-response HMAC-SHA256

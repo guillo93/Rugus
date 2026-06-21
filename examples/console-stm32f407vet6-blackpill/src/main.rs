@@ -210,6 +210,7 @@ fn supervisor_task() -> ! {
     let mut sink = UartSink;
     rush::banner::write_banner(&mut sink, true);
     let _ = sink.write_str("Canal gateado: aut\u{e9}nticate con `knock` y `prove`.\r\n\r\n");
+    rush::paint::prompt(&mut sink, CHIP);
     loop {
         while cli_poll_byte(&mut sink) {}
         rugus_kernel::cpu_sleep_ms(30);
@@ -243,6 +244,7 @@ fn cli_poll_byte(sink: &mut UartSink) -> bool {
                 if let Some(hooks) = AUTH_HOOKS.as_ref() {
                     execute_authed(cmd, line, sink, &mut SESSION, hooks);
                 }
+                rush::paint::prompt(sink, CHIP);
                 LINE_LEN = 0;
             }
         } else if b == 0x7F || b == 0x08 {

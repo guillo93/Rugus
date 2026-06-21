@@ -1151,6 +1151,7 @@ dependencies = [
  "defmt 1.1.0",
  "rugus-core",
  "rugus-kernel",
+ "rugus-ui",
 ]
 
 [[package]]
@@ -1183,11 +1184,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "rugus-ui"
+version = "0.1.0"
+
+[[package]]
 name = "rush"
 version = "0.1.0"
 dependencies = [
  "heapless 0.9.3",
  "rugus-core",
+ "rugus-ui",
 ]
 
 [[package]]
