@@ -1,0 +1,28 @@
+[workspace]
+# Crate independiente del workspace embebido (target AArch64).
+
+[package]
+name = "rpi3-preempt"
+description = "Rugus G5: preempción real del scheduler de rugus-core en RPi 3B+ vía el Generic Timer (rugus-arch-cortex-a). Mismo Scheduler<A> que en Cortex-M, preemptado por IRQ."
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "rpi3-preempt"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+rugus-core = { path = "../../crates/rugus-core" }
+rugus-arch-cortex-a = { path = "../../crates/rugus-arch-cortex-a" }
+
+[profile.release]
+opt-level = 2
+lto = true
+debug = true
+panic = "abort"
+
+[profile.dev]
+panic = "abort"
