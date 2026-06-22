@@ -25,8 +25,9 @@
 use core::arch::global_asm;
 use core::panic::PanicInfo;
 use core::ptr::{addr_of, addr_of_mut, read_volatile, write_volatile};
+use core::sync::atomic::{AtomicUsize, Ordering};
 
-use rugus_arch_cortex_a::CortexA;
+use rugus_arch_cortex_a::{vectors, CortexA};
 use rugus_core::arch::Arch;
 use rugus_core::sched::{Priority, Scheduler};
 use rugus_core::syscall::lite::{GpioLevel, Hooks};
@@ -122,6 +123,14 @@ const AUX_MU_CNTL: usize = MMIO_BASE + 0x0021_5060;
 const AUX_MU_BAUD: usize = MMIO_BASE + 0x0021_5068;
 const LSR_TX_EMPTY: u32 = 1 << 5;
 const LSR_RX_READY: u32 = 1 << 0;
+/// `AUX_MU_IER` bit 0: habilita la interrupción de "dato recibido" (16550).
+const IER_RX_IRQ: u32 = 1 << 0;
+/// Controlador de interrupciones legacy del BCM2837: habilita IRQ 0..31.
+/// El AUX (mini-UART) es la IRQ 29.
+const ENABLE_IRQS_1: usize = MMIO_BASE + 0x0000_B210;
+const AUX_IRQ: u32 = 1 << 29;
+/// Routing de IRQ/FIQ de la GPU a un core (periféricos locales ARM). 0 = core 0.
+const GPU_INT_ROUTING: usize = 0x4000_000C;
 
 #[inline]
 fn mw(a: usize, v: u32) {
@@ -158,12 +167,43 @@ fn uart_send(b: u8) {
     while mr(AUX_MU_LSR) & LSR_TX_EMPTY == 0 {}
     mw(AUX_MU_IO, b as u32);
 }
-/// Lee un byte del mini-UART si hay alguno disponible (no bloqueante).
-fn uart_recv() -> Option<u8> {
-    if mr(AUX_MU_LSR) & LSR_RX_READY != 0 {
-        Some((mr(AUX_MU_IO) & 0xFF) as u8)
-    } else {
-        None
+// --- Ring SPSC RX: productor = ISR del mini-UART, consumidor = tarea consola ---
+// Desacopla la recepción del planificado: aunque una tarea acapare el CPU, la
+// IRQ drena el FIFO de 8 B del UART al ring, sin perder bytes en ráfaga.
+const RING_SZ: usize = 256;
+static mut RING_BUF: [u8; RING_SZ] = [0; RING_SZ];
+static RING_HEAD: AtomicUsize = AtomicUsize::new(0); // escribe la ISR
+static RING_TAIL: AtomicUsize = AtomicUsize::new(0); // lee la consola
+
+/// Encola un byte (productor único: la ISR). Si el ring está lleno, lo descarta.
+fn ring_push(b: u8) {
+    let h = RING_HEAD.load(Ordering::Relaxed);
+    let n = (h + 1) % RING_SZ;
+    if n == RING_TAIL.load(Ordering::Acquire) {
+        return; // lleno
+    }
+    // SAFETY: productor único (ISR); `h` es índice válido en [0, RING_SZ).
+    unsafe { (*addr_of_mut!(RING_BUF))[h] = b };
+    RING_HEAD.store(n, Ordering::Release);
+}
+
+/// Desencola un byte (consumidor único: la tarea de consola).
+fn ring_pop() -> Option<u8> {
+    let t = RING_TAIL.load(Ordering::Relaxed);
+    if t == RING_HEAD.load(Ordering::Acquire) {
+        return None; // vacío
+    }
+    // SAFETY: consumidor único; `t` es índice válido en [0, RING_SZ).
+    let b = unsafe { (*addr_of!(RING_BUF))[t] };
+    RING_TAIL.store((t + 1) % RING_SZ, Ordering::Release);
+    Some(b)
+}
+
+/// Hook de IRQ (registrado en `vectors`): drena el FIFO RX del mini-UART al ring.
+/// Leer `AUX_MU_IO` vacía el FIFO y desactiva la pendiente de la IRQ.
+fn uart_irq_drain() {
+    while mr(AUX_MU_LSR) & LSR_RX_READY != 0 {
+        ring_push((mr(AUX_MU_IO) & 0xFF) as u8);
     }
 }
 fn uart_puts(s: &str) {
@@ -432,7 +472,7 @@ fn console_task() -> ! {
     let _ = sink.write_str("Consola rush en RPi 3B+ (AArch64). Sin gate todavia.\r\n\r\n");
     rush::paint::prompt(&mut sink, CHIP);
     loop {
-        while let Some(b) = uart_recv() {
+        while let Some(b) = ring_pop() {
             cli_byte(&mut sink, b);
         }
         cpu_yield();
@@ -478,11 +518,11 @@ fn worker_task() -> ! {
     let mut _n: u64 = 0;
     loop {
         _n = _n.wrapping_add(1);
-        // Delay corto: en esquema cooperativo, la consola solo sondea el RX
-        // cuando corre. El FIFO del mini-UART es de 8 bytes, así que un worker
-        // que acapare el CPU lo desbordaría en ráfagas largas. Mantener la
-        // ventana de no-sondeo pequeña hasta tener RX por IRQ + ring (futuro).
-        delay(150_000);
+        // Delay largo a propósito: con RX por IRQ + ring, la recepción está
+        // desacoplada del planificado — aunque el worker acapare el CPU, la ISR
+        // sigue drenando el UART al ring sin perder bytes. Es justo lo que prueba
+        // la robustez frente al esquema por sondeo anterior.
+        delay(20_000_000);
         cpu_yield();
     }
 }
@@ -498,6 +538,16 @@ extern "C" fn kernel_main() -> ! {
     uart_puts("[boot] registrando personalidad RPi (verbos sobre rugus-core)...\r\n");
     // SAFETY: registro único en arranque single-thread, antes de spawn/start.
     unsafe { rugus_core::syscall::lite::register(rpi_hooks()) };
+
+    uart_puts("[boot] RX del mini-UART por IRQ (vectores del arch + ring)...\r\n");
+    vectors::set_irq_hook(uart_irq_drain);
+    vectors::install();
+    vectors::request_irqs_at_start(); // la 1ª tarea arranca con IRQ habilitada
+    // Habilita la IRQ de RX en el UART, enruta la IRQ de GPU al core 0 y abilita
+    // la línea 29 (AUX) del controlador legacy del BCM2837.
+    mw(GPU_INT_ROUTING, 0);
+    mw(AUX_MU_IER, IER_RX_IRQ);
+    mw(ENABLE_IRQS_1, AUX_IRQ);
 
     uart_puts("[boot] scheduler: consola + worker; arrancando...\r\n");
     // SAFETY: arranque single-thread; pilas estáticas vivas para todo el kernel.

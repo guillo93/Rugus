@@ -26,7 +26,7 @@
 //! entero. Si en el futuro corren tareas con FP intensivo, ampliar el frame.
 
 use core::arch::global_asm;
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 // Frame de excepción: x0..x30 (31×8 = 248 B) + ELR_EL1 + SPSR_EL1 = 264 B,
 // redondeado a 272 B para alineación a 16. El handler (asm) usa estos offsets.
@@ -142,6 +142,30 @@ rugus_hang_exc:
 
 /// Hook de fault síncrono opcional (`fn(esr, elr)`), registrable por el kernel.
 static SYNC_HOOK: AtomicUsize = AtomicUsize::new(0);
+/// Hook de IRQ de periférico opcional (`fn()`), p.ej. drenar el RX del UART a un
+/// ring. Lo llama [`rust_irq`] **después** del Generic Timer.
+static IRQ_HOOK: AtomicUsize = AtomicUsize::new(0);
+/// `true` si alguna capa pidió arrancar la primera tarea con IRQs habilitadas
+/// aunque no haya preempción por timer (p.ej. una consola con RX por IRQ).
+static WANT_IRQS: AtomicBool = AtomicBool::new(false);
+
+/// Registra un hook de IRQ de periférico (`fn()`), invocado en cada IRQ tras
+/// atender el Generic Timer. Pensado para RX por interrupción (UART→ring).
+pub fn set_irq_hook(hook: fn()) {
+    IRQ_HOOK.store(hook as usize, Ordering::Relaxed);
+}
+
+/// Pide que la primera tarea arranque con IRQs habilitadas aunque no haya
+/// preempción por timer (consola con RX por IRQ). Lo consulta `start_first`.
+pub fn request_irqs_at_start() {
+    WANT_IRQS.store(true, Ordering::Relaxed);
+}
+
+/// `true` si se solicitó habilitar IRQs al entrar en la primera tarea.
+#[inline]
+pub fn irqs_requested() -> bool {
+    WANT_IRQS.load(Ordering::Relaxed)
+}
 
 /// Registra un manejador para excepciones síncronas EL1 (`fn(esr, elr)`).
 ///
@@ -172,7 +196,15 @@ pub fn install() {
 /// si venció el quantum, dispara la preempción (cambio de contexto anidado).
 #[no_mangle]
 extern "C" fn rust_irq() {
+    // Primero el quantum de preempción (inofensivo si no hay timer: comprueba la
+    // fuente y retorna). Luego el hook de periférico (RX del UART, etc.).
     crate::time::on_irq();
+    let hook = IRQ_HOOK.load(Ordering::Relaxed);
+    if hook != 0 {
+        // SAFETY: solo se escribe en `set_irq_hook` con un `fn()` válido.
+        let f: fn() = unsafe { core::mem::transmute(hook) };
+        f();
+    }
 }
 
 /// Trampolín de excepción síncrona: invoca el hook registrado si lo hay.
