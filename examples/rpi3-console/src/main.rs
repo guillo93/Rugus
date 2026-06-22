@@ -27,13 +27,14 @@ use core::panic::PanicInfo;
 use core::ptr::{addr_of, addr_of_mut, read_volatile, write_volatile};
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use rugus_arch_cortex_a::{vectors, CortexA};
+use rugus_arch_cortex_a::CortexA;
 use rugus_core::arch::Arch;
 use rugus_core::sched::{Priority, Scheduler};
 use rugus_core::syscall::lite::{GpioLevel, Hooks};
 use rugus_core::Errno;
+use rugus_crypto::{ct_eq, hmac_sha256};
 use rugus_ui::{Painter, Role};
-use rush::{execute, identify, parse, Write};
+use rush::{execute_authed, identify, parse, AuthHooks, Session, Write};
 
 /// Identidad reportada en IDENTIFY/ENQ y en el prompt.
 const TIER: &str = "full";
@@ -123,14 +124,6 @@ const AUX_MU_CNTL: usize = MMIO_BASE + 0x0021_5060;
 const AUX_MU_BAUD: usize = MMIO_BASE + 0x0021_5068;
 const LSR_TX_EMPTY: u32 = 1 << 5;
 const LSR_RX_READY: u32 = 1 << 0;
-/// `AUX_MU_IER` bit 0: habilita la interrupción de "dato recibido" (16550).
-const IER_RX_IRQ: u32 = 1 << 0;
-/// Controlador de interrupciones legacy del BCM2837: habilita IRQ 0..31.
-/// El AUX (mini-UART) es la IRQ 29.
-const ENABLE_IRQS_1: usize = MMIO_BASE + 0x0000_B210;
-const AUX_IRQ: u32 = 1 << 29;
-/// Routing de IRQ/FIQ de la GPU a un core (periféricos locales ARM). 0 = core 0.
-const GPU_INT_ROUTING: usize = 0x4000_000C;
 
 #[inline]
 fn mw(a: usize, v: u32) {
@@ -199,13 +192,101 @@ fn ring_pop() -> Option<u8> {
     Some(b)
 }
 
-/// Hook de IRQ (registrado en `vectors`): drena el FIFO RX del mini-UART al ring.
-/// Leer `AUX_MU_IO` vacía el FIFO y desactiva la pendiente de la IRQ.
-fn uart_irq_drain() {
+/// Drena el FIFO RX del mini-UART al ring (lo llama la tarea de consola por
+/// sondeo). Leer `AUX_MU_IO` vacía el FIFO.
+fn uart_drain_fifo() {
     while mr(AUX_MU_LSR) & LSR_RX_READY != 0 {
         ring_push((mr(AUX_MU_IO) & 0xFF) as u8);
     }
 }
+
+// ===================== RNG por hardware (BCM2835) =====================
+// La RPi tiene un generador de aleatoriedad por hardware — mejor que el CSPRNG
+// software de las STM32 para los nonces de un solo uso del reto de auth.
+const RNG_BASE: usize = MMIO_BASE + 0x0010_4000;
+const RNG_CTRL: usize = RNG_BASE;
+const RNG_STATUS: usize = RNG_BASE + 0x04;
+const RNG_DATA: usize = RNG_BASE + 0x08;
+const RNG_INT_MASK: usize = RNG_BASE + 0x10;
+
+fn rng_init() {
+    mw(RNG_INT_MASK, mr(RNG_INT_MASK) | 1); // enmascara la IRQ del RNG
+    mw(RNG_STATUS, 0x0004_0000); // cuenta de calentamiento
+    mw(RNG_CTRL, 1); // habilita
+}
+/// Rellena `buf` con bytes del RNG hardware (nonce del reto challenge-response).
+fn rng_fill(buf: &mut [u8]) {
+    let mut i = 0;
+    while i < buf.len() {
+        while mr(RNG_STATUS) >> 24 == 0 {} // espera palabras disponibles
+        let w = mr(RNG_DATA).to_le_bytes();
+        for b in w {
+            if i < buf.len() {
+                buf[i] = b;
+                i += 1;
+            }
+        }
+    }
+}
+
+// ===================== Almacén de PSK (RAM) + auth =====================
+// En la RPi no hay flash interna: la PSK vive en RAM (se pierde al reiniciar).
+// Se presiembra con la PSK de flota para que `knock`/`prove` funcionen de fábrica
+// en la demo; `enroll` la reescribe. La persistencia real (SD/OTP) queda como
+// pendiente. La consola NUNCA lee la PSK: solo este módulo, para el HMAC.
+const PSK_MAX: usize = 64;
+static mut PSK: [u8; PSK_MAX] = [0; PSK_MAX];
+static mut PSK_LEN: usize = 0;
+/// PSK de flota (`00112233445566778899aabbccddeeff`), igual que las STM32.
+const FLEET_PSK: [u8; 16] = [
+    0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff,
+];
+
+fn psk_provisioned() -> bool {
+    // SAFETY: lectura de un usize escrito solo en arranque/enroll (single-core).
+    unsafe { PSK_LEN > 0 }
+}
+fn psk_enroll(psk: &[u8]) -> bool {
+    if psk.is_empty() || psk.len() > PSK_MAX {
+        return false;
+    }
+    // SAFETY: escritura única-ish en arranque/enroll desde la tarea de consola.
+    unsafe {
+        PSK[..psk.len()].copy_from_slice(psk);
+        PSK_LEN = psk.len();
+    }
+    true
+}
+
+/// `verify_proof`: recalcula `HMAC-SHA256(PSK, nonce)` y lo compara en tiempo
+/// constante con `proof`. `rush` nunca ve la PSK.
+fn verify_proof(nonce: &[u8], proof: &[u8]) -> bool {
+    // SAFETY: lectura de la PSK propiedad de este módulo (single-core).
+    let (len, psk) = unsafe { (PSK_LEN, &PSK) };
+    if len == 0 {
+        return false;
+    }
+    let expected = hmac_sha256(&psk[..len], nonce);
+    ct_eq(&expected, proof)
+}
+
+fn now_ms() -> u32 {
+    CortexA::now_ms()
+}
+
+fn auth_hooks() -> AuthHooks {
+    AuthHooks {
+        provisioned: psk_provisioned,
+        verify_proof,
+        enroll: psk_enroll,
+        random_nonce: rng_fill,
+        now_ms,
+    }
+}
+
+/// Sesión de autenticación de la consola y ganchos (construidos en `kernel_main`).
+static mut SESSION: Session = Session::new();
+static mut AUTH_HOOKS: Option<AuthHooks> = None;
 fn uart_puts(s: &str) {
     for &b in s.as_bytes() {
         if b == b'\n' {
@@ -469,9 +550,16 @@ static mut LINE_LEN: usize = 0;
 fn console_task() -> ! {
     let mut sink = UartSink;
     rush::banner::write_banner(&mut sink, true);
-    let _ = sink.write_str("Consola rush en RPi 3B+ (AArch64). Sin gate todavia.\r\n\r\n");
+    let _ = sink.write_str("Canal gateado: aut\u{e9}nticate con `knock` y `prove`.\r\n\r\n");
     rush::paint::prompt(&mut sink, CHIP);
     loop {
+        // Drena el FIFO del mini-UART al ring por sondeo (productor único: esta
+        // tarea), luego procesa. La consola corre de forma continua (tight loop
+        // cooperativo), así que sondea cada pocos µs → el FIFO de 8 B nunca se
+        // desborda, ni siquiera con entradas largas (p.ej. el proof de 64 hex).
+        // El RX por IRQ resultó inestable para entradas largas en este HW; el
+        // sondeo desde una tarea que siempre corre es fiable y simple.
+        uart_drain_fifo();
         while let Some(b) = ring_pop() {
             cli_byte(&mut sink, b);
         }
@@ -490,7 +578,11 @@ fn cli_byte(sink: &mut UartSink, b: u8) {
             if LINE_LEN > 0 {
                 let _ = sink.write_str("\r\n");
                 let line = core::str::from_utf8(&LINE[..LINE_LEN]).unwrap_or("");
-                execute(parse(line), line, sink);
+                // Canal gateado: sin sesión autenticada solo pasan IDENTIFY y el
+                // handshake (knock/prove/lock/enroll); el resto exige PSK.
+                if let Some(hooks) = AUTH_HOOKS.as_ref() {
+                    execute_authed(parse(line), line, sink, &mut SESSION, hooks);
+                }
                 LINE_LEN = 0;
             } else {
                 let _ = sink.write_str("\r\n");
@@ -518,11 +610,11 @@ fn worker_task() -> ! {
     let mut _n: u64 = 0;
     loop {
         _n = _n.wrapping_add(1);
-        // Delay largo a propósito: con RX por IRQ + ring, la recepción está
-        // desacoplada del planificado — aunque el worker acapare el CPU, la ISR
-        // sigue drenando el UART al ring sin perder bytes. Es justo lo que prueba
-        // la robustez frente al esquema por sondeo anterior.
-        delay(20_000_000);
+        // Delay corto: con RX por sondeo, la consola solo drena el FIFO (8 B)
+        // cuando corre. El worker debe ceder pronto para no starvar el sondeo y
+        // desbordar el FIFO en entradas largas. Su única razón de ser es que
+        // `coil` muestre ≥2 tareas.
+        delay(60_000);
         cpu_yield();
     }
 }
@@ -539,15 +631,12 @@ extern "C" fn kernel_main() -> ! {
     // SAFETY: registro único en arranque single-thread, antes de spawn/start.
     unsafe { rugus_core::syscall::lite::register(rpi_hooks()) };
 
-    uart_puts("[boot] RX del mini-UART por IRQ (vectores del arch + ring)...\r\n");
-    vectors::set_irq_hook(uart_irq_drain);
-    vectors::install();
-    vectors::request_irqs_at_start(); // la 1ª tarea arranca con IRQ habilitada
-    // Habilita la IRQ de RX en el UART, enruta la IRQ de GPU al core 0 y abilita
-    // la línea 29 (AUX) del controlador legacy del BCM2837.
-    mw(GPU_INT_ROUTING, 0);
-    mw(AUX_MU_IER, IER_RX_IRQ);
-    mw(ENABLE_IRQS_1, AUX_IRQ);
+    uart_puts("[boot] RNG hardware + PSK (RAM, presembrada con la de flota)...\r\n");
+    rng_init();
+    psk_enroll(&FLEET_PSK);
+    // SAFETY: arranque single-thread; ganchos instalados una vez antes de start.
+    unsafe { AUTH_HOOKS = Some(auth_hooks()) };
+
 
     uart_puts("[boot] scheduler: consola + worker; arrancando...\r\n");
     // SAFETY: arranque single-thread; pilas estáticas vivas para todo el kernel.

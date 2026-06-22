@@ -18,7 +18,8 @@ bench = false
 rugus-core = { path = "../../crates/rugus-core" }
 rugus-arch-cortex-a = { path = "../../crates/rugus-arch-cortex-a" }
 rugus-ui = { path = "../../crates/rugus-ui" }
-rush = { path = "../../crates/rush" } # features default: power (letargo); auth llega en el Paso 2
+rugus-crypto = { path = "../../crates/rugus-crypto" }
+rush = { path = "../../crates/rush", features = ["auth"] } # canal gateado HMAC
 
 [profile.release]
 opt-level = 2
