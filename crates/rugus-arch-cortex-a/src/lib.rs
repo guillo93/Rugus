@@ -17,6 +17,13 @@
 //!   por MMU/EL0 llega en una capa posterior.
 
 #![no_std]
+// El contrato `Arch` define `start_first`/`resume_after_fault` como `fn` que
+// reciben `*const Context` (el scheduler garantiza su validez); el ABI por
+// puntero es inherente al backend. El lint no aplica a este patrón.
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
+
+pub mod time;
+pub mod vectors;
 
 use core::arch::global_asm;
 use core::ptr::write_volatile;
@@ -125,6 +132,17 @@ impl Arch for CortexA {
     }
 
     fn start_first(ctx: *const Self::Context) -> ! {
+        // Con preempción armada (timer + vectores listos), la primera tarea debe
+        // entrar con IRQs habilitadas para que el quantum la preempte; las tareas
+        // ya conmutadas reanudan con su SPSR (eret). Sin armar (cooperativo puro),
+        // se mantiene la máscara de arranque. El desenmascarado precede a la
+        // restauración de `cpu_start_first`: la ventana es de unas instrucciones y
+        // es segura — si un IRQ entra, el handler salva/restaura el frame y `eret`
+        // reanuda la restauración intacta.
+        if time::preemption_armed() {
+            // SAFETY: habilita IRQ (DAIFClr.I); estado de CPU, sin efecto en memoria.
+            unsafe { core::arch::asm!("msr daifclr, #2") };
+        }
         // SAFETY: primer arranque; `ctx` válido del scheduler.
         unsafe { cpu_start_first(ctx) }
     }

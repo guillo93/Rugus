@@ -25,7 +25,7 @@ forma adopta en cada chip donde corre?"*
 | `rugus-arch-cortex-m` | **RTOS** | Sin MMU paginada; single AS; *tasks* en pool estático |
 | `rugus-arch-avr` (futuro) | **RTOS minimalista** | Sin alloc dinámico, sin MPU; cooperativo a secas |
 | `rugus-arch-riscv32` (futuro, ESP32-C3) | **RTOS** | RV32 sin paginación |
-| `rugus-arch-cortex-a` (futuro, RPi 4) | **OS general-purpose** | MMU + EL0/EL1 → procesos aislados, page tables, kernel/user real |
+| `rugus-arch-cortex-a` (RPi 3B+, AArch64) | **RTOS hoy → OS general-purpose** | Backend operativo: el `Scheduler<A>` de `rugus-core` corre y se **preempta por el Generic Timer** (G5, `examples/rpi3-preempt`), igual léxico que el M. Camino futuro: MMU + EL0/EL1 → procesos aislados, kernel/user real |
 | `rugus-arch-riscv64` (futuro) | **OS general-purpose** | S-mode + paginación SV39/SV48 |
 
 **No es exclusivo de Rugus.** Zephyr y seL4 navegan terreno parecido. Lo
