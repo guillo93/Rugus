@@ -139,7 +139,7 @@ impl Arch for CortexA {
         // restauración de `cpu_start_first`: la ventana es de unas instrucciones y
         // es segura — si un IRQ entra, el handler salva/restaura el frame y `eret`
         // reanuda la restauración intacta.
-        if time::preemption_armed() {
+        if time::preemption_armed() || vectors::irqs_requested() {
             // SAFETY: habilita IRQ (DAIFClr.I); estado de CPU, sin efecto en memoria.
             unsafe { core::arch::asm!("msr daifclr, #2") };
         }
