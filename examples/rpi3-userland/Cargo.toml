@@ -1,0 +1,24 @@
+[workspace]
+# Crate independiente del workspace embebido (target AArch64).
+
+[package]
+name = "rpi3-userland"
+description = "Rugus G6.1: prueba de aislamiento EL0/MMU en RPi 3B+ — tarea userland en EL0, syscall por SVC y fault de EL0 contenido en EL1."
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "rpi3-userland"
+path = "src/main.rs"
+test = false
+bench = false
+
+[profile.release]
+opt-level = 2
+lto = true
+debug = true
+panic = "abort"
+
+[profile.dev]
+panic = "abort"
