@@ -1,0 +1,30 @@
+[workspace]
+# Crate independiente del workspace embebido (target AArch64).
+
+[package]
+name = "rpi3-console"
+description = "Rugus G5: consola rush por mini-UART en RPi 3B+ (AArch64). Banner + sistema visual rugus-ui + verbos (cosmos/ecosystem/coil) leyendo el Scheduler<CortexA> de rugus-core."
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "rpi3-console"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+rugus-core = { path = "../../crates/rugus-core" }
+rugus-arch-cortex-a = { path = "../../crates/rugus-arch-cortex-a" }
+rugus-ui = { path = "../../crates/rugus-ui" }
+rush = { path = "../../crates/rush" } # features default: power (letargo); auth llega en el Paso 2
+
+[profile.release]
+opt-level = 2
+lto = true
+debug = true
+panic = "abort"
+
+[profile.dev]
+panic = "abort"
