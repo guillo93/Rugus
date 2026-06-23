@@ -41,55 +41,85 @@ pub struct Context {
     pub sp: u64,
 }
 
-/// Tamaño del frame de callee-saved (12 GPR + 8 FP/SIMD), alineado a 16.
-const CTX_FRAME: usize = 160;
+/// Tamaño del **frame de excepción unificado** (G6.2): x0..x30 [0..248],
+/// SP_EL0 [248], ELR_EL1 [256], SPSR_EL1 [264], d8..d15 [272..336]. Alineado a
+/// 16. Lo comparten `cpu_switch`/`cpu_start_first`/`init_task_stack` y es el
+/// formato que también usarán las tareas EL0 (mismo frame, se reanuda con
+/// `eret`). Ver `docs/AARCH64-USERLAND-DESIGN.md`.
+const CTX_FRAME: usize = 336;
 
 /// Handle de sección crítica: valor previo de `DAIF`.
 pub struct SavedDaif(u64);
 impl CriticalGuard for SavedDaif {}
 
-// Cambio de contexto cooperativo y arranque de la primera tarea, en ASM.
-// `cpu_switch(prev: *mut Context, next: *const Context)` y
-// `cpu_start_first(ctx: *const Context) -> !`. El frame (160 B) lo comparten
-// con `init_task_stack` (abajo) — deben cuadrar exactamente.
+// Cambio de contexto y arranque de la primera tarea, en ASM, sobre el frame
+// unificado (336 B). `cpu_switch` (cooperativo) sintetiza un frame de excepción
+// del hilo que cede: guarda los callee-saved (los caller-saved están muertos en
+// un límite de llamada AAPCS), `ELR=lr`, `SPSR=EL1h | DAIF actual` (preserva la
+// máscara de IRQ de la sección crítica en curso) y `SP_EL0` actual. La
+// reanudación es **siempre `eret`**: válido EL1h→EL1h y, en el futuro, hacia
+// EL0t. El handler de IRQ (vectors.rs) sigue anidando este `cpu_switch` igual.
 global_asm!(
     r#"
 .global cpu_switch
 cpu_switch:
-    sub     sp, sp, #160
-    stp     x19, x20, [sp, #0]
-    stp     x21, x22, [sp, #16]
-    stp     x23, x24, [sp, #32]
-    stp     x25, x26, [sp, #48]
-    stp     x27, x28, [sp, #64]
-    stp     x29, x30, [sp, #80]
-    stp     d8,  d9,  [sp, #96]
-    stp     d10, d11, [sp, #112]
-    stp     d12, d13, [sp, #128]
-    stp     d14, d15, [sp, #144]
+    sub     sp, sp, #336
+    stp     x19, x20, [sp, #152]      // callee-saved GPR en sus huecos
+    stp     x21, x22, [sp, #168]
+    stp     x23, x24, [sp, #184]
+    stp     x25, x26, [sp, #200]
+    stp     x27, x28, [sp, #216]
+    stp     x29, x30, [sp, #232]
+    mrs     x2,  sp_el0
+    str     x2,  [sp, #248]
+    str     x30, [sp, #256]          // ELR = lr → reanuda tras la llamada
+    mrs     x2,  daif
+    mov     x3,  #0x5               // M=EL1h (x3 caller-saved, muerto aquí)
+    orr     x2,  x2, x3             // SPSR: M=EL1h, DAIF = máscara actual
+    str     x2,  [sp, #264]
+    stp     d8,  d9,  [sp, #272]
+    stp     d10, d11, [sp, #288]
+    stp     d12, d13, [sp, #304]
+    stp     d14, d15, [sp, #320]
     mov     x2, sp
-    str     x2, [x0]              // prev->sp = sp actual
-    ldr     x2, [x1]              // sp = next->sp
+    str     x2, [x0]                  // prev->sp = sp actual
+    ldr     x2, [x1]                  // sp = next->sp
     mov     sp, x2
     b       cpu_restore
 
 .global cpu_start_first
 cpu_start_first:
-    ldr     x2, [x0]              // sp = ctx->sp
+    ldr     x2, [x0]                  // sp = ctx->sp
     mov     sp, x2
 cpu_restore:
-    ldp     x19, x20, [sp, #0]
-    ldp     x21, x22, [sp, #16]
-    ldp     x23, x24, [sp, #32]
-    ldp     x25, x26, [sp, #48]
-    ldp     x27, x28, [sp, #64]
-    ldp     x29, x30, [sp, #80]
-    ldp     d8,  d9,  [sp, #96]
-    ldp     d10, d11, [sp, #112]
-    ldp     d12, d13, [sp, #128]
-    ldp     d14, d15, [sp, #144]
-    add     sp, sp, #160
-    ret                          // salta a x30 (lr): reanuda o entra en `entry`
+    ldr     x2,  [sp, #264]
+    msr     spsr_el1, x2
+    ldr     x2,  [sp, #256]
+    msr     elr_el1,  x2
+    ldr     x2,  [sp, #248]
+    msr     sp_el0,   x2
+    ldp     x0,  x1,  [sp, #0]
+    ldp     x2,  x3,  [sp, #16]
+    ldp     x4,  x5,  [sp, #32]
+    ldp     x6,  x7,  [sp, #48]
+    ldp     x8,  x9,  [sp, #64]
+    ldp     x10, x11, [sp, #80]
+    ldp     x12, x13, [sp, #96]
+    ldp     x14, x15, [sp, #112]
+    ldp     x16, x17, [sp, #128]
+    ldp     x18, x19, [sp, #144]
+    ldp     x20, x21, [sp, #160]
+    ldp     x22, x23, [sp, #176]
+    ldp     x24, x25, [sp, #192]
+    ldp     x26, x27, [sp, #208]
+    ldp     x28, x29, [sp, #224]
+    ldr     x30,      [sp, #240]
+    ldp     d8,  d9,  [sp, #272]
+    ldp     d10, d11, [sp, #288]
+    ldp     d12, d13, [sp, #304]
+    ldp     d14, d15, [sp, #320]
+    add     sp, sp, #336
+    eret                             // reanuda EL1h (o, futuro, EL0t)
 "#
 );
 
@@ -116,33 +146,29 @@ impl Arch for CortexA {
     }
 
     fn init_task_stack(stack: &mut [u8], entry: fn() -> !, _privileged: bool) -> Self::Context {
-        // Frame inicial en el tope de la pila (alineado a 16): callee-saved a 0
-        // y x30 (lr) = `entry`, de modo que `cpu_restore`+`ret` salte a la tarea.
+        // Frame de excepción inicial en el tope de la pila (alineado a 16):
+        // x0..x30 = 0, `ELR=entry`, `SPSR=EL1h` con IRQs habilitadas (DAIF=0) de
+        // modo que `cpu_restore`+`eret` entre en la tarea. (EL0 ajustará SPSR/
+        // SP_EL0 cuando `privileged==false` — G6.2b.)
         let top = ((stack.as_ptr() as usize) + stack.len()) & !0xF;
         let sp = top - CTX_FRAME;
         let f = sp as *mut u64;
-        // SAFETY: [sp, sp+160) cae dentro de la pila estática de la tarea.
+        // SAFETY: [sp, sp+336) cae dentro de la pila estática de la tarea.
         unsafe {
             for i in 0..(CTX_FRAME / 8) {
                 write_volatile(f.add(i), 0);
             }
-            write_volatile(f.add(11), entry as usize as u64); // offset 88 → x30 (lr)
+            write_volatile(f.add(256 / 8), entry as *const () as u64); // ELR_EL1
+            write_volatile(f.add(264 / 8), 0x5); // SPSR_EL1 = EL1h, DAIF=0
         }
         Context { sp: sp as u64 }
     }
 
     fn start_first(ctx: *const Self::Context) -> ! {
-        // Con preempción armada (timer + vectores listos), la primera tarea debe
-        // entrar con IRQs habilitadas para que el quantum la preempte; las tareas
-        // ya conmutadas reanudan con su SPSR (eret). Sin armar (cooperativo puro),
-        // se mantiene la máscara de arranque. El desenmascarado precede a la
-        // restauración de `cpu_start_first`: la ventana es de unas instrucciones y
-        // es segura — si un IRQ entra, el handler salva/restaura el frame y `eret`
-        // reanuda la restauración intacta.
-        if time::preemption_armed() || vectors::irqs_requested() {
-            // SAFETY: habilita IRQ (DAIFClr.I); estado de CPU, sin efecto en memoria.
-            unsafe { core::arch::asm!("msr daifclr, #2") };
-        }
+        // La primera tarea entra con `eret`; su `SPSR` inicial (EL1h, DAIF=0) ya
+        // la arranca con IRQs habilitadas, así que el timer la preempta sin
+        // necesidad de un `daifclr` aparte. En un despliegue cooperativo sin
+        // fuente de IRQ, arrancar desenmascarado es inocuo.
         // SAFETY: primer arranque; `ctx` válido del scheduler.
         unsafe { cpu_start_first(ctx) }
     }
