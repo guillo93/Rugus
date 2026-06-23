@@ -1,0 +1,24 @@
+[workspace]
+# Crate independiente del workspace embebido (target AArch64).
+
+[package]
+name = "rpi3-uframe"
+description = "Rugus G6.2-proto: frame de excepción unificado EL0/EL1 — mini-scheduler que conmuta entre una tarea EL1 y una EL0 vía SVC, reanudando siempre con eret. De-risquea la integración de userland en el Scheduler."
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "rpi3-uframe"
+path = "src/main.rs"
+test = false
+bench = false
+
+[profile.release]
+opt-level = 2
+lto = true
+debug = true
+panic = "abort"
+
+[profile.dev]
+panic = "abort"
