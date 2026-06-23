@@ -1,0 +1,20 @@
+# Rugus hello-rpi3 — config de arranque para Raspberry Pi 3B+ (BCM2837, AArch64).
+# Copiar a la partición FAT32 de la SD junto al firmware de Broadcom
+# (bootcode.bin, start.elf, fixup.dat) y kernel8.img.
+
+# Arranca el kernel en modo 64-bit (AArch64).
+arm_64bit=1
+
+# Nombre del binario del kernel (por defecto kernel8.img en 64-bit; explícito).
+kernel=kernel8.img
+
+# Habilita el UART de arranque (saca mensajes del firmware por los pines serie).
+enable_uart=1
+
+# Fija el reloj del VPU: el baudrate del mini-UART (GPIO14/15) depende de él.
+# Con 250 MHz, el divisor 270 da 115200 baudios estables.
+core_freq=250
+
+# Carga el kernel en la dirección estándar (0x80000) sin device tree.
+# (Sin DTB: arrancamos bare-metal puro.)
+disable_commandline_tags=1
