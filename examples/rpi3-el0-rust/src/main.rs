@@ -227,8 +227,9 @@ extern "C" fn rust_fault(esr: u64, elr: u64) {
 // EL0 (en `.user.text`), sin llamadas externas al kernel.
 #[inline(always)]
 fn sys_putchar(c: u8) {
-    // SAFETY: syscall 1 (putchar); el handler de SVC lo atiende.
-    unsafe { core::arch::asm!("svc #0", in("x8") 1u64, in("x0") c as u64) };
+    // SAFETY: syscall 1 (putchar). x0 es clobbered (el handler escribe el valor
+    // de retorno), por eso `inout(...) => _` y no `in`.
+    unsafe { core::arch::asm!("svc #0", in("x8") 1u64, inout("x0") c as u64 => _) };
 }
 #[inline(always)]
 fn sys_yield() {

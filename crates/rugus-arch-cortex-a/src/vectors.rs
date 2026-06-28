@@ -219,6 +219,27 @@ static WANT_IRQS: AtomicBool = AtomicBool::new(false);
 static SYSCALL_HOOK: AtomicUsize = AtomicUsize::new(0);
 /// Hook de abort de EL0 (`fn(esr, far)`), para informar del fault contenido.
 static EL0_FAULT_HOOK: AtomicUsize = AtomicUsize::new(0);
+/// Hook de espacio de direcciones (`fn(is_user, stack_base)`): la placa lo usa
+/// para reprogramar `TTBR0_EL1` (tabla por tarea + ASID) en cada conmutación,
+/// aislando userland↔userland. Lo invoca `CortexA::on_task_switch`.
+static ADDR_SPACE_HOOK: AtomicUsize = AtomicUsize::new(0);
+
+/// Registra el hook de espacio de direcciones que conmuta `TTBR0_EL1` por tarea.
+pub fn set_addr_space_hook(hook: fn(bool, u32)) {
+    ADDR_SPACE_HOOK.store(hook as usize, Ordering::Relaxed);
+}
+
+/// Dispara el hook de espacio de direcciones si lo hay (llamado desde
+/// `on_task_switch`).
+#[inline]
+pub fn fire_addr_space(is_user: bool, stack_base: u32) {
+    let hook = ADDR_SPACE_HOOK.load(Ordering::Relaxed);
+    if hook != 0 {
+        // SAFETY: solo se escribe en `set_addr_space_hook` con un `fn(bool,u32)`.
+        let f: fn(bool, u32) = unsafe { core::mem::transmute(hook) };
+        f(is_user, stack_base);
+    }
+}
 
 /// Registra el despachador de syscalls que el handler de `SVC` invoca desde EL0.
 pub fn set_syscall_hook(hook: fn(u64, u64) -> u64) {
