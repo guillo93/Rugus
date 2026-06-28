@@ -14,10 +14,11 @@
 //!   B imprime a,b,c… **independientes**. Si compartieran memoria, las dos
 //!   secuencias interferirían; que sean independientes prueba el aislamiento.
 //!
-//! Atajo del hito: identidad + flush de TLB en cada switch (correcto y simple).
-//! La optimización por **ASID** (entradas no-globales etiquetadas, sin flush)
-//! queda como follow-up. El `stack_base` (VA de la pila, en bloque distinto por
-//! tarea) discrimina la tabla en el hook.
+//! Optimización por **ASID**: los bloques de usuario son non-global (`nG=1`) y
+//! cada espacio lleva su ASID en `TTBR0`, así el cambio de tabla **no necesita
+//! flush de TLB** (las entradas de tareas distintas no se aliasan). El
+//! `stack_base` (VA de la pila, en bloque distinto por tarea) discrimina la
+//! tabla en el hook.
 
 #![no_std]
 #![no_main]
@@ -185,6 +186,15 @@ const ATTR_NORMAL: u64 = 1 << 2;
 const ATTR_DEVICE: u64 = 0 << 2;
 const AP_EL0_RW: u64 = 0b01 << 6;
 const PT_UXN: u64 = 1 << 54;
+const PT_NG: u64 = 1 << 11; // non-global: la entrada se etiqueta por ASID
+
+// ASID por espacio de direcciones (8-bit, de TTBR0). El bloque del kernel
+// (block0) y los periféricos son GLOBALES (nG=0) → compartidos sin conflicto;
+// los bloques de usuario (1 y 2) son non-global, etiquetados por ASID, así VA
+// 0x200000/0x400000 apuntan a física distinta por tarea sin necesidad de flush.
+const ASID_K: u64 = 1;
+const ASID_A: u64 = 2;
+const ASID_B: u64 = 3;
 
 const BLOCK_A: usize = 1; // 0x200000 (código/datos/pila de A)
 const BLOCK_B: usize = 2; // 0x400000 (de B)
@@ -200,14 +210,22 @@ const B_STACK_BASE: u64 = 0x58_0000;
 fn build_l2(l2: &mut [u64; 512], el0_block: Option<usize>) {
     for (i, e) in l2.iter_mut().enumerate() {
         let pa = (i as u64) << 21;
+        // Los bloques de usuario (1 y 2) son non-global (etiquetados por ASID),
+        // porque difieren entre tablas; el resto (kernel/RAM) es global.
+        let ng = if i == BLOCK_A || i == BLOCK_B { PT_NG } else { 0 };
         *e = if pa >= 0x3F00_0000 {
             pa | PT_BLOCK | PT_AF | ATTR_DEVICE
         } else if Some(i) == el0_block {
-            pa | PT_BLOCK | PT_AF | PT_SH_INNER | ATTR_NORMAL | AP_EL0_RW // UXN=0 → EL0 ejecuta
+            pa | PT_BLOCK | PT_AF | PT_SH_INNER | ATTR_NORMAL | AP_EL0_RW | ng // UXN=0 → EL0 ejecuta
         } else {
-            pa | PT_BLOCK | PT_AF | PT_SH_INNER | ATTR_NORMAL | PT_UXN // EL1-only
+            pa | PT_BLOCK | PT_AF | PT_SH_INNER | ATTR_NORMAL | PT_UXN | ng // EL1-only
         };
     }
+}
+
+/// Valor de `TTBR0_EL1` para una tabla L1 con su ASID (8 bits en [55:48]).
+fn ttbr0(l1: *const PageTable, asid: u64) -> u64 {
+    (l1 as u64) | (asid << 48)
 }
 
 unsafe fn mmu_init() {
@@ -229,8 +247,8 @@ unsafe fn mmu_init() {
         core::arch::asm!("mrs {}, id_aa64mmfr0_el1", out(reg) m);
         let tcr: u64 = 25 | (0b01 << 8) | (0b01 << 10) | (0b11 << 12) | ((m & 0xF) << 32);
         core::arch::asm!("msr tcr_el1, {}", in(reg) tcr);
-        // Arranca con la tabla del kernel.
-        core::arch::asm!("msr ttbr0_el1, {}", in(reg) addr_of!(L1_K) as u64);
+        // Arranca con la tabla del kernel (ASID_K).
+        core::arch::asm!("msr ttbr0_el1, {}", in(reg) ttbr0(addr_of!(L1_K), ASID_K));
         core::arch::asm!("dsb ish; isb");
         let mut sctlr: u64;
         core::arch::asm!("mrs {}, sctlr_el1", out(reg) sctlr);
@@ -239,25 +257,21 @@ unsafe fn mmu_init() {
     }
 }
 
-/// Hook de espacio de direcciones: conmuta `TTBR0_EL1` por tarea y vacía el TLB.
-/// `stack_base` discrimina (pila de A en bloque 1, de B en bloque 2).
+/// Hook de espacio de direcciones: conmuta `TTBR0_EL1` (tabla + ASID) por tarea.
+/// **Sin flush de TLB**: las entradas de usuario son non-global y van etiquetadas
+/// por ASID, así no se aliasan entre tareas. `stack_base` discrimina (pila de A
+/// en bloque 1, de B en bloque 2).
 fn addr_space(is_user: bool, stack_base: u32) {
-    let l1 = if !is_user {
-        addr_of!(L1_K) as u64
+    let ttbr = if !is_user {
+        ttbr0(addr_of!(L1_K), ASID_K)
     } else if (stack_base as u64) < PHYS_B {
-        addr_of!(L1_A) as u64
+        ttbr0(addr_of!(L1_A), ASID_A)
     } else {
-        addr_of!(L1_B) as u64
+        ttbr0(addr_of!(L1_B), ASID_B)
     };
-    // SAFETY: cambia la tabla de traducción de bajo nivel + flush de TLB.
+    // SAFETY: cambia la tabla de traducción de bajo nivel (ASID-tagged, sin flush).
     unsafe {
-        core::arch::asm!(
-            "msr ttbr0_el1, {t}",
-            "tlbi vmalle1",
-            "dsb nsh",
-            "isb",
-            t = in(reg) l1,
-        );
+        core::arch::asm!("msr ttbr0_el1, {t}", "isb", t = in(reg) ttbr);
     }
 }
 
@@ -343,9 +357,9 @@ fn syscall(num: u64, arg: u64) -> u64 {
 #[no_mangle]
 extern "C" fn kernel_main() -> ! {
     uart_init();
-    uart_puts("\n=== RUGUS @ RPi 3B+ — G6.3c: aislamiento EL0<->EL0 por TTBR0 ===\n");
+    uart_puts("\n=== RUGUS @ RPi 3B+ — G6.3c: aislamiento EL0<->EL0 por TTBR0 + ASID ===\n");
     uart_puts("[1] EL1 + FP/SIMD + VBAR ok\n");
-    uart_puts("[2] MMU: 3 tablas (kernel, A->bloque1, B->bloque2)...\n");
+    uart_puts("[2] MMU: 3 tablas (kernel/A/B), bloques user non-global + ASID...\n");
     unsafe { mmu_init() };
     uart_puts("[2] MMU ON\n");
 
