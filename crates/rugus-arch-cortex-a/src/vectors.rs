@@ -185,7 +185,8 @@ rugus_el0_sync:
 rugus_el0_fault:
     mrs     x0, esr_el1
     mrs     x1, far_el1
-    bl      rust_el0_fault
+    mrs     x2, elr_el1
+    bl      rust_el0_fault           // puede divergir (kill_current_and_resume)
 1:  wfe
     b       1b
 
@@ -224,8 +225,11 @@ pub fn set_syscall_hook(hook: fn(u64, u64) -> u64) {
     SYSCALL_HOOK.store(hook as usize, Ordering::Relaxed);
 }
 
-/// Registra el manejador de aborts de EL0 (`fn(esr, far)`).
-pub fn set_el0_fault_hook(hook: fn(u64, u64)) {
+/// Registra el manejador de aborts de EL0 (`fn(esr, far, elr)`). El hook PUEDE
+/// no retornar: típicamente llama a `Scheduler::kill_current_and_resume`, que
+/// mata la tarea EL0 faultante y reanuda otra con `eret` (contención real). Si
+/// retorna, el handler cuelga el core.
+pub fn set_el0_fault_hook(hook: fn(u64, u64, u64)) {
     EL0_FAULT_HOOK.store(hook as usize, Ordering::Relaxed);
 }
 
@@ -242,15 +246,16 @@ extern "C" fn rust_syscall(num: u64, arg: u64) -> u64 {
     f(num, arg)
 }
 
-/// Manejador de abort de EL0 llamado desde `rugus_el0_sync` (el handler cuelga
-/// tras informar; la contención por-tarea —kill + continuar— llega después).
+/// Manejador de abort de EL0 llamado desde `rugus_el0_sync`. El hook puede no
+/// retornar (kill + reanudar otra tarea); si no hay hook o retorna, el handler
+/// asm cuelga el core.
 #[no_mangle]
-extern "C" fn rust_el0_fault(esr: u64, far: u64) {
+extern "C" fn rust_el0_fault(esr: u64, far: u64, elr: u64) {
     let hook = EL0_FAULT_HOOK.load(Ordering::Relaxed);
     if hook != 0 {
-        // SAFETY: solo se escribe en `set_el0_fault_hook` con un `fn(u64,u64)`.
-        let f: fn(u64, u64) = unsafe { core::mem::transmute(hook) };
-        f(esr, far);
+        // SAFETY: solo se escribe en `set_el0_fault_hook` con un `fn(u64,u64,u64)`.
+        let f: fn(u64, u64, u64) = unsafe { core::mem::transmute(hook) };
+        f(esr, far, elr);
     }
 }
 
