@@ -215,8 +215,13 @@ impl Arch for CortexA {
         unsafe { cpu_start_first(ctx) }
     }
 
-    fn on_task_switch(_mode: TaskMode, _stack_base: u32, _stack_len: u32) {
-        // No-op: sin MPU/EL0 per-tarea en esta capa.
+    fn on_task_switch(mode: TaskMode, stack_base: u32, _stack_len: u32) {
+        // Reenvía al hook de espacio de direcciones, si la placa lo registró: le
+        // permite reprogramar `TTBR0_EL1` (tabla por tarea + ASID) para aislar
+        // userland↔userland. `stack_base` identifica a la tarea (VA de su pila).
+        // Sin hook (caso por defecto), no hay conmutación de espacio: una sola
+        // región EL0 compartida.
+        vectors::fire_addr_space(matches!(mode, TaskMode::User), stack_base);
     }
 
     fn enter_critical() -> Self::SavedIrq {

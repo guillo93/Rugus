@@ -1,0 +1,28 @@
+[workspace]
+# Crate independiente del workspace embebido (target AArch64).
+
+[package]
+name = "rpi3-el0-iso"
+description = "Rugus G6.3c: aislamiento userland<->userland por TTBR0 (tabla por tarea). Dos tareas EL0, cada una solo ve su propio bloque; contadores privados independientes lo prueban."
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "rpi3-el0-iso"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+rugus-core = { path = "../../crates/rugus-core" }
+rugus-arch-cortex-a = { path = "../../crates/rugus-arch-cortex-a" }
+
+[profile.release]
+opt-level = 2
+lto = true
+debug = true
+panic = "abort"
+
+[profile.dev]
+panic = "abort"
