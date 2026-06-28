@@ -26,9 +26,35 @@ pub mod time;
 pub mod vectors;
 
 use core::arch::global_asm;
-use core::ptr::write_volatile;
+use core::ptr::{addr_of, write_volatile};
+use core::sync::atomic::{AtomicUsize, Ordering};
 use rugus_core::arch::{Arch, CriticalGuard};
 use rugus_core::sched::TaskMode;
+
+// Pila de kernel por tarea userland (EL0): el frame de excepción de una tarea
+// EL0 NO puede vivir en su pila de usuario (EL0-accesible → podría manipular su
+// propio SPSR y escalar a EL1). Vive en una pila kernel (EL1-only) de este pool.
+// El `stack` que el scheduler pasa para una tarea EL0 es su pila de USUARIO
+// (SP_EL0). Soporta hasta `N_USER_TASKS` tareas EL0.
+const N_USER_TASKS: usize = 4;
+const KSTACK_SZ: usize = 4096;
+#[repr(C, align(16))]
+struct KStack([u8; KSTACK_SZ]);
+static mut KERNEL_STACKS: [KStack; N_USER_TASKS] =
+    [const { KStack([0; KSTACK_SZ]) }; N_USER_TASKS];
+static KSTACK_NEXT: AtomicUsize = AtomicUsize::new(0);
+
+/// Reserva el tope de una pila kernel del pool para una tarea EL0. Aborta (vía
+/// reset) si se agota el pool — es un error de configuración del firmware.
+fn alloc_kernel_stack_top() -> u64 {
+    let i = KSTACK_NEXT.fetch_add(1, Ordering::Relaxed);
+    if i >= N_USER_TASKS {
+        CortexA::reset();
+    }
+    // SAFETY: `i < N_USER_TASKS`; dirección de un elemento del pool estático.
+    let base = unsafe { addr_of!(KERNEL_STACKS[i]) } as u64;
+    (base + KSTACK_SZ as u64) & !0xF
+}
 
 /// Backend AArch64.
 pub struct CortexA;
@@ -138,30 +164,40 @@ impl Arch for CortexA {
     type Context = Context;
     type SavedIrq = SavedDaif;
 
-    const HAS_MEMORY_PROTECTION: bool = false;
+    const HAS_MEMORY_PROTECTION: bool = true;
 
     unsafe fn switch_context(prev: *mut Self::Context, next: *const Self::Context) {
         // SAFETY: `prev`/`next` son Contexts válidos del scheduler.
         unsafe { cpu_switch(prev, next) }
     }
 
-    fn init_task_stack(stack: &mut [u8], entry: fn() -> !, _privileged: bool) -> Self::Context {
-        // Frame de excepción inicial en el tope de la pila (alineado a 16):
-        // x0..x30 = 0, `ELR=entry`, `SPSR=EL1h` con IRQs habilitadas (DAIF=0) de
-        // modo que `cpu_restore`+`eret` entre en la tarea. (EL0 ajustará SPSR/
-        // SP_EL0 cuando `privileged==false` — G6.2b.)
-        let top = ((stack.as_ptr() as usize) + stack.len()) & !0xF;
-        let sp = top - CTX_FRAME;
+    fn init_task_stack(stack: &mut [u8], entry: fn() -> !, privileged: bool) -> Self::Context {
+        // El frame de excepción inicial (336 B) determina el EL de la tarea por
+        // su `SPSR`. La reanudación (`cpu_restore`+`eret`) entra en él.
+        // - Privilegiada (EL1): el frame vive en `stack` (su pila kernel) y
+        //   `SPSR=EL1h`. `SP_EL0` no se usa.
+        // - Userland (EL0): el frame vive en una pila kernel del pool (EL1-only,
+        //   inaccesible a EL0) y `SPSR=EL0t`; `SP_EL0` = tope de `stack` (la pila
+        //   de USUARIO, que la placa ubica en una región mapeada EL0).
+        let (frame_top, spsr, sp_el0) = if privileged {
+            let top = ((stack.as_ptr() as usize) as u64 + stack.len() as u64) & !0xF;
+            (top, 0x5u64, 0u64) // EL1h, DAIF=0
+        } else {
+            let user_sp = ((stack.as_ptr() as usize) as u64 + stack.len() as u64) & !0xF;
+            (alloc_kernel_stack_top(), 0x0u64, user_sp) // EL0t, DAIF=0
+        };
+        let sp = frame_top - CTX_FRAME as u64;
         let f = sp as *mut u64;
-        // SAFETY: [sp, sp+336) cae dentro de la pila estática de la tarea.
+        // SAFETY: [sp, sp+336) cae dentro de la pila (kernel) de la tarea.
         unsafe {
             for i in 0..(CTX_FRAME / 8) {
                 write_volatile(f.add(i), 0);
             }
+            write_volatile(f.add(248 / 8), sp_el0); // SP_EL0
             write_volatile(f.add(256 / 8), entry as *const () as u64); // ELR_EL1
-            write_volatile(f.add(264 / 8), 0x5); // SPSR_EL1 = EL1h, DAIF=0
+            write_volatile(f.add(264 / 8), spsr); // SPSR_EL1
         }
-        Context { sp: sp as u64 }
+        Context { sp }
     }
 
     fn start_first(ctx: *const Self::Context) -> ! {

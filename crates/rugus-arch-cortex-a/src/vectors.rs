@@ -57,11 +57,11 @@ rugus_vector_table:
     b       rugus_hang_exc          // FIQ
     .align 7
     b       rugus_hang_exc          // SError
-    // --- Lower EL AArch64 (EL0): sin userland EL0 todavía ---
+    // --- Lower EL AArch64 (EL0): syscalls y aborts de userland ---
     .align 7
-    b       rugus_hang_exc
+    b       rugus_el0_sync          // Sync ← SVC (syscall) o abort de EL0
     .align 7
-    b       rugus_hang_exc
+    b       rugus_el1_irq           // IRQ en EL0 → mismo handler de preempción
     .align 7
     b       rugus_hang_exc
     .align 7
@@ -125,6 +125,70 @@ rugus_el1_irq:
     add     sp, sp, #272
     eret
 
+// Sync desde EL0: SVC (syscall) o abort de userland. Salva el frame de la tarea
+// EL0, despacha por ESR.EC y, si es SVC, por nº de syscall (x8). El syscall
+// `yield` conmuta de tarea de forma anidada (igual que la preempción); el frame
+// EL0 se restaura al volver. SP_EL0 lo preserva el cpu_switch anidado.
+rugus_el0_sync:
+    sub     sp, sp, #272
+    stp     x0,  x1,  [sp, #16 * 0]
+    stp     x2,  x3,  [sp, #16 * 1]
+    stp     x4,  x5,  [sp, #16 * 2]
+    stp     x6,  x7,  [sp, #16 * 3]
+    stp     x8,  x9,  [sp, #16 * 4]
+    stp     x10, x11, [sp, #16 * 5]
+    stp     x12, x13, [sp, #16 * 6]
+    stp     x14, x15, [sp, #16 * 7]
+    stp     x16, x17, [sp, #16 * 8]
+    stp     x18, x19, [sp, #16 * 9]
+    stp     x20, x21, [sp, #16 * 10]
+    stp     x22, x23, [sp, #16 * 11]
+    stp     x24, x25, [sp, #16 * 12]
+    stp     x26, x27, [sp, #16 * 13]
+    stp     x28, x29, [sp, #16 * 14]
+    str     x30,      [sp, #240]
+    mrs     x9,  elr_el1
+    mrs     x10, spsr_el1
+    stp     x9,  x10, [sp, #256]
+
+    mrs     x9,  esr_el1
+    lsr     x9,  x9, #26
+    cmp     x9,  #0x15               // SVC64
+    b.ne    rugus_el0_fault
+    ldr     x0,  [sp, #16 * 4]       // x8 = nº de syscall
+    ldr     x1,  [sp, #0]            // x0 = argumento
+    bl      rust_syscall             // (puede conmutar de tarea de forma anidada)
+    str     x0,  [sp, #0]            // valor de retorno → x0 de la tarea
+
+    ldp     x9,  x10, [sp, #256]
+    msr     elr_el1,  x9
+    msr     spsr_el1, x10
+    ldp     x0,  x1,  [sp, #16 * 0]
+    ldp     x2,  x3,  [sp, #16 * 1]
+    ldp     x4,  x5,  [sp, #16 * 2]
+    ldp     x6,  x7,  [sp, #16 * 3]
+    ldp     x8,  x9,  [sp, #16 * 4]
+    ldp     x10, x11, [sp, #16 * 5]
+    ldp     x12, x13, [sp, #16 * 6]
+    ldp     x14, x15, [sp, #16 * 7]
+    ldp     x16, x17, [sp, #16 * 8]
+    ldp     x18, x19, [sp, #16 * 9]
+    ldp     x20, x21, [sp, #16 * 10]
+    ldp     x22, x23, [sp, #16 * 11]
+    ldp     x24, x25, [sp, #16 * 12]
+    ldp     x26, x27, [sp, #16 * 13]
+    ldp     x28, x29, [sp, #16 * 14]
+    ldr     x30,      [sp, #240]
+    add     sp, sp, #272
+    eret
+
+rugus_el0_fault:
+    mrs     x0, esr_el1
+    mrs     x1, far_el1
+    bl      rust_el0_fault
+1:  wfe
+    b       1b
+
 // Sync EL1: captura ESR/ELR y rutea a Rust (post-mortem mínimo).
 rugus_el1_sync:
     mrs     x0, esr_el1
@@ -148,6 +212,47 @@ static IRQ_HOOK: AtomicUsize = AtomicUsize::new(0);
 /// `true` si alguna capa pidió arrancar la primera tarea con IRQs habilitadas
 /// aunque no haya preempción por timer (p.ej. una consola con RX por IRQ).
 static WANT_IRQS: AtomicBool = AtomicBool::new(false);
+/// Despachador de syscalls (`fn(num, arg) -> ret`), registrado por el kernel.
+/// Lo invoca el handler de `SVC` desde EL0. El syscall puede conmutar de tarea
+/// de forma anidada (p.ej. `yield`).
+static SYSCALL_HOOK: AtomicUsize = AtomicUsize::new(0);
+/// Hook de abort de EL0 (`fn(esr, far)`), para informar del fault contenido.
+static EL0_FAULT_HOOK: AtomicUsize = AtomicUsize::new(0);
+
+/// Registra el despachador de syscalls que el handler de `SVC` invoca desde EL0.
+pub fn set_syscall_hook(hook: fn(u64, u64) -> u64) {
+    SYSCALL_HOOK.store(hook as usize, Ordering::Relaxed);
+}
+
+/// Registra el manejador de aborts de EL0 (`fn(esr, far)`).
+pub fn set_el0_fault_hook(hook: fn(u64, u64)) {
+    EL0_FAULT_HOOK.store(hook as usize, Ordering::Relaxed);
+}
+
+/// Despachador de syscalls llamado desde `rugus_el0_sync`. Si no hay hook,
+/// devuelve `-1` (sin servicio).
+#[no_mangle]
+extern "C" fn rust_syscall(num: u64, arg: u64) -> u64 {
+    let hook = SYSCALL_HOOK.load(Ordering::Relaxed);
+    if hook == 0 {
+        return u64::MAX; // -1: sin despachador
+    }
+    // SAFETY: solo se escribe en `set_syscall_hook` con un `fn(u64,u64)->u64`.
+    let f: fn(u64, u64) -> u64 = unsafe { core::mem::transmute(hook) };
+    f(num, arg)
+}
+
+/// Manejador de abort de EL0 llamado desde `rugus_el0_sync` (el handler cuelga
+/// tras informar; la contención por-tarea —kill + continuar— llega después).
+#[no_mangle]
+extern "C" fn rust_el0_fault(esr: u64, far: u64) {
+    let hook = EL0_FAULT_HOOK.load(Ordering::Relaxed);
+    if hook != 0 {
+        // SAFETY: solo se escribe en `set_el0_fault_hook` con un `fn(u64,u64)`.
+        let f: fn(u64, u64) = unsafe { core::mem::transmute(hook) };
+        f(esr, far);
+    }
+}
 
 /// Registra un hook de IRQ de periférico (`fn()`), invocado en cada IRQ tras
 /// atender el Generic Timer. Pensado para RX por interrupción (UART→ring).
