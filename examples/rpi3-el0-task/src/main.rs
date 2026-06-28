@@ -30,6 +30,7 @@ use core::panic::PanicInfo;
 use core::ptr::{addr_of, addr_of_mut, read_volatile, write_volatile};
 
 use rugus_arch_cortex_a::{vectors, CortexA};
+use rugus_core::fault::{FaultKind, FaultReport};
 use rugus_core::sched::{Priority, Scheduler};
 
 // ===================== Boot: EL2 → EL1 + VBAR temprano + FP/SIMD + bss =====================
@@ -101,13 +102,21 @@ el1_sync_early:
 // de putchar('U') + yield por syscall. b 1b es PC-relativo → válido tras copiar.
 .global el0_stub_start
 el0_stub_start:
+    mov     x19, #0                  // contador (preservado por el frame)
 1:
     mov     x8, #1                   // SYS_PUTCHAR
     mov     x0, #0x55                // 'U'
     svc     #0
+    add     x19, x19, #1
+    cmp     x19, #3
+    b.ge    3f
     mov     x8, #2                   // SYS_YIELD
     svc     #0
     b       1b
+3:
+    movz    x1, #0x8, lsl #16        // 0x80000 (kernel, EL1-only)
+    ldr     x2, [x1]                 // acceso prohibido → abort → el kernel mata la tarea
+    b       .
 .global el0_stub_end
 el0_stub_end:
 "#
@@ -282,13 +291,28 @@ fn syscall(num: u64, arg: u64) -> u64 {
     }
 }
 
-/// Abort de EL0: informa (contención por-tarea llegará después).
-fn el0_fault(esr: u64, far: u64) {
-    uart_puts("\n[EL1] abort de EL0 contenido: ESR=");
+/// Abort de EL0: **contención real** — informa, mata la tarea EL0 faultante y
+/// reanuda otra (no retorna). El kernel sobrevive y las demás tareas siguen.
+fn el0_fault(esr: u64, far: u64, elr: u64) {
+    uart_puts("\n[EL1] abort de EL0 -> matando la tarea y siguiendo (contencion):\n  ESR=");
     uart_hex(esr);
     uart_puts(" FAR=");
     uart_hex(far);
+    uart_puts(" ELR=");
+    uart_hex(elr);
     uart_puts("\n");
+    // SAFETY: scheduler único; `current` es la tarea EL0 faultante.
+    unsafe {
+        let s = (*addr_of_mut!(SCHED)).as_mut().unwrap();
+        let report = FaultReport {
+            kind: FaultKind::MemManage, // permission abort de EL0 = violación de protección
+            pc: elr as u32,
+            domain: s.current_domain(),
+            task_id: s.current_id(),
+            addr: Some(far as u32),
+        };
+        s.kill_current_and_resume(report)
+    }
 }
 
 /// Tarea supervisora (EL1): imprime su marca y cede.
@@ -329,7 +353,8 @@ extern "C" fn kernel_main() -> ! {
     vectors::install();
 
     uart_puts("[5] spawn: supervisor EL1 + tarea EL0 (spawn_user); arrancando\n");
-    uart_puts("    esperado: [sup] U [sup] U ...  (EL1 y EL0 cooperando por SVC)\n\n");
+    uart_puts("    esperado: U[sup]x3, EL0 toca el kernel -> abort -> kernel la mata\n");
+    uart_puts("    y el supervisor EL1 SIGUE corriendo (contencion real)\n\n");
     // SAFETY: arranque single-thread; pilas vivas para todo el kernel.
     unsafe {
         SCHED = Some(Scheduler::default());
