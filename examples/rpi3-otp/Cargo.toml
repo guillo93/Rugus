@@ -1,0 +1,24 @@
+[workspace]
+# Crate independiente del workspace embebido (target AArch64).
+
+[package]
+name = "rpi3-otp"
+description = "Rugus: lectura de OTP del BCM2837 vía el mailbox del VideoCore (serial de placa + filas customer). Base para PSK persistente en la RPi (solo lectura, no quema fusibles)."
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "rpi3-otp"
+path = "src/main.rs"
+test = false
+bench = false
+
+[profile.release]
+opt-level = 2
+lto = true
+debug = true
+panic = "abort"
+
+[profile.dev]
+panic = "abort"
